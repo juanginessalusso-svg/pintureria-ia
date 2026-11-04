@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { estimateWhiteBalance, featherMask, recolorWall, cleanMask, pxPerMeter, wallPixels, paintStroke, maskCount, detectSurfaces } from '@pintureria/core';
+import { estimateWhiteBalance, featherMask, recolorWall, cleanMask, pxPerMeter, wallPixels, paintStroke, maskCount, detectSurfaces, encodeMask } from '@pintureria/core';
 import { SamClient } from './samClient.js';
 import { workingSize } from './sam.js';
 import { Calculator } from './Calculator.jsx';
@@ -12,6 +12,7 @@ const tenantQ = () => {
 const getJson = (path) => fetch(`/api/public/${path}${tenantQ()}`).then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))));
 const mb = (n) => (n / 1048576).toFixed(0);
 
+const ANOTAR = new URLSearchParams(location.search).get('anotar') === '1'; // modo de anotación (herramienta interna): ver eval/visualizador/medir.mjs
 const MAX_ZOOM = 8;
 const MAX_SURF_UNDO = 8;
 const DRAG_PX = 4; // cuánto hay que mover el dedo para que un toque pase a ser arrastre
@@ -55,6 +56,7 @@ export function Visualizer() {
   const activeRef = useRef(null); // espejo de activeId para render()
   const flash = useRef(null); // superficie que parpadea un instante al seleccionarla
   const autoCache = useRef([]); // superficies detectadas solas (para volver a empezar sin recalcular)
+  const photoName = useRef('foto');
   const photoSeq = useRef(0); // identifica la foto en análisis: si cambia mientras tanto, se descarta el resultado
   const result = useRef(null); // imagen recoloreada
   const showBefore = useRef(false);
@@ -175,6 +177,7 @@ export function Visualizer() {
     const file = e.target.files?.[0];
     e.target.value = '';
     if (!file) return;
+    photoName.current = file.name.replace(/\.\w+$/, '');
     try {
       setStatus('Leyendo la foto…');
       const bmp = await createImageBitmap(file); // respeta la orientación EXIF
@@ -530,6 +533,18 @@ export function Visualizer() {
     setTimeout(() => URL.revokeObjectURL(a.href), 5000);
   };
   const hold = (v) => () => { showBefore.current = v; render(); };
+  // Herramienta interna (?anotar=1): baja las superficies actuales como anotación "revisada" para medir la detección (eval/visualizador/medir.mjs).
+  const downloadAnnotation = () => {
+    const p = photo.current;
+    const out = {
+      foto: photoName.current, width: p.width, height: p.height, estado: 'revisada',
+      superficies: surfaces.current.map((x) => ({ nombre: x.name, tipo: x.kind ?? (/^techo/i.test(x.name) ? 'techo' : 'pared'), rle: encodeMask(x.mask) })),
+    };
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([JSON.stringify(out)], { type: 'application/json' }));
+    a.download = `${photoName.current}.json`; a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  };
 
   const brand = tenant?.primary_color ?? '#1f6feb';
   const pct = model.total ? Math.round((model.loaded / model.total) * 100) : 0;
@@ -637,6 +652,7 @@ export function Visualizer() {
             <button onPointerDown={hold(true)} onPointerUp={hold(false)} onPointerLeave={hold(false)} disabled={!hasColor}>Mantené para ver el antes</button>
             <button onClick={download} disabled={!hasColor}>⬇︎ Descargar</button>
           </div>
+          {ANOTAR && <div class="row"><button onClick={downloadAnnotation} disabled={!surfList.length}>🧪 Descargar anotación (JSON)</button></div>}
         </div>
 
         <Calculator wallPx={wallPx} calib={calib} products={products} branches={branches} tenant={tenant} color={color} getImageBlob={getImageBlob}
