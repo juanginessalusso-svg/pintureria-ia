@@ -125,3 +125,46 @@ test('classifySurface: una banda ancha en la mitad de arriba es la pared sobre l
   assert.equal(classifySurface(g), 'pared');
   assert.equal(classifySurface({ ...g, cy: 0.6, top: 0.5, bottom: 0.7 }), null); // la misma banda más abajo sigue siendo "franja baja"
 });
+
+// ---- refinado de bordes y tira angosta ----
+import { refineEdges } from '../src/index.js';
+
+test('refineEdges: el contorno se asienta sobre el borde real cuando SAM se pasó', () => {
+  const w = 100, h = 40, G = new Float32Array(w * h).fill(0.3);
+  for (let y = 0; y < h; y++) G[y * w + 60] = 40; // borde fuerte (el límite real de la pared) en x = 60
+  const mask = new Uint8Array(w * h);
+  for (let y = 0; y < h; y++) for (let x = 0; x < 66; x++) mask[y * w + x] = 1; // SAM se pasó 6 px
+  const [r] = refineEdges([{ mask }], G, w, h, { band: 10 });
+  let ancho = 0;
+  for (let x = 0; x < w; x++) if (r.mask[20 * w + x]) ancho = x + 1;
+  assert.ok(Math.abs(ancho - 61) <= 2, `el contorno quedó en ${ancho}, se esperaba cerca de 61`);
+});
+
+test('refineEdges: sin borde real el contorno no se mueve', () => {
+  const w = 100, h = 40, G = new Float32Array(w * h).fill(0.3);
+  const mask = new Uint8Array(w * h);
+  for (let y = 0; y < h; y++) for (let x = 0; x < 50; x++) mask[y * w + x] = 1;
+  const antes = mask.slice();
+  const [r] = refineEdges([{ mask }], G, w, h, { band: 10 });
+  let dif = 0;
+  for (let i = 0; i < mask.length; i++) if (r.mask[i] !== antes[i]) dif++;
+  assert.ok(dif / (w * h) < 0.02, `se movió ${dif} píxeles`);
+});
+
+test('refineEdges: dos superficies pegadas se reparten la franja sin solaparse', () => {
+  const w = 100, h = 30, G = new Float32Array(w * h).fill(0.3);
+  for (let y = 0; y < h; y++) G[y * w + 55] = 40;
+  const a = new Uint8Array(w * h), b = new Uint8Array(w * h);
+  for (let y = 0; y < h; y++) { for (let x = 0; x < 50; x++) a[y * w + x] = 1; for (let x = 50; x < w; x++) b[y * w + x] = 1; }
+  const [ra, rb] = refineEdges([{ mask: a }, { mask: b }], G, w, h, { band: 12 });
+  for (let i = 0; i < w * h; i++) assert.ok(!(ra.mask[i] && rb.mask[i]), 'solapadas');
+  let ancho = 0;
+  for (let x = 0; x < w; x++) if (ra.mask[15 * w + x]) ancho = x + 1;
+  assert.ok(Math.abs(ancho - 56) <= 2, `límite en ${ancho}`);
+});
+
+test('classifySurface: una tira angosta (ancho medio < 6 %) no es una pared', () => {
+  const g = { area: 0.03, cx: 0.02, cy: 0.5, top: 0.2, bottom: 0.8, left: 0, right: 0.09, touchesTop: false, touchesBottom: false };
+  assert.equal(classifySurface(g), null); // 0,03 / 0,6 = 5 %
+  assert.equal(classifySurface({ ...g, area: 0.05 }), 'pared'); // 0,05 / 0,6 = 8 %
+});

@@ -7,7 +7,9 @@
 //
 // Solo licencias: CC0, Dominio Público (pdm), CC BY, CC BY-SA. Uso: evaluación interna de la segmentación (NO color de pintura).
 // Corre en la nube con:  NODE_USE_ENV_PROXY=1 NODE_EXTRA_CA_CERTS=/root/.ccr/ca-bundle.crt
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -40,11 +42,20 @@ if (cmd === 'buscar') {
   if (!['cc0', 'pdm', 'by', 'by-sa'].includes(r.license)) throw new Error(`licencia no permitida: ${r.license}`);
   const buf = await get(r.url, true);
   const file = path.join(here, 'fotos', `${b}.jpg`);
-  fs.writeFileSync(file, buf);
+  // Algunos bancos (rawpixel) sirven WebP aunque la URL diga .jpg y el harness solo lee JPEG/PNG: se convierte con ffmpeg (tiene que estar en el PATH).
+  const esWebp = buf.subarray(0, 4).toString() === 'RIFF' && buf.subarray(8, 12).toString() === 'WEBP';
+  if (esWebp) {
+    const tmp = path.join(os.tmpdir(), `${b}.webp`);
+    fs.writeFileSync(tmp, buf);
+    try { execFileSync('ffmpeg', ['-v', 'error', '-y', '-i', tmp, '-q:v', '2', file]); }
+    catch { throw new Error('la foto viene en WebP y hace falta ffmpeg en el PATH para convertirla a JPG'); }
+    fs.unlinkSync(tmp);
+  } else if (buf[0] === 0xff && buf[1] === 0xd8) fs.writeFileSync(file, buf);
+  else throw new Error('formato de imagen no soportado (se esperaba JPEG o WebP)');
   const fuentes = fs.existsSync(FUENTES) ? JSON.parse(fs.readFileSync(FUENTES, 'utf8')) : {};
   fuentes[`${b}.jpg`] = { id: r.id, titulo: r.title, autor: r.creator, licencia: `${r.license} ${r.license_version ?? ''}`.trim(), licencia_url: r.license_url, pagina: r.foreign_landing_url, origen: r.source, descargado: new Date().toISOString().slice(0, 10) };
   fs.writeFileSync(FUENTES, JSON.stringify(fuentes, null, 2) + '\n');
-  console.log(`bajada -> fotos/${b}.jpg (${(buf.length / 1024).toFixed(0)} KB, ${r.width}x${r.height}) · ${r.license} · ${r.creator ?? '?'} · ${r.foreign_landing_url}`);
+  console.log(`bajada -> fotos/${b}.jpg (${(fs.statSync(file).size / 1024).toFixed(0)} KB${esWebp ? ', convertida de WebP' : ''}, ${r.width}x${r.height} según Openverse) · ${r.license} · ${r.creator ?? '?'} · ${r.foreign_landing_url}`);
 } else {
   console.error('Uso: buscar "<texto>" [pagina] | bajar <id> <nombre>'); process.exit(2);
 }

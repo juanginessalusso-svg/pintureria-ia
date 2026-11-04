@@ -105,6 +105,7 @@ export function classifySurface(g) {
   if (g.cy < 0.3 && g.top < 0.04 && h < 0.45) return 'techo';
   if (g.cy > 0.7 && h < 0.4) return null; // piso
   if (g.cy > 0.62 && g.top > 0.35) return null; // algo bajo y chico: mueble, piso
+  if (g.area / Math.max(0.01, g.bottom - g.top) < 0.06) return null; // tira angosta (ancho medio < 6 % de la foto): un marco o una puerta cortados por el encuadre
   if (g.cy < 0.45 && g.right - g.left > 0.5 && g.area > 0.08) return 'pared'; // banda ancha en la mitad de arriba: la pared sobre los azulejos
   if (h < 0.25) return null; // franja baja o angosta: no es una pared
   return 'pared';
@@ -357,6 +358,79 @@ export function lineRatio(mask, G, width, height, thr, inset = 5) {
 }
 
 /**
+ * Pega el contorno de cada superficie al borde real de la foto. SAM dibuja el contorno "a ojo" y a veces se pasa sobre un objeto de color
+ * parecido (una tabla blanca, una puerta, un marco). En una franja de ±`band` px alrededor de cada contorno, cada píxel va a la superficie
+ * (o al "afuera") a la que llega con menor costo de gradiente (cuenca de aguas con marcadores): donde hay un borde real el contorno se
+ * asienta sobre él; donde no hay borde (sombra suave) se queda donde estaba. Modifica las máscaras de `regions` y las devuelve.
+ */
+export function refineEdges(regions, G, width, height, { band = Math.max(4, Math.round(width / 100)), edgeCost = 1.5 } = {}) {
+  const N = width * height, OUT = regions.length;
+  const lab = new Int16Array(N).fill(OUT);
+  regions.forEach((r, k) => { for (let i = 0; i < N; i++) if (r.mask[i]) lab[i] = k; });
+  const bnd = new Float32Array(N);
+  for (let i = 0; i < N; i++) {
+    const x = i % width;
+    if ((x < width - 1 && lab[i + 1] !== lab[i]) || (i < N - width && lab[i + width] !== lab[i])) bnd[i] = 1;
+  }
+  const near = boxBlur(bnd, width, height, band);
+  const inBand = new Uint8Array(N);
+  for (let i = 0; i < N; i++) if (near[i] > 1e-4) inBand[i] = 1;
+  const dist = new Float32Array(N).fill(Infinity), own = new Int16Array(N).fill(-1);
+  const heap = makeHeap(1 << 16);
+  for (let i = 0; i < N; i++) {
+    if (inBand[i]) continue;
+    const x = i % width;
+    if ((x > 0 && inBand[i - 1]) || (x < width - 1 && inBand[i + 1]) || (i >= width && inBand[i - width]) || (i < N - width && inBand[i + width])) { dist[i] = 0; own[i] = lab[i]; heap.push(0, i); }
+  }
+  const relax = (i, n, d) => { if (!inBand[n]) return; const nd = d + 1 + edgeCost * G[n]; if (nd < dist[n]) { dist[n] = nd; own[n] = own[i]; heap.push(nd, n); } };
+  while (heap.size) {
+    const i = heap.pop(), d = heap.lastKey;
+    if (d > dist[i]) continue;
+    const x = i % width;
+    if (x > 0) relax(i, i - 1, d);
+    if (x < width - 1) relax(i, i + 1, d);
+    if (i >= width) relax(i, i - width, d);
+    if (i < N - width) relax(i, i + width, d);
+  }
+  for (let i = 0; i < N; i++) if (inBand[i] && own[i] >= 0) lab[i] = own[i];
+  regions.forEach((r, k) => { r.mask.fill(0); for (let i = 0; i < N; i++) if (lab[i] === k) r.mask[i] = 1; });
+  return regions;
+}
+
+/** Cola de prioridad mínima con arreglos tipados (clave Float32, valor Int32). `pop()` devuelve el valor y deja la clave en `lastKey`. */
+function makeHeap(cap) {
+  let n = 0, keys = new Float32Array(cap), vals = new Int32Array(cap), lastKey = 0;
+  return {
+    get size() { return n; },
+    get lastKey() { return lastKey; },
+    push(key, val) {
+      if (n === keys.length) { const k2 = new Float32Array(n * 2), v2 = new Int32Array(n * 2); k2.set(keys); v2.set(vals); keys = k2; vals = v2; }
+      let c = n++;
+      while (c > 0) { const p = (c - 1) >> 1; if (keys[p] <= key) break; keys[c] = keys[p]; vals[c] = vals[p]; c = p; }
+      keys[c] = key; vals[c] = val;
+    },
+    pop() {
+      lastKey = keys[0];
+      const top = vals[0];
+      n--;
+      if (n > 0) {
+        const key = keys[n], val = vals[n];
+        let c = 0;
+        for (;;) {
+          const l = 2 * c + 1;
+          if (l >= n) break;
+          const r = l + 1, m = r < n && keys[r] < keys[l] ? r : l;
+          if (keys[m] >= key) break;
+          keys[c] = keys[m]; vals[c] = vals[m]; c = m;
+        }
+        keys[c] = key; vals[c] = val;
+      }
+      return top;
+    },
+  };
+}
+
+/**
  * Detecta las superficies de la foto.
  *  img      : {data RGBA, width, height} (foto de trabajo)
  *  segment  : async (points: [{x, y}]) => Uint8Array(width*height) 0/1, ya limpia — región que contiene TODOS esos puntos
@@ -364,7 +438,7 @@ export function lineRatio(mask, G, width, height, thr, inset = 5) {
  * Devuelve [{ kind: 'pared'|'techo', name, mask, area, cx, cy, texture }], máscaras DISJUNTAS, paredes de izquierda a derecha.
  */
 export async function detectSurfaces(img, segment, opts = {}) {
-  const { maxSeeds = 9, gradMax = 7, minDist = 2.5, minArea = 0.025, maxPared = 5, maxTexture = 0.12, refineMin = 2, minLumaRatio = 0.55, grow = true, splitMax = 2.2, splitEdge = 4.5, maxLine = 0.004, minCoverage = 0.35, relaxFactor = 1.8 } = opts;
+  const { maxSeeds = 9, gradMax = 7, minDist = 2.5, minArea = 0.025, maxPared = 5, maxTexture = 0.12, refineMin = 2, minLumaRatio = 0.55, grow = true, snap = true, splitMax = 2.2, splitEdge = 4.5, maxLine = 0.004, minCoverage = 0.35, relaxFactor = 1.8 } = opts;
   const { width, height } = img;
   const { luma, w, h } = downscaleLuma(img);
   const grad = gradientMap(luma, w, h);
@@ -462,6 +536,10 @@ export async function detectSurfaces(img, segment, opts = {}) {
     if (out[i].kind === 'pared' && out[i].luma < refLuma * minLumaRatio) { rechazadas.push(out[i]); out.splice(i, 1); }
   }
   if (grow) growIntoGaps(out, img);
+  if (snap && out.length) {
+    refineEdges(out, fullGrad(), width, height);
+    for (const s of out) s.mask = removeSmallIslands(s.mask, width, height, Math.round(width * height * 0.002));
+  }
   for (const s of out) Object.assign(s, maskGeometry(s.mask, width, height));
   const paredes = out.filter((s) => s.kind === 'pared').sort((a, b) => b.area - a.area).slice(0, maxPared).sort((a, b) => a.cx - b.cx);
   const techo = out.filter((s) => s.kind === 'techo').sort((a, b) => b.area - a.area).slice(0, 1);
