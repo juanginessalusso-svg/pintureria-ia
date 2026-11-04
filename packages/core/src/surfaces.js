@@ -2,7 +2,7 @@
 // Sin modelos nuevos: se buscan zonas lisas de la foto, el centro de cada una se usa como "toque" automático
 // para el segmentador (MobileSAM) y las máscaras resultantes se ordenan, se hacen disjuntas y se clasifican.
 // Todo es puro (sin DOM ni ONNX): `segment` lo inyecta quien llama.
-import { removeSmallIslands } from './recolor.js';
+import { openMask, removeSmallIslands } from './recolor.js';
 
 /** Reduce a lado largo <= maxSide promediando cajas; devuelve la luminancia (0..255) y el tamaño. */
 export function downscaleLuma(img, maxSide = 192) {
@@ -495,6 +495,95 @@ export async function partitionBySmallest(regions, segment, width, height, { gri
 }
 
 /**
+ * Rellena la pared que se ve a través de huecos FINOS de un objeto (entre los listones de una silla, una reja, una baranda). SAM trata el
+ * objeto como sólido y deja afuera esos huecos aunque ahí se vea la pared de atrás. Un píxel sin dueño se suma a la pared si: (1) tiene el
+ * color y la luz de esa pared, (2) está cerca de ella (`maxDist`) y (3) pertenece a una tira fina (no sobrevive a una apertura de radio
+ * `thinR`): un objeto grande del color de la pared (un refrigerador blanco, una tabla) NO es fino y queda afuera. Con tope por pared.
+ */
+export function fillThinGaps(regions, img, { blocked = null, maxDist = Math.round(img.width * 0.2), thinR = Math.max(6, Math.round(img.width * 0.03)), tolLuma = 22, tolChroma = 0.03, maxAdd = 0.03, darkDelta = 45, minDarkRing = 0.75, sandwich = Math.round(img.width * 0.06), debug = null } = {}) {
+  const { data, width, height } = img;
+  const N = width * height;
+  const owner = new Uint8Array(N);
+  for (const r of regions) for (let i = 0; i < N; i++) if (r.mask[i]) owner[i] = 1;
+  const lum = new Float32Array(N), cr = new Float32Array(N), cg = new Float32Array(N);
+  for (let i = 0; i < N; i++) {
+    const R = data[i * 4], G = data[i * 4 + 1], B = data[i * 4 + 2], t = R + G + B + 1e-3;
+    lum[i] = 0.2126 * R + 0.7152 * G + 0.0722 * B; cr[i] = R / t; cg[i] = G / t;
+  }
+  for (const r of regions) {
+    if (r.kind !== 'pared') continue;
+    const sl = [], sr = [], sg = [];
+    for (let i = 0; i < N; i += 7) if (r.mask[i]) { sl.push(lum[i]); sr.push(cr[i]); sg.push(cg[i]); }
+    if (sl.length < 50) continue;
+    const med = (a) => { a.sort((x, y) => x - y); return a[a.length >> 1]; };
+    const ml = med(sl), mr = med(sr), mg = med(sg);
+    const notWall = new Uint8Array(N);
+    for (let i = 0; i < N; i++) notWall[i] = r.mask[i] ? 0 : 1;
+    const d = distanceTransform(notWall, width, height); // distancia (px) a la pared, para los píxeles que no lo son
+    // Encajonado por un objeto oscuro: el hueco entre listones queda entre dos partes oscuras del mismo objeto (arriba y abajo, o a los costados),
+    // a una distancia corta. El marco de una puerta, el borde de un mueble o una sábana tienen lo oscuro de un solo lado: no se rellenan.
+    const BIG = 65535, dark = new Uint8Array(N);
+    for (let i = 0; i < N; i++) dark[i] = lum[i] < ml - darkDelta ? 1 : 0;
+    const dl = new Uint16Array(N).fill(BIG), dr = new Uint16Array(N).fill(BIG), du = new Uint16Array(N).fill(BIG), dd = new Uint16Array(N).fill(BIG);
+    for (let y = 0; y < height; y++) {
+      let last = -1;
+      for (let x = 0; x < width; x++) { const i = y * width + x; if (dark[i]) last = x; else if (last >= 0) dl[i] = Math.min(BIG - 1, x - last); }
+      last = -1;
+      for (let x = width - 1; x >= 0; x--) { const i = y * width + x; if (dark[i]) last = x; else if (last >= 0) dr[i] = Math.min(BIG - 1, last - x); }
+    }
+    for (let x = 0; x < width; x++) {
+      let last = -1;
+      for (let y = 0; y < height; y++) { const i = y * width + x; if (dark[i]) last = y; else if (last >= 0) du[i] = Math.min(BIG - 1, y - last); }
+      last = -1;
+      for (let y = height - 1; y >= 0; y--) { const i = y * width + x; if (dark[i]) last = y; else if (last >= 0) dd[i] = Math.min(BIG - 1, last - y); }
+    }
+    const cand = new Uint8Array(N);
+    let nc = 0;
+    for (let i = 0; i < N; i++) {
+      if (owner[i] || (blocked && blocked[i]) || d[i] > maxDist) continue;
+      if (!((dl[i] <= sandwich && dr[i] <= sandwich) || (du[i] <= sandwich && dd[i] <= sandwich))) continue;
+      if (Math.abs(lum[i] - ml) > tolLuma || Math.abs(cr[i] - mr) + Math.abs(cg[i] - mg) > tolChroma) continue;
+      cand[i] = 1; nc++;
+    }
+    if (!nc) continue;
+    const opened = openMask(cand, width, height, thinR);
+    let add = new Uint8Array(N), na = 0;
+    for (let i = 0; i < N; i++) if (cand[i] && !opened[i]) { add[i] = 1; na++; }
+    add = removeSmallIslands(add, width, height, Math.round(N * 0.0004));
+    // Por cada hueco: qué parte de su contorno toca algo oscuro (3 px afuera). Rodeado casi por completo por lo oscuro = hueco de un objeto.
+    // Contra la pared de un lado y el pasillo del otro (marco de puerta), o contra tela y sombras (una sábana), no alcanza.
+    {
+      const seen = new Uint8Array(N), q = new Int32Array(N), K = 3;
+      for (let st = 0; st < N; st++) {
+        if (!add[st] || seen[st]) continue;
+        let head = 0, tail = 0, ring = 0, ringDark = 0;
+        q[tail++] = st; seen[st] = 1;
+        while (head < tail) {
+          const i = q[head++], x = i % width, y = (i - x) / width;
+          if (x > 0 && add[i - 1] && !seen[i - 1]) { seen[i - 1] = 1; q[tail++] = i - 1; }
+          if (x < width - 1 && add[i + 1] && !seen[i + 1]) { seen[i + 1] = 1; q[tail++] = i + 1; }
+          if (y > 0 && add[i - width] && !seen[i - width]) { seen[i - width] = 1; q[tail++] = i - width; }
+          if (y < height - 1 && add[i + width] && !seen[i + width]) { seen[i + width] = 1; q[tail++] = i + width; }
+          for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) { // pixel de contorno: tiene un vecino que no es del hueco
+            const nx = x + dx, ny = y + dy;
+            if (nx < 0 || ny < 0 || nx >= width || ny >= height || add[ny * width + nx]) continue;
+            const fx = Math.min(width - 1, Math.max(0, x + dx * K)), fy = Math.min(height - 1, Math.max(0, y + dy * K));
+            ring++; if (dark[fy * width + fx]) ringDark++;
+          }
+        }
+        if (!ring || ringDark / ring < minDarkRing) for (let k = 0; k < tail; k++) add[q[k]] = 0;
+      }
+    }
+    na = 0;
+    for (let i = 0; i < N; i++) if (add[i]) na++;
+    debug?.({ pared: r.name, candidatos: +(nc / N).toFixed(4), finos: +(na / N).toFixed(4), add });
+    if (!na || na > maxAdd * N) continue;
+    for (let i = 0; i < N; i++) if (add[i]) { r.mask[i] = 1; owner[i] = 1; }
+  }
+  return regions;
+}
+
+/**
  * Detecta las superficies de la foto.
  *  img      : {data RGBA, width, height} (foto de trabajo)
  *  segment  : async (points: [{x, y}]) => Uint8Array(width*height) 0/1, ya limpia — región que contiene TODOS esos puntos
@@ -502,7 +591,7 @@ export async function partitionBySmallest(regions, segment, width, height, { gri
  * Devuelve [{ kind: 'pared'|'techo', name, mask, area, cx, cy, texture }], máscaras DISJUNTAS, paredes de izquierda a derecha.
  */
 export async function detectSurfaces(img, segment, opts = {}) {
-  const { maxSeeds = 9, gradMax = 7, minDist = 2.5, minArea = 0.025, maxPared = 5, maxTexture = 0.12, refineMin = 2, minLumaRatio = 0.55, grow = true, snap = true, partition = true, splitMax = 2.2, splitEdge = 4.5, maxLine = 0.004, minCoverage = 0.35, relaxFactor = 1.8 } = opts;
+  const { maxSeeds = 9, gradMax = 7, minDist = 2.5, minArea = 0.025, maxPared = 5, maxTexture = 0.12, refineMin = 2, minLumaRatio = 0.55, grow = true, snap = true, partition = true, thinGaps = true, splitMax = 2.2, splitEdge = 4.5, maxLine = 0.004, minCoverage = 0.35, relaxFactor = 1.8 } = opts;
   const { width, height } = img;
   const { luma, w, h } = downscaleLuma(img);
   const grad = gradientMap(luma, w, h);
@@ -606,6 +695,7 @@ export async function detectSurfaces(img, segment, opts = {}) {
     veto = pr.veto;
   }
   if (grow) growIntoGaps(out, img, { blocked: veto });
+  if (thinGaps) fillThinGaps(out, img, { blocked: veto, debug: opts.debugGaps }); // pared que se ve entre los listones de una silla
   if (snap && out.length) {
     refineEdges(out, fullGrad(), width, height);
     for (const s of out) s.mask = removeSmallIslands(s.mask, width, height, Math.round(width * height * 0.002));

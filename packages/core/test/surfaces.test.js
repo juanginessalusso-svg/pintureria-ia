@@ -217,3 +217,52 @@ test('partición: si se llevaría demasiado de la pared (maxLoss) no se toca', a
   assert.deepEqual([...w.mask], [...antes]);
   assert.equal(r.extra.length, 0);
 });
+
+// ---- relleno de huecos finos (pared entre los listones de una silla) ----
+import { fillThinGaps } from '../src/index.js';
+
+// 200x160: pared gris (150) con una "silla" oscura (40) con 2 huecos finos entre listones; un "marco" claro y fino pegado a un pasillo oscuro;
+// y un objeto grande del color de la pared (un refrigerador blanco) que NO es fino.
+const GW = 200, GH = 160;
+function escena() {
+  const data = new Uint8ClampedArray(GW * GH * 4);
+  const set = (x, y, v) => { const i = (y * GW + x) * 4; data[i] = v; data[i + 1] = v; data[i + 2] = v; data[i + 3] = 255; };
+  for (let y = 0; y < GH; y++) for (let x = 0; x < GW; x++) set(x, y, 150); // pared
+  const silla = (x, y) => x >= 70 && x < 130 && y >= 60;                     // silla: poste izq., poste der. y listones
+  const hueco1 = (x, y) => x >= 76 && x < 124 && y >= 80 && y < 92;
+  const hueco2 = (x, y) => x >= 76 && x < 124 && y >= 108 && y < 120;
+  for (let y = 0; y < GH; y++) for (let x = 0; x < GW; x++) if (silla(x, y) && !hueco1(x, y) && !hueco2(x, y)) set(x, y, 40);
+  for (let y = 20; y < GH; y++) for (let x = 0; x < 20; x++) set(x, y, 40);    // pasillo oscuro a la izquierda
+  for (let y = 20; y < GH; y++) for (let x = 20; x < 28; x++) set(x, y, 150);  // "marco" del color de la pared, fino, entre el pasillo y la pared
+  for (let y = 10; y < 70; y++) for (let x = 150; x < 190; x++) set(x, y, 150); // objeto grande del color de la pared
+  return { data, width: GW, height: GH };
+}
+const paredSinSilla = () => {
+  const m = new Uint8Array(GW * GH);
+  for (let y = 0; y < GH; y++) for (let x = 0; x < GW; x++) {
+    const enSilla = x >= 70 && x < 130 && y >= 60;
+    const enPasillo = y >= 20 && x < 28;
+    const enObjeto = x >= 150 && x < 190 && y >= 10 && y < 70;
+    if (!enSilla && !enPasillo && !enObjeto) m[y * GW + x] = 1;
+  }
+  return m;
+};
+
+test('relleno de huecos: pinta la pared que se ve entre los listones, no el marco ni el objeto grande', () => {
+  const w = { kind: 'pared', name: 'Pared', mask: paredSinSilla() };
+  fillThinGaps([w], escena(), { thinR: 8, maxDist: 80, sandwich: 20, maxAdd: 0.2 });
+  assert.equal(w.mask[85 * GW + 100], 1, 'hueco 1 (entre listones) relleno');
+  assert.equal(w.mask[114 * GW + 100], 1, 'hueco 2 (entre listones) relleno');
+  assert.equal(w.mask[100 * GW + 72], 0, 'el poste de la silla sigue afuera');
+  assert.equal(w.mask[100 * GW + 24], 0, 'el marco (fino, pegado al pasillo) NO se rellena');
+  assert.equal(w.mask[40 * GW + 170], 0, 'un objeto grande del color de la pared NO se rellena');
+});
+
+test('relleno de huecos: sin objetos oscuros no toca nada', () => {
+  const data = new Uint8ClampedArray(GW * GH * 4).fill(150);
+  for (let i = 3; i < data.length; i += 4) data[i] = 255;
+  const m = new Uint8Array(GW * GH).fill(1);
+  const w = { kind: 'pared', name: 'Pared', mask: m.slice() };
+  fillThinGaps([w], { data, width: GW, height: GH }, { thinR: 8 });
+  assert.deepEqual([...w.mask], [...m]);
+});
