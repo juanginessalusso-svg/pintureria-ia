@@ -138,6 +138,40 @@ test('?tenant= tiene prioridad sobre el dominio solo si allowTenantParam; si no,
   }
 });
 
+test('sucursales: CRUD, normaliza el WhatsApp, valida y es público solo lo activo', async () => {
+  const c = client();
+  await c.login('a', 'clave-de-prueba-A1');
+  const rc = await c.call('POST', '/api/admin/branches', { name: 'Río Cuarto', address: 'Av. Ejemplo 123', whatsapp: '+54 358 490-7406' });
+  assert.equal(rc.status, 201);
+  assert.equal(rc.body.whatsapp, '543584907406'); // solo dígitos
+  const ch = await c.call('POST', '/api/admin/branches', { name: 'Chivilcoy', whatsapp: '5492346362231', position: 1 });
+  assert.equal(ch.status, 201);
+  const off = await c.call('POST', '/api/admin/branches', { name: 'Cerrada', active: false });
+  assert.equal(off.status, 201);
+  assert.equal((await c.call('POST', '/api/admin/branches', { name: 'Mala', whatsapp: '123' })).status, 400);
+  assert.equal((await c.call('POST', '/api/admin/branches', { name: 'Río Cuarto' })).status, 409);
+
+  const pub = await (await fetch(`${base}/api/public/branches?tenant=a`)).json();
+  assert.deepEqual(pub.map((b) => b.name), ['Río Cuarto', 'Chivilcoy']); // sin la inactiva, ordenadas por posición
+  assert.equal(pub[0].active, undefined);
+
+  const upd = await c.call('PUT', `/api/admin/branches/${ch.body.id}`, { name: 'Chivilcoy', whatsapp: '', position: 1 });
+  assert.equal(upd.body.whatsapp, ''); // vacío = usa el de la pinturería
+  assert.equal((await c.call('DELETE', `/api/admin/branches/${off.body.id}`)).status, 204);
+});
+
+test('AISLAMIENTO sucursales: otra pinturería no las ve ni las toca', async () => {
+  const a = client(), b = client();
+  await a.login('a', 'clave-de-prueba-A1');
+  await b.login('b', 'clave-de-prueba-B1');
+  const mine = (await a.call('GET', '/api/admin/branches')).body[0];
+  assert.ok(mine);
+  assert.equal((await b.call('GET', '/api/admin/branches')).body.length, 0);
+  assert.equal((await b.call('PUT', `/api/admin/branches/${mine.id}`, { name: 'Hack' })).status, 404);
+  assert.equal((await b.call('DELETE', `/api/admin/branches/${mine.id}`)).status, 404);
+  assert.equal((await (await fetch(`${base}/api/public/branches?tenant=b`)).json()).length, 0);
+});
+
 test('público: colores inactivos no aparecen', async () => {
   const c = client();
   await c.login('a', 'clave-de-prueba-A1');

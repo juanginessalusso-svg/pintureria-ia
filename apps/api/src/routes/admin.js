@@ -5,6 +5,7 @@ import {
   readCookie, requireAuth, sessionId, verifyAgainstDummy, verifyPassword,
 } from '../auth.js';
 import { catalog, colorSchema, productSchema, settingsSchema } from '../catalog.js';
+import { branches, branchSchema } from '../branches.js';
 
 const loginSchema = z.object({ tenant: z.string().min(1).max(60), username: z.string().min(1).max(60), password: z.string().min(1).max(200) });
 const passwordSchema = z.object({ current: z.string().min(1).max(200), next: z.string().min(10).max(200) });
@@ -15,6 +16,7 @@ const idOf = (req) => Number.parseInt(req.params.id, 10);
 export function adminRoutes(db, { secureCookies = false } = {}) {
   const r = Router();
   const cat = catalog(db);
+  const branchRepo = branches(db);
   const limiter = createLoginLimiter();
   const auth = requireAuth(db);
 
@@ -95,6 +97,28 @@ export function adminRoutes(db, { secureCookies = false } = {}) {
   });
   r.delete('/colors/:id', (req, res) =>
     cat.deleteColor(req.session.tenantId, idOf(req)) ? res.status(204).end() : res.status(404).json({ error: 'no_encontrado' }));
+
+  // ---- sucursales ---------------------------------------------------------
+  r.get('/branches', (req, res) => res.json(branchRepo.list(req.session.tenantId)));
+  r.post('/branches', (req, res) => {
+    try {
+      res.status(201).json(branchRepo.create(req.session.tenantId, branchSchema.parse(req.body)));
+    } catch (e) {
+      if (isUnique(e)) return res.status(409).json({ error: 'sucursal_repetida' });
+      throw e;
+    }
+  });
+  r.put('/branches/:id', (req, res) => {
+    try {
+      const b = branchRepo.update(req.session.tenantId, idOf(req), branchSchema.parse(req.body));
+      b ? res.json(b) : res.status(404).json({ error: 'no_encontrado' });
+    } catch (e) {
+      if (isUnique(e)) return res.status(409).json({ error: 'sucursal_repetida' });
+      throw e;
+    }
+  });
+  r.delete('/branches/:id', (req, res) =>
+    branchRepo.remove(req.session.tenantId, idOf(req)) ? res.status(204).end() : res.status(404).json({ error: 'no_encontrado' }));
 
   // ---- productos ----------------------------------------------------------
   r.get('/products', (req, res) => res.json(cat.listProducts(req.session.tenantId)));

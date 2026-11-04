@@ -18,9 +18,9 @@ export function cleanWhatsapp(raw) {
  * { shop, color?:{name,code}, product:{name,sku}, coats, m2, liters, cans:{items,total_cents,total_liters,leftover_liters}|null,
  *   margin?, ref?, date? }
  */
-export function buildBudgetMessage({ shop, color, product, coats, m2, liters, cans, margin = 0.1, ref, date }) {
+export function buildBudgetMessage({ shop, branch, color, product, coats, m2, liters, cans, margin = 0.1, ref, date }) {
   const lines = [
-    `Hola${shop ? ` ${shop}` : ''}! Quiero consultar este presupuesto que armé en el visualizador:`,
+    `Hola${shop ? ` ${shop}` : ''}${branch ? ` (sucursal ${branch})` : ''}! Quiero consultar este presupuesto que armé en el visualizador:`,
     '',
   ];
   if (color) lines.push(`🎨 Color: ${color.name}${color.code ? ` (${color.code})` : ''}`);

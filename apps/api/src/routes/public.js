@@ -1,9 +1,11 @@
 import { Router } from 'express';
 import { catalog } from '../catalog.js';
+import { branches } from '../branches.js';
 
 /** Datos que ve el cliente final. Siempre filtrados por req.tenant (lo resuelve tenantMiddleware). */
 export function publicRoutes(db) {
   const cat = catalog(db);
+  const branchRepo = branches(db);
   const r = Router();
 
   r.get('/tenant', (req, res) => {
@@ -17,6 +19,11 @@ export function publicRoutes(db) {
         id, code, name, family, hex, lab: { L: lab_l, a: lab_a, b: lab_b },
       })),
     );
+  });
+
+  // Sucursales activas (el cliente elige a cuál le manda el presupuesto por WhatsApp).
+  r.get('/branches', (req, res) => {
+    res.json(branchRepo.list(req.tenant.id, { onlyActive: true }).map(({ id, name, address, whatsapp }) => ({ id, name, address, whatsapp })));
   });
 
   r.get('/products', (req, res) => {

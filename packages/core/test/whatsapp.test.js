@@ -37,6 +37,11 @@ test('mensaje: trae color, producto, manos, m², litros, latas y total', () => {
   }
 });
 
+test('mensaje: nombra la sucursal elegida y no la menciona si no hay', () => {
+  assert.ok(buildBudgetMessage(ejemplo({ branch: 'Chivilcoy' })).includes('Hola Pinturería Demo (sucursal Chivilcoy)!'));
+  assert.ok(!buildBudgetMessage(ejemplo()).includes('sucursal'));
+});
+
 test('mensaje: sin color ni precios no inventa líneas', () => {
   const sinPrecio = [{ liters: 4, price_cents: 0 }];
   const liters = 3;

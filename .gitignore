@@ -9,3 +9,6 @@ dist/
 eval/visualizador/fotos/*
 !eval/visualizador/fotos/.gitkeep
 eval/visualizador/salidas/
+
+# Datos de terceros (carta Tersuave): se generan con el script, no se versionan
+colores-tersuave*.json

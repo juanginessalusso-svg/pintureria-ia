@@ -34,7 +34,7 @@ export const productSchema = z.object({
 export const settingsSchema = z.object({
   name: z.string().trim().min(1).max(80),
   whatsapp: z.string().trim().regex(/^(\d{8,15})?$/, 'solo dígitos con código de país, ej: 5491112345678'),
-  logo_url: z.string().trim().max(500).regex(/^(https:\/\/.+)?$/, 'debe empezar con https://'),
+  logo_url: z.string().trim().max(500).regex(/^(https:\/\/.+|\/uploads\/[\w.-]+)?$/, 'debe empezar con https:// o ser un archivo de /uploads/'),
   primary_color: hex,
 });
 

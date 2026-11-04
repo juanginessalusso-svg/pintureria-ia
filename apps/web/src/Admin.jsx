@@ -24,12 +24,13 @@ export function Admin() {
         <span class="muted">{me.username} · <button class="link" onClick={salir}>Salir</button></span>
       </header>
       <nav class="tabs">
-        {['colores', 'productos', 'ajustes', 'cuenta'].map((t) => (
+        {['colores', 'productos', 'sucursales', 'ajustes', 'cuenta'].map((t) => (
           <button class={tab === t ? 'on' : ''} onClick={() => setTab(t)}>{t[0].toUpperCase() + t.slice(1)}</button>
         ))}
       </nav>
       {tab === 'colores' && <Colors />}
       {tab === 'productos' && <Products />}
+      {tab === 'sucursales' && <Branches />}
       {tab === 'ajustes' && <Settings />}
       {tab === 'cuenta' && <Account />}
     </main>
@@ -77,6 +78,13 @@ const EMPTY_COLOR = { code: '', name: '', family: '', hex: '#cccccc', active: tr
 function Colors() {
   const { rows, err, setErr, reload } = useList('/admin/colors');
   const [f, setF] = useState(EMPTY_COLOR);
+  const [q, setQ] = useState('');
+  // Con cartas grandes (cientos de colores) se filtra por texto y se muestran los primeros 200.
+  const norm = (s) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+  const filtered = (all) => {
+    const nq = norm(q.trim());
+    return (all ?? []).filter((c) => !nq || norm(`${c.name} ${c.code} ${c.family}`).includes(nq));
+  };
   const [editing, setEditing] = useState(null);
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
 
@@ -109,10 +117,16 @@ function Colors() {
         </div>
       </form>
       {err && <p class="err">{err}</p>}
+      {(rows?.length ?? 0) > 20 && (
+        <div class="row">
+          <input class="search" type="search" placeholder="Buscar por nombre, código o familia" value={q} onInput={(e) => setQ(e.target.value)} />
+          <span class="muted small">{filtered(rows).length} de {rows.length}{filtered(rows).length > 200 ? ' (mostrando 200)' : ''}</span>
+        </div>
+      )}
       <table>
         <thead><tr><th></th><th>Código</th><th>Nombre</th><th>Familia</th><th>Hex</th><th>LAB</th><th></th></tr></thead>
         <tbody>
-          {(rows ?? []).map((c) => (
+          {filtered(rows).slice(0, 200).map((c) => (
             <tr class={c.active ? '' : 'off'}>
               <td><span class="sw" style={{ background: c.hex }} /></td>
               <td>{c.code}</td><td>{c.name}</td><td>{c.family}</td><td>{c.hex}</td>
@@ -202,6 +216,61 @@ function Products() {
         </tbody>
       </table>
       {rows?.length === 0 && <p class="muted">Todavía no cargaste productos.</p>}
+    </section>
+  );
+}
+
+const EMPTY_BRANCH = { name: '', address: '', whatsapp: '', active: true, position: 0 };
+
+function Branches() {
+  const { rows, err, setErr, reload } = useList('/admin/branches');
+  const [f, setF] = useState(EMPTY_BRANCH);
+  const [editing, setEditing] = useState(null);
+  const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
+
+  const guardar = async (e) => {
+    e.preventDefault(); setErr('');
+    try {
+      await api(editing ? `/admin/branches/${editing}` : '/admin/branches', { method: editing ? 'PUT' : 'POST', body: { ...f, position: Number(f.position) || 0 } });
+      setF(EMPTY_BRANCH); setEditing(null); reload();
+    } catch (x) { setErr(mensaje(x)); }
+  };
+  const borrar = async (b) => {
+    if (!confirm(`¿Borrar la sucursal "${b.name}"?`)) return;
+    try { await api(`/admin/branches/${b.id}`, { method: 'DELETE' }); reload(); } catch (x) { setErr(mensaje(x)); }
+  };
+  const editar = (b) => { setEditing(b.id); setF({ name: b.name, address: b.address, whatsapp: b.whatsapp, active: b.active, position: b.position }); };
+
+  return (
+    <section>
+      <p class="muted small">
+        Cada sucursal puede tener su propio WhatsApp. Si cargás 2 o más, el cliente elige a cuál le manda el presupuesto.
+        Si una sucursal no tiene número propio, se usa el de "Ajustes". Con una sola sucursal se usa directamente.
+      </p>
+      <form onSubmit={guardar} class="card grid">
+        <label>Nombre<input value={f.name} onInput={set('name')} placeholder="Río Cuarto - Centro" required /></label>
+        <label>Dirección<input value={f.address} onInput={set('address')} /></label>
+        <label>WhatsApp<input value={f.whatsapp} onInput={set('whatsapp')} placeholder="5493584907406" inputmode="tel" /></label>
+        <label>Orden<input type="number" min="0" max="999" value={f.position} onInput={set('position')} /></label>
+        <label class="check"><input type="checkbox" checked={f.active} onChange={(e) => setF({ ...f, active: e.target.checked })} /> Visible para clientes</label>
+        <div class="row">
+          <button class="primary">{editing ? 'Guardar cambios' : 'Agregar sucursal'}</button>
+          {editing && <button type="button" onClick={() => { setEditing(null); setF(EMPTY_BRANCH); }}>Cancelar</button>}
+        </div>
+      </form>
+      {err && <p class="err">{err}</p>}
+      <table>
+        <thead><tr><th>Orden</th><th>Nombre</th><th>Dirección</th><th>WhatsApp</th><th></th></tr></thead>
+        <tbody>
+          {(rows ?? []).map((b) => (
+            <tr class={b.active ? '' : 'off'}>
+              <td>{b.position}</td><td>{b.name}</td><td>{b.address}</td><td>{b.whatsapp || <span class="muted">usa el de Ajustes</span>}</td>
+              <td class="row"><button onClick={() => editar(b)}>Editar</button><button onClick={() => borrar(b)}>Borrar</button></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {rows?.length === 0 && <p class="muted">Todavía no cargaste sucursales.</p>}
     </section>
   );
 }

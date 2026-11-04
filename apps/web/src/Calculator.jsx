@@ -15,7 +15,8 @@ const PRESETS = [
  *  - m² a partir de la pared marcada (visible) y la escala calibrada, o ingresados a mano;
  *  - litros = m² × manos ÷ rendimiento × 1,10;  latas: menor costo que cubra los litros.
  */
-export function Calculator({ wallPx, calib, products, tenant, color, getImageBlob, onStartCalib, onResetCalib }) {
+export function Calculator({ wallPx, calib, products, branches = [], tenant, color, getImageBlob, onStartCalib, onResetCalib }) {
+  const [branchId, setBranchId] = useState(null);
   const [copied, setCopied] = useState(false);
   const [shareMsg, setShareMsg] = useState('');
   // Referencia corta del presupuesto: ayuda a la pinturería a encontrarlo en el chat. No se guarda en ningún lado.
@@ -43,11 +44,16 @@ export function Calculator({ wallPx, calib, products, tenant, color, getImageBlo
     return { liters, cans: suggestCans(liters, product.sizes) };
   }, [m2, product, coats]);
 
+  // Sucursal: con 1 sola se usa directo; con 2 o más el cliente elige (sin preselección, para no mandar el presupuesto a la equivocada).
+  const branch = branches.length === 1 ? branches[0] : branches.find((b) => b.id === branchId) ?? null;
+  const needsBranch = branches.length >= 2 && !branch;
+  const number = branch?.whatsapp || tenant?.whatsapp; // la sucursal puede no tener número propio
+
   const message = useMemo(() => (calc ? buildBudgetMessage({
-    shop: tenant?.name, color, product, coats, m2, liters: calc.liters, cans: calc.cans, margin: DEFAULT_MARGIN, ref,
+    shop: tenant?.name, branch: branch?.name, color, product, coats, m2, liters: calc.liters, cans: calc.cans, margin: DEFAULT_MARGIN, ref,
     date: new Date().toLocaleDateString('es-AR'),
-  }) : ''), [calc, tenant, color, product, coats, m2]);
-  const hasNumber = !!cleanWhatsapp(tenant?.whatsapp);
+  }) : ''), [calc, tenant, branch, color, product, coats, m2]);
+  const hasNumber = !!cleanWhatsapp(number);
   const canShareImage = typeof navigator !== 'undefined' && !!navigator.canShare && navigator.canShare({ files: [new File([], 'a.png', { type: 'image/png' })] });
 
   const copy = async () => {
@@ -139,12 +145,25 @@ export function Calculator({ wallPx, calib, products, tenant, color, getImageBlo
             </>
           ) : <p class="muted small">Este producto no tiene presentaciones cargadas.</p>}
 
+          {branches.length >= 2 && (
+            <label class="branch">¿A qué sucursal le enviás el presupuesto?
+              <select value={branchId ?? ''} onChange={(e) => setBranchId(e.target.value ? Number(e.target.value) : null)}>
+                <option value="">Elegí una sucursal…</option>
+                {branches.map((b) => <option value={b.id}>{b.name}{b.address ? ` — ${b.address}` : ''}</option>)}
+              </select>
+            </label>
+          )}
+          {branches.length === 1 && <p class="muted small">Sucursal: <strong>{branches[0].name}</strong>{branches[0].address ? ` — ${branches[0].address}` : ''}</p>}
+
           <div class="row wa-row">
-            <a class="btn wa" href={whatsappUrl(tenant?.whatsapp, message)} target="_blank" rel="noopener noreferrer">💬 Enviar presupuesto por WhatsApp</a>
+            {needsBranch
+              ? <button class="btn wa" disabled title="Elegí una sucursal">💬 Enviar presupuesto por WhatsApp</button>
+              : <a class="btn wa" href={whatsappUrl(number, message)} target="_blank" rel="noopener noreferrer">💬 Enviar presupuesto por WhatsApp</a>}
             <button onClick={copy}>{copied ? '✓ Copiado' : 'Copiar texto'}</button>
             {canShareImage && color && <button onClick={shareImage}>🖼️ Compartir con la imagen</button>}
           </div>
-          {!hasNumber && <p class="muted small">Esta pinturería no cargó su número: WhatsApp te va a dejar elegir a quién enviarlo.</p>}
+          {needsBranch && <p class="muted small">Elegí la sucursal para habilitar el envío.</p>}
+          {!needsBranch && !hasNumber && <p class="muted small">Esta pinturería no cargó su número: WhatsApp te va a dejar elegir a quién enviarlo.</p>}
           {shareMsg && <p class="err small">{shareMsg}</p>}
           <p class="muted small">🔒 Se abre WhatsApp con el mensaje ya escrito; no se envía nada hasta que vos toques Enviar. No se adjunta tu foto ni se guardan tus datos.</p>
         </div>

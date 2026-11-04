@@ -56,3 +56,15 @@ select { font: inherit; padding: 8px; border: 1px solid var(--line); border-radi
 /* ---- whatsapp ---- */
 .wa-row { margin-top: 10px; }
 .btn.wa { background: #25d366; color: #063d1c; border-color: #1ebe5a; text-decoration: none; font-weight: 600; }
+
+.branch { margin: 6px 0; }
+
+/* ---- marca y selector de colores ---- */
+.brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.logo { width: 48px; height: 48px; border-radius: 50%; flex: none; }
+.search { flex: 1; min-width: 200px; width: 100%; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+.chips button { padding: 6px 10px; border-radius: 999px; font-size: .85rem; }
+.chips button.on { background: var(--brand); color: #fff; border-color: var(--brand); }
+.picker .swatches { max-height: 360px; overflow-y: auto; }
+.picked { display: flex; align-items: center; gap: 8px; margin: 8px 0; }

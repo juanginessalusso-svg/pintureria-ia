@@ -3,6 +3,7 @@ import { estimateWhiteBalance, featherMask, recolorWall, cleanMask, unionMasks, 
 import { SamClient } from './samClient.js';
 import { workingSize } from './sam.js';
 import { Calculator } from './Calculator.jsx';
+import { ColorPicker } from './ColorPicker.jsx';
 
 const tenantQ = () => {
   const t = new URLSearchParams(location.search).get('tenant');
@@ -26,6 +27,7 @@ export function Visualizer() {
   const [wb, setWb] = useState(true);
   const [timing, setTiming] = useState({});
   const [products, setProducts] = useState([]);
+  const [branches, setBranches] = useState([]);
   const [wallPx, setWallPx] = useState(0); // píxeles de pared marcados (confirmados + selección en curso)
   const [calib, setCalib] = useState({ tapping: false, pxPerM: null });
 
@@ -46,6 +48,7 @@ export function Visualizer() {
     getJson('tenant').then(setTenant).catch(() => {});
     getJson('colors').then(setColors).catch(() => {});
     getJson('products').then(setProducts).catch(() => {});
+    getJson('branches').then(setBranches).catch(() => {});
     sam.current = new SamClient(({ loaded, total }) => setModel((m) => ({ ...m, loaded, total })));
     ready.current = sam.current.init().then((r) => {
       setModel((m) => ({ ...m, state: 'ready', info: `${r.threads} hilo(s), init ${r.initMs} ms` }));
@@ -226,14 +229,16 @@ export function Visualizer() {
   };
   const hold = (v) => () => { showBefore.current = v; render(); };
 
-  const families = [...new Set(colors.map((c) => c.family))];
   const brand = tenant?.primary_color ?? '#1f6feb';
   const pct = model.total ? Math.round((model.loaded / model.total) * 100) : 0;
 
   return (
     <main class="wrap vis" style={{ '--brand': brand }}>
       <header class="bar">
-        <h1>{tenant ? tenant.name : 'Visualizador de color'}</h1>
+        <div class="brand">
+          {tenant?.logo_url && <img class="logo" src={tenant.logo_url} alt={`Logo de ${tenant.name}`} width="48" height="48" />}
+          <h1>{tenant ? tenant.name : 'Visualizador de color'}</h1>
+        </div>
         <a class="muted" href="/admin">Admin</a>
       </header>
 
@@ -267,17 +272,7 @@ export function Visualizer() {
         {walls > 0 && <p class="muted small">Paredes confirmadas: {walls}</p>}
 
         <h3>Elegí un color</h3>
-        {families.map((f) => (
-          <div>
-            <div class="muted small">{f}</div>
-            <div class="swatches">
-              {colors.filter((c) => c.family === f).map((c) => (
-                <button class={`sw-btn ${color?.id === c.id ? 'sel' : ''}`} title={`${c.name} (${c.code})`} style={{ background: c.hex }} onClick={() => pick(c)} />
-              ))}
-            </div>
-          </div>
-        ))}
-        {color && <p><strong>{color.name}</strong> <span class="muted">({color.code})</span></p>}
+        <ColorPicker colors={colors} selected={color} onPick={pick} />
 
         <div class="card grid">
           <label>Luminancia
@@ -297,7 +292,7 @@ export function Visualizer() {
           </div>
         </div>
 
-        <Calculator wallPx={wallPx} calib={calib} products={products} tenant={tenant} color={color} getImageBlob={getImageBlob}
+        <Calculator wallPx={wallPx} calib={calib} products={products} branches={branches} tenant={tenant} color={color} getImageBlob={getImageBlob}
           onStartCalib={startCalib} onResetCalib={resetCalib} />
 
         <p class="warn">⚠️ El color en pantalla puede diferir del color real de la pintura (depende de tu pantalla, la luz de la foto y la textura de la pared). Pedí una muestra antes de comprar.</p>

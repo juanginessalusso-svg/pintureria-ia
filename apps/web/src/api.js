@@ -14,6 +14,7 @@ const MENSAJES = {
   demasiados_intentos: 'Demasiados intentos. Probá de nuevo en 15 minutos.',
   codigo_repetido: 'Ya existe un color con ese código.',
   sku_repetido: 'Ya existe un producto con ese SKU.',
+  sucursal_repetida: 'Ya existe una sucursal con ese nombre.',
   no_autenticado: 'La sesión venció. Volvé a entrar.',
 };
 export const mensaje = (e) =>

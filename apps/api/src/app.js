@@ -16,7 +16,7 @@ const CSP = [
   "frame-ancestors 'none'",
 ].join('; ');
 
-export function createApp({ db, webDir, modelsDir, allowTenantParam = false, secureCookies = false } = {}) {
+export function createApp({ db, webDir, modelsDir, uploadsDir, allowTenantParam = false, secureCookies = false } = {}) {
   const app = express();
   app.disable('x-powered-by');
   // Nginx va adelante: confiamos en 1 proxy para leer la IP real del cliente.
@@ -43,6 +43,9 @@ export function createApp({ db, webDir, modelsDir, allowTenantParam = false, sec
 
   // Modelos ONNX (~45 MB): archivos fijos, cacheables por mucho tiempo (el navegador además los guarda en Cache Storage).
   if (modelsDir) app.use('/models', express.static(modelsDir, { maxAge: '30d', immutable: true, index: false, dotfiles: 'deny' }));
+
+  // Logos de las pinturerías (archivos que sube el equipo; viven en el volumen de datos, no en la imagen).
+  if (uploadsDir) app.use('/uploads', express.static(uploadsDir, { maxAge: '1d', index: false, dotfiles: 'deny' }));
 
   if (webDir) {
     app.use(express.static(webDir, {
