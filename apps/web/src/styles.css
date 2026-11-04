@@ -31,7 +31,12 @@ tr.off { opacity: .5; }
 /* ---- visualizador ---- */
 .hide { display: none; }
 .vis h3 { margin: 16px 0 6px; font-size: 1rem; }
-.photo { width: 100%; height: auto; border-radius: 10px; background: #ddd; touch-action: manipulation; cursor: crosshair; }
+.viewport { position: relative; overflow: hidden; border-radius: 10px; background: #ddd; }
+.photo { display: block; width: 100%; height: auto; background: #ddd; touch-action: manipulation; cursor: crosshair; transform-origin: 0 0; user-select: none; -webkit-user-select: none; }
+.ring { position: absolute; left: 0; top: 0; box-sizing: border-box; border: 2px solid #fff; border-radius: 50%; box-shadow: 0 0 0 1px #0009; pointer-events: none; opacity: 0; }
+.zoombar button { min-width: 44px; min-height: 40px; }
+.brushsize { display: flex; align-items: center; gap: 10px; margin: 4px 0; }
+.brushsize input { flex: 1; }
 .btn { display: inline-block; padding: 10px 14px; border: 1px solid var(--line); border-radius: 8px; background: #fff; cursor: pointer; }
 .btn.primary { background: var(--brand); color: #fff; border-color: var(--brand); }
 .swatches { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 10px; }

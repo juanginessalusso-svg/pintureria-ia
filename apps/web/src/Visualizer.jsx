@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { estimateWhiteBalance, featherMask, recolorWall, cleanMask, pxPerMeter, wallPixels } from '@pintureria/core';
+import { estimateWhiteBalance, featherMask, recolorWall, cleanMask, pxPerMeter, wallPixels, paintStroke, maskCount } from '@pintureria/core';
 import { SamClient } from './samClient.js';
 import { workingSize } from './sam.js';
 import { Calculator } from './Calculator.jsx';
@@ -12,6 +12,12 @@ const tenantQ = () => {
 const getJson = (path) => fetch(`/api/public/${path}${tenantQ()}`).then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))));
 const mb = (n) => (n / 1048576).toFixed(0);
 
+const MAX_ZOOM = 8;
+const MAX_SURF_UNDO = 8;
+const DRAG_PX = 4; // cuánto hay que mover el dedo para que un toque pase a ser arrastre
+const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+const viewTransform = (v) => `translate(${v.tx}px, ${v.ty}px) scale(${v.s})`;
+
 export function Visualizer() {
   const [tenant, setTenant] = useState(null);
   const [colors, setColors] = useState([]);
@@ -21,7 +27,11 @@ export function Visualizer() {
   const [points, setPoints] = useState([]);
   const [surfList, setSurfList] = useState([]); // superficies confirmadas (para la lista): {id, name, color}
   const [activeId, setActiveId] = useState(null); // superficie seleccionada en la lista: el próximo color es para ella
-  const [mode, setMode] = useState(1); // 1 = "es pared", 0 = "no es pared"
+  const [mode, setMode] = useState('pos'); // 'pos' es pared · 'neg' no es pared · 'brush' pincel · 'erase' borrador · 'pan' mover
+  const [radius, setRadius] = useState(22); // radio del pincel en píxeles de PANTALLA
+  const [zoom, setZoom] = useState(1);
+  const [, setTick] = useState(0); // fuerza re-render cuando cambian refs que la interfaz lee (trazos, deshacer)
+  const bump = () => setTick((t) => t + 1);
   const [color, setColor] = useState(null);
   const [lum, setLum] = useState('relative');
   const [intensity, setIntensity] = useState(1);
@@ -44,6 +54,19 @@ export function Visualizer() {
   const result = useRef(null); // imagen recoloreada
   const showBefore = useRef(false);
   const colorRef = useRef(null); // color elegido, legible desde render() sin quedar "viejo" en una clausura
+  // pincel / borrador
+  const samMask = useRef(null); // máscara de SAM (ya limpia) de la selección en curso; current = samMask + strokes
+  const strokes = useRef([]); // trazos de la selección en curso: { erase, r (px de imagen), pts }
+  const surfUndo = useRef([]); // snapshots de máscaras de superficies, para deshacer trazos sobre ellas
+  const stroke = useRef(null); // trazo en vivo
+  const rafId = useRef(0);
+  // zoom / desplazamiento
+  const viewportRef = useRef(null);
+  const ringRef = useRef(null);
+  const view = useRef({ s: 1, tx: 0, ty: 0 });
+  const pointers = useRef(new Map()); // pointerId -> {x, y} en coordenadas de pantalla
+  const gesture = useRef(null);
+  const suppressClick = useRef(false); // ignora el click que el navegador manda después de un arrastre/trazo/pellizco
 
   // ---- carga inicial: datos de la pinturería y modelo ----
   useEffect(() => {
@@ -58,17 +81,28 @@ export function Visualizer() {
     return () => sam.current?.terminate();
   }, []);
 
+  // Si cambia el ancho (girar el celular, redimensionar la ventana), el desplazamiento se vuelve a acomodar para no dejar bordes vacíos.
+  useEffect(() => {
+    const onResize = () => applyView();
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+
   // ---- dibujo ----
   const render = () => {
     const c = canvasRef.current, p = photo.current;
     if (!c || !p) return;
     if (c.width !== p.width) { c.width = p.width; c.height = p.height; }
-    const base = !showBefore.current && result.current ? result.current : p;
+    // Mientras se arrastra un trazo se muestra la foto original con velo azul sobre la máscara que se edita
+    // (selección en curso o superficie), así se ve al instante qué se agrega o se saca. Al soltar se recolorea.
+    const live = stroke.current?.target ?? null;
+    const base = !live && !showBefore.current && result.current ? result.current : p;
     let data = base.data;
-    if (current.current && !(result.current && !showBefore.current && colorRef.current)) {
+    const veil = live ?? (current.current && !(result.current && !showBefore.current && colorRef.current) ? current.current : null);
+    if (veil) {
       // resalta la selección en curso con un velo azul
       data = new Uint8ClampedArray(base.data);
-      const m = current.current;
+      const m = veil;
       for (let i = 0; i < m.length; i++) if (m[i]) {
         const q = i * 4;
         data[q] = data[q] * 0.55 + 31 * 0.45; data[q + 1] = data[q + 1] * 0.55 + 111 * 0.45; data[q + 2] = data[q + 2] * 0.55 + 235 * 0.45;
@@ -137,6 +171,8 @@ export function Visualizer() {
       photo.current = { data: img.data, width, height };
       gains.current = estimateWhiteBalance(photo.current);
       current.current = null; surfaces.current = []; surfSeq.current = 0; result.current = null; pointsRef.current = [];
+      samMask.current = null; strokes.current = []; surfUndo.current = []; stroke.current = null; gesture.current = null; pointers.current.clear();
+      view.current = { s: 1, tx: 0, ty: 0 }; applyView();
       calibRef.current = { tapping: false, pts: [], pxPerM: null, meters: 0 }; setCalib({ tapping: false, pxPerM: null }); setWallPx(0);
       setPoints([]); setSurfList([]); setActiveId(null); setHasPhoto(true); render();
 
@@ -152,11 +188,20 @@ export function Visualizer() {
   };
 
   // ---- selección ----
+  // Máscara de la selección en curso = copia de la de SAM (o vacía) + los trazos repetidos en orden.
+  const compose = () => {
+    const p = photo.current;
+    const m = samMask.current ? samMask.current.slice() : new Uint8Array(p.width * p.height);
+    for (const s of strokes.current) paintStroke(m, p.width, p.height, s.pts, s.r, s.erase ? 0 : 1);
+    return m;
+  };
+  const recompose = () => (samMask.current || strokes.current.length ? compose() : null);
   const runSegment = async (pts, fresh) => {
     setStatus('Detectando pared…');
     const r = await sam.current.segment(pts, fresh);
     const p = photo.current;
-    current.current = cleanMask(new Uint8Array(r.mask), p.width, p.height);
+    samMask.current = cleanMask(new Uint8Array(r.mask), p.width, p.height);
+    current.current = compose(); // los trazos de pincel/borrador se vuelven a aplicar encima del resultado nuevo de SAM
     pointsRef.current = pts; setPoints(pts);
     setTiming((t) => ({ ...t, segMs: r.ms }));
     setStatus('Si falta o sobra algo, tocá de nuevo (verde = es pared, rojo = no es pared).');
@@ -191,39 +236,212 @@ export function Visualizer() {
     render();
   };
 
+  // Pasa un punto de pantalla (clientX/Y) a coordenadas de la foto. getBoundingClientRect() ya incluye el zoom y el desplazamiento
+  // (el CSS transform), así que el mapeo sigue valiendo con la foto ampliada: el toque cae donde se toca.
+  const toImg = (clientX, clientY) => {
+    const p = photo.current, rect = canvasRef.current.getBoundingClientRect();
+    return { x: ((clientX - rect.left) * p.width) / rect.width, y: ((clientY - rect.top) * p.height) / rect.height };
+  };
+
   const onCanvasClick = async (e) => {
+    if (suppressClick.current) { suppressClick.current = false; return; } // era el final de un arrastre, trazo o pellizco
     const p = photo.current;
     if (!p) return;
-    const rect = e.currentTarget.getBoundingClientRect();
-    const pt = { x: ((e.clientX - rect.left) * p.width) / rect.width, y: ((e.clientY - rect.top) * p.height) / rect.height, label: mode };
+    const pt = { ...toImg(e.clientX, e.clientY), label: mode === 'neg' ? 0 : 1 };
     if (calibRef.current.tapping) return calibClick(pt);
+    if (mode !== 'pos' && mode !== 'neg') return; // pincel, borrador y mover no marcan puntos de SAM
     if (model.state !== 'ready') return;
     try { await runSegment([...pointsRef.current, pt], pointsRef.current.length === 0); }
     catch (err) { setStatus(`Error: ${err.message}`); }
   };
+
+  // Deshacer unificado: con una superficie seleccionada en la lista deshace sus trazos; si no, el último trazo de la
+  // selección en curso; si no, el último punto de SAM.
+  const canUndo = activeId ? surfUndo.current.some((u) => u.id === activeId) : strokes.current.length > 0 || points.length > 0;
   const undo = async () => {
+    if (activeId) {
+      const i = surfUndo.current.map((u) => u.id).lastIndexOf(activeId);
+      if (i < 0) return;
+      const [snap] = surfUndo.current.splice(i, 1);
+      const s = surfaces.current.find((x) => x.id === activeId);
+      if (s) s.mask = snap.mask;
+      repaint(); bump();
+      return;
+    }
+    if (strokes.current.length) {
+      strokes.current.pop();
+      current.current = recompose();
+      repaint(); bump();
+      return;
+    }
     const pts = pointsRef.current.slice(0, -1);
-    if (!pts.length) { current.current = null; pointsRef.current = []; setPoints([]); await sam.current.call('reset'); repaint(); return; }
+    if (!pts.length) { current.current = null; samMask.current = null; pointsRef.current = []; setPoints([]); await sam.current.call('reset'); repaint(); return; }
     await runSegment(pts, true);
   };
+
+  // ---- pincel y borrador ----
+  const startStroke = (e) => {
+    const p = photo.current, rect = canvasRef.current.getBoundingClientRect();
+    const rImg = radius * (p.width / rect.width); // radio en pantalla -> en píxeles de la foto: con más zoom, más preciso
+    const surf = activeId ? surfaces.current.find((s) => s.id === activeId) : null;
+    let target;
+    if (surf) {
+      target = surf.mask;
+      surfUndo.current.push({ id: surf.id, mask: target.slice() });
+      if (surfUndo.current.length > MAX_SURF_UNDO) surfUndo.current.shift();
+    } else {
+      if (!current.current) current.current = new Uint8Array(p.width * p.height);
+      target = current.current;
+    }
+    const pt = toImg(e.clientX, e.clientY);
+    stroke.current = { erase: mode === 'erase', r: rImg, pts: [pt], target, surfId: surf?.id ?? null, base: target.slice() };
+    paintStroke(target, p.width, p.height, [pt], rImg, stroke.current.erase ? 0 : 1);
+    scheduleRender();
+  };
+  const extendStroke = (e) => {
+    const s = stroke.current, p = photo.current;
+    if (!s) return;
+    for (const ev of e.getCoalescedEvents?.() ?? [e]) {
+      const pt = toImg(ev.clientX, ev.clientY), last = s.pts[s.pts.length - 1];
+      s.pts.push(pt);
+      paintStroke(s.target, p.width, p.height, [last, pt], s.r, s.erase ? 0 : 1);
+    }
+    scheduleRender();
+  };
+  const endStroke = () => {
+    const s = stroke.current;
+    stroke.current = null;
+    if (!s) return;
+    if (!s.surfId) strokes.current.push({ erase: s.erase, r: s.r, pts: s.pts }); // ya está pintado en current: no hace falta recomponer
+    repaint(); bump();
+  };
+  const discardStroke = () => { // un segundo dedo apoyado: era un pellizco, no un trazo
+    const s = stroke.current;
+    stroke.current = null;
+    if (!s) return;
+    if (s.surfId) { s.target.set(s.base); surfUndo.current.pop(); } else current.current = recompose();
+    render();
+  };
+  const scheduleRender = () => {
+    if (rafId.current) return;
+    rafId.current = requestAnimationFrame(() => { rafId.current = 0; render(); });
+  };
+
+  // ---- zoom y desplazamiento ----
+  const applyView = () => {
+    const v = view.current, vp = viewportRef.current, c = canvasRef.current;
+    const box = vp?.getBoundingClientRect(); // el viewport no se transforma; getBoundingClientRect da el alto fraccionario (clientHeight redondea)
+    const w = box?.width ?? 0, h = box?.height ?? 0;
+    v.s = clamp(v.s, 1, MAX_ZOOM);
+    v.tx = clamp(v.tx, w - w * v.s, 0); // el canvas (w×h sin transformar) siempre tapa el viewport
+    v.ty = clamp(v.ty, h - h * v.s, 0);
+    if (c) c.style.transform = viewTransform(v);
+    setZoom(v.s);
+  };
+  const zoomAt = (factor, cx, cy) => { // (cx, cy) en coordenadas del viewport: ese punto de la foto queda quieto
+    const v = view.current, s2 = clamp(v.s * factor, 1, MAX_ZOOM), k = s2 / v.s;
+    v.tx = cx - (cx - v.tx) * k; v.ty = cy - (cy - v.ty) * k; v.s = s2;
+    applyView();
+  };
+  const zoomCenter = (factor) => { const r = viewportRef.current.getBoundingClientRect(); zoomAt(factor, r.width / 2, r.height / 2); };
+  const fitView = () => { view.current = { s: 1, tx: 0, ty: 0 }; applyView(); };
+  const vpPoint = (clientX, clientY) => { const r = viewportRef.current.getBoundingClientRect(); return { x: clientX - r.left, y: clientY - r.top }; };
+
+  const onWheel = (e) => {
+    if (!e.ctrlKey && !e.metaKey) return; // sin ctrl/⌘ la rueda sigue scrolleando la página (el pellizco del trackpad llega como ctrl+rueda)
+    e.preventDefault();
+    const { x, y } = vpPoint(e.clientX, e.clientY);
+    zoomAt(Math.exp(-e.deltaY * 0.0025), x, y);
+  };
+
+  const holdPointer = (e) => { try { canvasRef.current.setPointerCapture(e.pointerId); } catch { /* ya no está activo */ } };
+  const onPointerDown = (e) => {
+    if (!photo.current || (e.pointerType === 'mouse' && e.button !== 0)) return;
+    const ps = pointers.current;
+    if (ps.size === 0) { suppressClick.current = false; gesture.current = null; }
+    ps.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (ps.size === 2) { // pellizco: zoom alrededor del punto medio + desplazamiento
+      if (stroke.current) discardStroke();
+      const [a, b] = [...ps.values()], v = view.current;
+      const mid = vpPoint((a.x + b.x) / 2, (a.y + b.y) / 2);
+      gesture.current = { type: 'pinch', d0: Math.hypot(a.x - b.x, a.y - b.y) || 1, s0: v.s, ax: (mid.x - v.tx) / v.s, ay: (mid.y - v.ty) / v.s };
+      for (const id of ps.keys()) try { canvasRef.current.setPointerCapture(id); } catch { /* ignorar */ }
+      suppressClick.current = true;
+    } else if (ps.size === 1) {
+      if ((mode === 'brush' || mode === 'erase') && !calibRef.current.tapping) {
+        holdPointer(e); suppressClick.current = true;
+        gesture.current = { type: 'stroke' };
+        startStroke(e);
+      } else if (mode === 'pan' || view.current.s > 1) {
+        // Todavía puede ser un toque (click): recién es arrastre cuando se movió DRAG_PX. Sin captura hasta entonces.
+        gesture.current = { type: 'panwait', x: e.clientX, y: e.clientY, tx0: view.current.tx, ty0: view.current.ty };
+      }
+    }
+  };
+  const onPointerMove = (e) => {
+    if (ringRef.current && e.pointerType !== 'touch') { // aro del pincel que sigue al mouse
+      const { x, y } = vpPoint(e.clientX, e.clientY);
+      ringRef.current.style.transform = `translate(${x - radius}px, ${y - radius}px)`;
+      ringRef.current.style.opacity = '1';
+    }
+    const ps = pointers.current, g = gesture.current;
+    if (!ps.has(e.pointerId) || !g) return;
+    ps.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    const v = view.current;
+    if (g.type === 'stroke') extendStroke(e);
+    else if (g.type === 'pinch' && ps.size === 2) {
+      const [a, b] = [...ps.values()];
+      const mid = vpPoint((a.x + b.x) / 2, (a.y + b.y) / 2);
+      v.s = clamp(g.s0 * (Math.hypot(a.x - b.x, a.y - b.y) / g.d0), 1, MAX_ZOOM);
+      v.tx = mid.x - g.ax * v.s; v.ty = mid.y - g.ay * v.s; // el punto de la foto que estaba bajo los dedos los sigue
+      applyView();
+    } else if (g.type === 'panwait' || g.type === 'pan') {
+      if (g.type === 'panwait') {
+        if (Math.hypot(e.clientX - g.x, e.clientY - g.y) < DRAG_PX) return;
+        g.type = 'pan'; holdPointer(e); suppressClick.current = true;
+      }
+      v.tx = g.tx0 + (e.clientX - g.x); v.ty = g.ty0 + (e.clientY - g.y);
+      applyView();
+    }
+  };
+  const onPointerUp = (e) => {
+    const ps = pointers.current, g = gesture.current;
+    if (!ps.delete(e.pointerId)) return;
+    if (g?.type === 'stroke') { endStroke(); gesture.current = null; }
+    else if (g?.type === 'pinch' && ps.size === 1) { // queda un dedo: sigue como desplazamiento
+      const [r] = [...ps.values()];
+      gesture.current = { type: 'pan', x: r.x, y: r.y, tx0: view.current.tx, ty0: view.current.ty };
+    } else if (ps.size === 0) gesture.current = null;
+  };
+  const onPointerLeave = (e) => { if (ringRef.current && e.pointerType !== 'touch') ringRef.current.style.opacity = '0'; };
+
+  const chooseMode = (m) => {
+    setMode(m);
+    if (m === 'brush') setStatus('Pincel: pintá lo que falta de la pared. Con dos dedos hacés zoom para más precisión.');
+    else if (m === 'erase') setStatus('Borrador: pasalo por lo que sobra de la selección.');
+    else if (m === 'pan') setStatus('Mover: arrastrá la foto. También podés ampliar con − / + o pellizcando.');
+  };
+  const touchAction = zoom > 1 || mode === 'brush' || mode === 'erase' || mode === 'pan' ? 'none' : 'pan-y'; // pan-y: se puede scrollear la página
   const syncSurfaces = () => setSurfList(surfaces.current.map(({ id, name, color: c }) => ({ id, name, color: c })));
   const commit = async () => {
     const m = current.current, p = photo.current;
     if (!m) return;
+    if (!maskCount(m)) { setStatus('La selección quedó vacía: marcá una pared antes de confirmar.'); return; }
     // Nombre sugerido: si la mayor parte de la selección está en el 20 % de arriba de la foto, es el techo.
     let sumY = 0, n = 0;
     for (let i = 0; i < m.length; i += 7) if (m[i]) { sumY += Math.floor(i / p.width); n++; }
     const isCeiling = n > 0 && sumY / n / p.height < 0.2 && !surfaces.current.some((s) => s.name === 'Techo');
     const name = isCeiling ? 'Techo' : `Pared ${surfaces.current.filter((s) => /^Pared/.test(s.name)).length + 1}`;
     surfaces.current.push({ id: ++surfSeq.current, name, mask: m, color: colorRef.current });
-    current.current = null; pointsRef.current = []; setPoints([]); setActiveId(null); syncSurfaces();
+    current.current = null; samMask.current = null; strokes.current = []; pointsRef.current = []; setPoints([]); setActiveId(null); syncSurfaces();
     await sam.current.call('reset');
     setStatus(`${name} confirmada. Tocá otra superficie y elegí su color, o tocá una de la lista para cambiarle el color.`);
     repaint();
   };
   const clearAll = async () => {
-    current.current = null; surfaces.current = []; surfSeq.current = 0; result.current = null; pointsRef.current = [];
-    setPoints([]); setSurfList([]); setActiveId(null); await sam.current.call('reset'); render();
+    current.current = null; samMask.current = null; strokes.current = []; surfUndo.current = [];
+    surfaces.current = []; surfSeq.current = 0; result.current = null; pointsRef.current = [];
+    setPoints([]); setSurfList([]); setActiveId(null); setWallPx(0); await sam.current.call('reset'); render();
   };
   const selectSurface = (id) => {
     setActiveId(activeId === id ? null : id);
@@ -231,6 +449,7 @@ export function Visualizer() {
   };
   const removeSurface = (id) => {
     surfaces.current = surfaces.current.filter((s) => s.id !== id);
+    surfUndo.current = surfUndo.current.filter((u) => u.id !== id);
     if (activeId === id) setActiveId(null);
     syncSurfaces(); setTimeout(() => repaint(), 0);
   };
@@ -293,14 +512,35 @@ export function Visualizer() {
       </div>
 
       <div class={hasPhoto ? '' : 'hide'}>
-        <canvas ref={canvasRef} class="photo" onClick={onCanvasClick} />
+        <div ref={viewportRef} class="viewport" onWheel={onWheel}>
+          <canvas ref={canvasRef} class="photo" style={{ touchAction, transform: viewTransform(view.current), cursor: mode === 'pan' || zoom > 1 && mode !== 'brush' && mode !== 'erase' ? 'grab' : 'crosshair' }}
+            onClick={onCanvasClick} onPointerDown={onPointerDown} onPointerMove={onPointerMove}
+            onPointerUp={onPointerUp} onPointerCancel={onPointerUp} onPointerLeave={onPointerLeave} />
+          {(mode === 'brush' || mode === 'erase') && <div ref={ringRef} class="ring" style={{ width: `${radius * 2}px`, height: `${radius * 2}px` }} />}
+        </div>
+        <div class="row zoombar">
+          <button onClick={() => zoomCenter(1 / 1.5)} disabled={zoom <= 1} aria-label="Alejar">−</button>
+          <button onClick={() => zoomCenter(1.5)} disabled={zoom >= MAX_ZOOM} aria-label="Acercar">+</button>
+          <button onClick={fitView} disabled={zoom === 1}>Ajustar</button>
+          <span class="muted small">Zoom {zoom.toFixed(1)}×{zoom === 1 ? ' · pellizcá o ctrl + rueda para ampliar' : ''}</span>
+        </div>
         {status && <p class="muted">{status}</p>}
 
         <div class="row">
-          <button class={mode === 1 ? 'on' : ''} onClick={() => setMode(1)}>🟢 Es pared</button>
-          <button class={mode === 0 ? 'on' : ''} onClick={() => setMode(0)}>🔴 No es pared</button>
-          <button onClick={undo} disabled={!points.length}>↩︎ Deshacer</button>
-          <button onClick={commit} disabled={!points.length}>✔︎ Confirmar superficie</button>
+          <button class={mode === 'pos' ? 'on' : ''} onClick={() => chooseMode('pos')}>🟢 Es pared</button>
+          <button class={mode === 'neg' ? 'on' : ''} onClick={() => chooseMode('neg')}>🔴 No es pared</button>
+          <button class={mode === 'brush' ? 'on' : ''} onClick={() => chooseMode('brush')}>🖌️ Pincel</button>
+          <button class={mode === 'erase' ? 'on' : ''} onClick={() => chooseMode('erase')}>🧽 Borrador</button>
+          <button class={mode === 'pan' ? 'on' : ''} onClick={() => chooseMode('pan')}>✋ Mover</button>
+        </div>
+        {(mode === 'brush' || mode === 'erase') && (
+          <label class="brushsize">Tamaño {radius} px
+            <input type="range" min="6" max="60" step="1" value={radius} onInput={(e) => setRadius(Number(e.target.value))} />
+          </label>
+        )}
+        <div class="row">
+          <button onClick={undo} disabled={!canUndo}>↩︎ Deshacer</button>
+          <button onClick={commit} disabled={!current.current}>✔︎ Confirmar superficie</button>
           <button onClick={clearAll}>Empezar de nuevo</button>
         </div>
 
