@@ -60,7 +60,7 @@ for (const foto of fotos) {
     for (let i = 1; i <= pts.length; i++) r = await sam.segment(pts.slice(0, i).map((p) => ({ x: p.x, y: p.y, label: 1 }))); // clic a clic, como la app
     return cleanMask(r.mask, width, height);
   };
-  const lista = await detectSurfaces(img, segment, { ...(process.env.LINES ? { debugLines: [10, 16, 24, 36] } : {}), ...(process.env.AUTO_OPTS ? JSON.parse(process.env.AUTO_OPTS) : {}), ...(process.env.DEBUG_SPLIT ? { debugSplit: (d) => console.log(`    [corte] núcleos ${d.a}-${d.b}: fuerza de borde ${d.strength.toFixed(2)} (${d.len} px)`) } : {}) });
+  const lista = await detectSurfaces(img, segment, { ...(process.env.DEBUG_PART ? { debugPartition: (d) => console.log('    [partición]', JSON.stringify(d)) } : {}), ...(process.env.LINES ? { debugLines: [10, 16, 24, 36] } : {}), ...(process.env.AUTO_OPTS ? JSON.parse(process.env.AUTO_OPTS) : {}), ...(process.env.DEBUG_SPLIT ? { debugSplit: (d) => console.log(`    [corte] núcleos ${d.a}-${d.b}: fuerza de borde ${d.strength.toFixed(2)} (${d.len} px)`) } : {}) });
   console.log(`\n${foto}: ${lista.length} superficies · ${decodes} decodificaciones · ${Math.round(performance.now() - t0)} ms`);
   const over = new Uint8ClampedArray(img.data);
   let pi = 0;

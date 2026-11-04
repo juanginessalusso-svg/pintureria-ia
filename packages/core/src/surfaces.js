@@ -176,7 +176,7 @@ function boxBlur(src, w, h, r) {
  * mientras la luminancia cambie poco de un píxel al vecino (una sombra cambia de a poco; un zócalo, un marco o el piso, de golpe).
  * `maxGrow` limita cuánto puede avanzar (en píxeles) para que no se escape por una unión pared/techo de bajo contraste.
  */
-export function growIntoGaps(regions, img, { step = 1.6, maxGrow = Math.round(img.width * 0.07), chromaTol = 0.018, maxBrighter = 12 } = {}) {
+export function growIntoGaps(regions, img, { step = 1.6, maxGrow = Math.round(img.width * 0.07), chromaTol = 0.018, maxBrighter = 12, blocked = null } = {}) {
   const { data, width, height } = img;
   const n = width * height;
   const lum = new Float32Array(n), R = new Float32Array(n), G = new Float32Array(n), B = new Float32Array(n);
@@ -206,7 +206,7 @@ export function growIntoGaps(regions, img, { step = 1.6, maxGrow = Math.round(im
     for (const i of frontier) {
       const x = i % width, k = owner[i], [mr, mg, ml] = mean[k];
       for (const j of [x > 0 ? i - 1 : -1, x < width - 1 ? i + 1 : -1, i >= width ? i - width : -1, i < n - width ? i + width : -1]) {
-        if (j < 0 || owner[j] >= 0 || Math.abs(L[j] - L[i]) > step) continue;
+        if (j < 0 || owner[j] >= 0 || (blocked && blocked[j]) || Math.abs(L[j] - L[i]) > step) continue;
         if (Math.abs(chr[j] - mr) + Math.abs(chg[j] - mg) > chromaTol) continue;
         if (L[j] > ml + maxBrighter) continue; // más brillante que la pared: una lamparita, un reflejo, un objeto blanco
         owner[j] = k; regions[k].mask[j] = 1; next.push(j);
@@ -431,6 +431,70 @@ function makeHeap(cap) {
 }
 
 /**
+ * Partición por "la máscara más chica gana" (idea: segmentar todo con SAM). Se reparte una grilla de semillas sobre las paredes y se pide la
+ * máscara de cada una; cada píxel de pared se queda con el ÁREA de la máscara más chica que lo contiene. Un objeto (tabla, cuadro, estufa),
+ * otro plano (techo fusionado, panel) o un hueco aparecen como máscaras bastante más chicas que la pared que los rodea.
+ *  - Lo separado con forma de pared o de techo y de tamaño razonable se devuelve como SUPERFICIE NUEVA (`extra`): no se pierde nada, el
+ *    cliente decide si la pinta.
+ *  - Lo demás (chico, o sin forma de pared) se saca de la pared y queda en `veto` para que el relleno de sombras no lo vuelva a pintar.
+ * Conservador: umbral `frac` bajo y, si se llevaría más de `maxLoss` de una pared, no se toca (no es confiable). Guarda solo un mapa de
+ * áreas (no las máscaras): la memoria no depende de la cantidad de semillas.
+ */
+export async function partitionBySmallest(regions, segment, width, height, { grid = 5, frac = 0.3, maxLoss = 0.5, minArea = 0.025, minWall = 0.08, onlyWalls = false, debug = null } = {}) {
+  const N = width * height, veto = new Uint8Array(N), extra = [];
+  const paredes = regions.filter((r) => r.kind === 'pared' && r.area >= minWall);
+  if (!paredes.length) return { extra, veto, seeds: 0 };
+  const inWall = new Uint8Array(N);
+  for (const r of paredes) for (let i = 0; i < N; i++) if (r.mask[i]) inWall[i] = 1;
+  const small = new Float32Array(N).fill(Infinity);
+  let seeds = 0;
+  for (let gy = 0; gy < grid; gy++) for (let gx = 0; gx < grid; gx++) {
+    const x = Math.min(width - 1, Math.floor(((gx + 0.5) / grid) * width)), y = Math.min(height - 1, Math.floor(((gy + 0.5) / grid) * height));
+    if (onlyWalls && !inWall[y * width + x]) continue; // por defecto toda la foto: un objeto suele tener semillas buenas FUERA de la pared (la parte gris de la tabla)
+    const m = await segment([{ x, y }]);
+    seeds++;
+    let a = 0;
+    for (let i = 0; i < N; i++) if (m[i]) a++;
+    if (a < N * 0.002) continue;
+    for (let i = 0; i < N; i++) if (m[i] && a < small[i]) small[i] = a;
+  }
+  for (const r of paredes) {
+    let wa = 0;
+    for (let i = 0; i < N; i++) if (r.mask[i]) wa++;
+    let carved = new Uint8Array(N), c = 0;
+    for (let i = 0; i < N; i++) if (r.mask[i] && small[i] < frac * wa) { carved[i] = 1; c++; }
+    debug?.({ pared: r.name, semillas: seeds, separado: +(c / wa).toFixed(3) });
+    if (!c) continue;
+    if (c / wa > maxLoss) { debug?.({ pared: r.name, veredicto: 'no se toca: se llevaría demasiado', perdida: +(c / wa).toFixed(2) }); continue; }
+    carved = removeSmallIslands(carved, width, height, Math.round(N * 0.0008)); // motas sueltas: ruido, no un objeto
+    // componentes conexas de lo separado
+    const seen = new Uint8Array(N), q = new Int32Array(N);
+    for (let st = 0; st < N; st++) {
+      if (!carved[st] || seen[st]) continue;
+      let head = 0, tail = 0;
+      q[tail++] = st; seen[st] = 1;
+      while (head < tail) {
+        const i = q[head++], x = i % width;
+        if (x > 0 && carved[i - 1] && !seen[i - 1]) { seen[i - 1] = 1; q[tail++] = i - 1; }
+        if (x < width - 1 && carved[i + 1] && !seen[i + 1]) { seen[i + 1] = 1; q[tail++] = i + 1; }
+        if (i >= width && carved[i - width] && !seen[i - width]) { seen[i - width] = 1; q[tail++] = i - width; }
+        if (i < N - width && carved[i + width] && !seen[i + width]) { seen[i + width] = 1; q[tail++] = i + width; }
+      }
+      const comp = new Uint8Array(N);
+      for (let k = 0; k < tail; k++) comp[q[k]] = 1;
+      const g = maskGeometry(comp, width, height);
+      const kind = g.area >= minArea ? classifySurface(g) : null;
+      for (let k = 0; k < tail; k++) r.mask[q[k]] = 0;
+      debug?.({ pared: r.name, area: +g.area.toFixed(3), destino: kind ? `superficie nueva (${kind})` : 'se saca (objeto)' });
+      if (kind) extra.push({ kind, mask: comp, ...g, texture: 0, luma: r.luma });
+      else for (let k = 0; k < tail; k++) veto[q[k]] = 1;
+    }
+    r.mask = removeSmallIslands(r.mask, width, height, Math.round(N * 0.002));
+  }
+  return { extra, veto, seeds };
+}
+
+/**
  * Detecta las superficies de la foto.
  *  img      : {data RGBA, width, height} (foto de trabajo)
  *  segment  : async (points: [{x, y}]) => Uint8Array(width*height) 0/1, ya limpia — región que contiene TODOS esos puntos
@@ -438,7 +502,7 @@ function makeHeap(cap) {
  * Devuelve [{ kind: 'pared'|'techo', name, mask, area, cx, cy, texture }], máscaras DISJUNTAS, paredes de izquierda a derecha.
  */
 export async function detectSurfaces(img, segment, opts = {}) {
-  const { maxSeeds = 9, gradMax = 7, minDist = 2.5, minArea = 0.025, maxPared = 5, maxTexture = 0.12, refineMin = 2, minLumaRatio = 0.55, grow = true, snap = true, splitMax = 2.2, splitEdge = 4.5, maxLine = 0.004, minCoverage = 0.35, relaxFactor = 1.8 } = opts;
+  const { maxSeeds = 9, gradMax = 7, minDist = 2.5, minArea = 0.025, maxPared = 5, maxTexture = 0.12, refineMin = 2, minLumaRatio = 0.55, grow = true, snap = true, partition = true, splitMax = 2.2, splitEdge = 4.5, maxLine = 0.004, minCoverage = 0.35, relaxFactor = 1.8 } = opts;
   const { width, height } = img;
   const { luma, w, h } = downscaleLuma(img);
   const grad = gradientMap(luma, w, h);
@@ -535,7 +599,13 @@ export async function detectSurfaces(img, segment, opts = {}) {
   for (let i = out.length - 1; i >= 0; i--) {
     if (out[i].kind === 'pared' && out[i].luma < refLuma * minLumaRatio) { rechazadas.push(out[i]); out.splice(i, 1); }
   }
-  if (grow) growIntoGaps(out, img);
+  let veto = null;
+  if (partition && out.length) { // "la máscara más chica gana": objetos y otros planos pegados a la pared
+    const pr = await partitionBySmallest(out, segment, width, height, { ...opts.partitionOpts, debug: opts.debugPartition });
+    out.push(...pr.extra);
+    veto = pr.veto;
+  }
+  if (grow) growIntoGaps(out, img, { blocked: veto });
   if (snap && out.length) {
     refineEdges(out, fullGrad(), width, height);
     for (const s of out) s.mask = removeSmallIslands(s.mask, width, height, Math.round(width * height * 0.002));

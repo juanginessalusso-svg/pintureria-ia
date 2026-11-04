@@ -168,3 +168,52 @@ test('classifySurface: una tira angosta (ancho medio < 6 %) no es una pared', ()
   assert.equal(classifySurface(g), null); // 0,03 / 0,6 = 5 %
   assert.equal(classifySurface({ ...g, area: 0.05 }), 'pared'); // 0,05 / 0,6 = 8 %
 });
+
+// ---- partición "la máscara más chica gana" ----
+import { partitionBySmallest } from '../src/index.js';
+
+// 100x100: pared grande (todo menos el techo, y=0..19) + un objeto cuadrado chico dentro, + un panel ancho de otro plano.
+const PW = 100, PH = 100;
+const rectM = (x0, y0, x1, y1) => { const m = new Uint8Array(PW * PH); for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) m[y * PW + x] = 1; return m; };
+const unionM = (...ms) => { const o = new Uint8Array(PW * PH); for (const m of ms) for (let i = 0; i < o.length; i++) if (m[i]) o[i] = 1; return o; };
+const objeto = rectM(60, 50, 72, 62);              // 12x12 = 144 px (~2 % de la foto): chico
+const panel = rectM(10, 20, 40, 100);              // 30x80: un panel de pared real en otro plano
+const pared = unionM(rectM(0, 20, 100, 100));       // lo que "detectó" el detector: todo junto
+const hasPt = (m, p) => m[Math.floor(p.y) * PW + Math.floor(p.x)] === 1;
+// SAM de mentira: desde un punto sobre el objeto devuelve el objeto; sobre el panel, el panel; en otro lado, la pared entera.
+const fakeSam = async ([p]) => (hasPt(objeto, p) ? objeto : hasPt(panel, p) ? panel : pared);
+
+test('partición: un objeto chico dentro de la pared se saca y no queda como superficie', async () => {
+  const w = { kind: 'pared', name: 'Pared', area: 0.8, luma: 150, mask: pared.slice() };
+  const r = await partitionBySmallest([w], fakeSam, PW, PH, { grid: 10, frac: 0.3, minArea: 0.05 });
+  assert.equal(w.mask[55 * PW + 65], 0, 'el centro del objeto ya no está en la pared');
+  assert.equal(r.veto[55 * PW + 65], 1, 'queda vedado para que no se vuelva a pintar');
+  assert.equal(w.mask[90 * PW + 90], 1, 'la pared de verdad sigue');
+  assert.equal(r.extra.filter((e) => e.kind === 'pared' && e.mask[55 * PW + 65]).length, 0, 'un objeto no es una superficie nueva');
+});
+
+test('partición: un panel grande de otro plano pasa a ser una superficie NUEVA (no se pierde)', async () => {
+  const w = { kind: 'pared', name: 'Pared', area: 0.8, luma: 150, mask: pared.slice() };
+  const r = await partitionBySmallest([w], fakeSam, PW, PH, { grid: 10, frac: 0.5, minArea: 0.05 });
+  const nuevo = r.extra.find((e) => e.mask[60 * PW + 20]);
+  assert.ok(nuevo, 'el panel apareció como superficie nueva');
+  assert.equal(nuevo.kind, 'pared');
+  assert.equal(w.mask[60 * PW + 20], 0, 'ya no está duplicado en la pared original');
+});
+
+test('partición: sin nada que separar no toca la pared', async () => {
+  const w = { kind: 'pared', name: 'Pared', area: 0.8, luma: 150, mask: pared.slice() };
+  const antes = w.mask.slice();
+  const r = await partitionBySmallest([w], async () => pared, PW, PH, { grid: 6 });
+  assert.deepEqual([...w.mask], [...antes]);
+  assert.equal(r.extra.length, 0);
+});
+
+test('partición: si se llevaría demasiado de la pared (maxLoss) no se toca', async () => {
+  const w = { kind: 'pared', name: 'Pared', area: 0.8, luma: 150, mask: pared.slice() };
+  const antes = w.mask.slice();
+  const mitad = rectM(0, 20, 100, 70); // una "máscara más chica" que cubre 62 % de la pared
+  const r = await partitionBySmallest([w], async ([p]) => (p.y < 70 ? mitad : pared), PW, PH, { grid: 8, frac: 0.7, maxLoss: 0.3 });
+  assert.deepEqual([...w.mask], [...antes]);
+  assert.equal(r.extra.length, 0);
+});
