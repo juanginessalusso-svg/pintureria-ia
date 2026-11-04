@@ -6,6 +6,7 @@ services:
     env_file: .env
     environment:
       NODE_OPTIONS: "--max-old-space-size=96"
+      APP_VERSION: "${TAG:-latest}"
     ports:
       - "127.0.0.1:3000:3000"   # solo local: Nginx del host hace de proxy
     mem_limit: 150m

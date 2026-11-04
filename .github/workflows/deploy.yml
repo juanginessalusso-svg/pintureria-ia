@@ -1,0 +1,64 @@
+name: CI/CD staging
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-staging
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build imagen
+        run: |
+          TAG="sha-${GITHUB_SHA::7}"
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
+          docker build -f apps/api/Dockerfile -t "pintureria-api:$TAG" .
+
+      - name: Armar bundle (imagen + compose)
+        run: |
+          mkdir bundle
+          docker save "pintureria-api:$TAG" | gzip > bundle/image.tar.gz
+          cp docker-compose.staging.yml bundle/docker-compose.yml
+          tar -cf bundle.tar -C bundle .
+
+      - name: Preparar SSH
+        run: |
+          install -m 700 -d ~/.ssh
+          echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          echo "${{ secrets.VPS_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+
+      - name: Deploy (con rollback automatico)
+        run: |
+          ssh -i ~/.ssh/deploy_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+            -p "${{ secrets.VPS_PORT }}" "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" \
+            "$TAG" < bundle.tar
+
+      - name: Verificar desde afuera
+        run: |
+          for i in $(seq 1 10); do
+            out=$(curl -fsS https://pintu.solucionesdev.online/api/health) && break
+            sleep 3
+          done
+          echo "$out"
+          echo "$out" | grep -q "$TAG"
