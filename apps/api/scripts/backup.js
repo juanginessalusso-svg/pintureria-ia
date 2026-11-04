@@ -20,7 +20,9 @@ await db.backup(dest);
 db.close();
 
 // Verificación: el backup se abre y pasa el chequeo de integridad.
-const check = new Database(dest, { readonly: true });
+// journal_mode=DELETE deja el backup como UN solo archivo (sin -wal/-shm sueltos).
+const check = new Database(dest);
+check.pragma('journal_mode = DELETE');
 const ok = check.pragma('integrity_check', { simple: true });
 check.close();
 if (ok !== 'ok') {
