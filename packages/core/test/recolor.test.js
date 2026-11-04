@@ -130,3 +130,30 @@ test('rechaza máscara de otro tamaño', () => {
   const img = makeImage(() => [100, 100, 100]);
   assert.throws(() => recolorWall(img, new Float32Array(10), '#ffffff'));
 });
+
+test('pared en sombra: el piso de luminancia evita que el cociente se dispare (no se lava ni se amplifica el degradado)', () => {
+  const img = makeImage((x) => { const v = 40 + x; return [v, v, v]; }); // pared muy oscura (L ≈ 17–28) con un degradado de luz
+  const dark = labAt(img, 5, 5).L;
+  const sinPiso = recolorWall(img, leftHalf(), '#6fa491', { mode: 'relative', minWallL: 1, maxL: 100 }).image;
+  const conPiso = recolorWall(img, leftHalf(), '#6fa491', { mode: 'relative' }).image;
+  const spread = (im) => labAt(im, 18, 10).L - labAt(im, 0, 10).L;
+  assert.ok(labAt(conPiso, 5, 5).L < labAt(sinPiso, 5, 5).L, 'con piso queda menos lavada');
+  assert.ok(spread(conPiso) < spread(sinPiso), 'el degradado de luz se amplifica menos');
+  assert.ok(labAt(conPiso, 5, 5).L > dark, 'igual se aclara hacia el color elegido');
+});
+
+test('un blanco sobre una pared en sombra no se quema (tope de claridad)', () => {
+  const img = makeImage((x) => { const v = 100 + x * 2; return [v, v, v]; }); // L ≈ 42–60
+  const { image } = recolorWall(img, leftHalf(), '#ffffff', { mode: 'relative' });
+  let max = 0;
+  for (let x = 0; x < W / 2; x++) max = Math.max(max, labAt(image, x, 10).L);
+  assert.ok(max <= 99.5, `L máximo ${max}`);
+  assert.ok(labAt(image, W / 2 - 1, 10).L - labAt(image, 0, 10).L > 3, 'sigue habiendo degradado (no queda plano)');
+});
+
+test('pared bien expuesta: las salvaguardas no cambian el resultado', () => {
+  const img = makeImage(() => [200, 200, 195]); // L ≈ 80
+  const a = recolorWall(img, leftHalf(), '#1f3a5f', { mode: 'relative' }).image;
+  const b = recolorWall(img, leftHalf(), '#1f3a5f', { mode: 'relative', minWallL: 1, maxL: 100 }).image;
+  assert.deepEqual([...a.data], [...b.data]);
+});

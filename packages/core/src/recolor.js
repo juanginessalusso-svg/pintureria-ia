@@ -184,13 +184,15 @@ function wallStats(img, mask, gains) {
     hist[Math.max(0, Math.min(100, Math.round(lab[0])))]++;
     n++;
   }
-  if (!n) return { meanL: 50, n: 0 };
+  if (!n) return { meanL: 50, p98L: 50, n: 0 };
+  let p98 = 100, c98 = 0;
+  for (let l = 0; l <= 100; l++) { c98 += hist[l]; if (c98 >= n * 0.98) { p98 = l; break; } } // el 2 % más claro de la pared
   let lo = Math.floor(n * 0.05), hi = Math.ceil(n * 0.95), acc = 0, sum = 0, cnt = 0;
   for (let l = 0; l <= 100; l++) {
     const inRange = Math.max(0, Math.min(acc + hist[l], hi) - Math.max(acc, lo));
     sum += l * inRange; cnt += inRange; acc += hist[l];
   }
-  return { meanL: cnt ? sum / cnt : 50, n };
+  return { meanL: cnt ? sum / cnt : 50, p98L: p98, n };
 }
 
 /**
@@ -203,12 +205,21 @@ function wallStats(img, mask, gains) {
  *  - intensity       : 0..1, mezcla entre original y resultado.
  * Devuelve una imagen nueva (no modifica la de entrada) y estadísticas.
  */
-export function recolorWall(img, mask, targetHex, { mode = 'relative', gains = [1, 1, 1], intensity = 1 } = {}) {
+export function recolorWall(img, mask, targetHex, { mode = 'relative', gains = [1, 1, 1], intensity = 1, minWallL = 45, maxL = 98 } = {}) {
   const { data, width, height } = img;
   if (mask.length !== width * height) throw new Error('la máscara no coincide con el tamaño de la imagen');
   const target = hexToLab(targetHex);
-  const { meanL } = wallStats(img, mask, gains);
-  const ratio = mode === 'relative' ? target.L / Math.max(meanL, 1) : 1;
+  const { meanL, p98L } = wallStats(img, mask, gains);
+  // Cociente de luminancia. Dos salvaguardas para fotos con poca luz o paredes en sombra:
+  //  - piso `minWallL`: una pared en sombra (L medio muy bajo) no se trata como si ese fuera su tono real; sin piso el cociente se
+  //    dispara (L 22 -> 63 = ×2,9) y amplifica el ruido y los degradados de luz;
+  //  - tope `maxL`: lo más claro de la pared no pasa de L≈98 (un blanco sobre un techo en sombra no debe quemarse).
+  // En paredes bien expuestas ninguna de las dos actúa y el resultado es el de siempre.
+  let ratio = 1;
+  if (mode === 'relative') {
+    ratio = target.L / Math.max(meanL, minWallL, 1);
+    ratio = Math.min(ratio, maxL / Math.max(p98L, 1));
+  }
 
   const out = new Uint8ClampedArray(data);
   const lab = [0, 0, 0], lin = [0, 0, 0];
