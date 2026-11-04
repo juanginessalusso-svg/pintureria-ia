@@ -68,3 +68,10 @@ select { font: inherit; padding: 8px; border: 1px solid var(--line); border-radi
 .chips button.on { background: var(--brand); color: #fff; border-color: var(--brand); }
 .picker .swatches { max-height: 360px; overflow-y: auto; }
 .picked { display: flex; align-items: center; gap: 8px; margin: 8px 0; }
+
+/* ---- superficies (cada una con su color) ---- */
+.surfaces { gap: 6px; }
+.surf { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; cursor: pointer; background: #fff; }
+.surf.on { outline: 2px solid var(--brand); background: #f0f6ff; }
+.surfname { flex: 1; min-width: 0; border: 1px solid transparent; background: transparent; font-weight: 600; padding: 4px; }
+.surf.on .surfname { border-color: var(--line); background: #fff; }

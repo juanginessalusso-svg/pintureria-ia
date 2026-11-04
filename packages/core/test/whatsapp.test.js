@@ -39,6 +39,16 @@ test('mensaje: trae color, producto, manos, m², litros, latas y total', () => {
   }
 });
 
+test('mensaje: lista un color por superficie cuando hay varios', () => {
+  const t = buildBudgetMessage(ejemplo({ colors: [{ surface: 'Pared 1', name: 'Verde Calma', code: 'TS-62066' }, { surface: 'Techo', name: 'Blanco Nórdico' }] }));
+  assert.ok(t.includes('🎨 Colores:'));
+  assert.ok(t.includes('• Pared 1: Verde Calma (TS-62066)'));
+  assert.ok(t.includes('• Techo: Blanco Nórdico'));
+  assert.ok(!t.includes('🎨 Color:')); // no repite el color único
+  // con lista vacía vuelve al color único
+  assert.ok(buildBudgetMessage(ejemplo({ colors: [] })).includes('🎨 Color: Verde Salvia (V-201)'));
+});
+
 test('mensaje: nombra la sucursal elegida y no la menciona si no hay', () => {
   assert.ok(buildBudgetMessage(ejemplo({ branch: 'Chivilcoy' })).includes('Hola Pinturería Demo (sucursal Chivilcoy)!'));
   assert.ok(!buildBudgetMessage(ejemplo()).includes('sucursal'));

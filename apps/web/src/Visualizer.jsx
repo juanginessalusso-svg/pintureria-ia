@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { estimateWhiteBalance, featherMask, recolorWall, cleanMask, unionMasks, pxPerMeter, wallPixels } from '@pintureria/core';
+import { estimateWhiteBalance, featherMask, recolorWall, cleanMask, pxPerMeter, wallPixels } from '@pintureria/core';
 import { SamClient } from './samClient.js';
 import { workingSize } from './sam.js';
 import { Calculator } from './Calculator.jsx';
@@ -19,7 +19,8 @@ export function Visualizer() {
   const [status, setStatus] = useState('');
   const [hasPhoto, setHasPhoto] = useState(false);
   const [points, setPoints] = useState([]);
-  const [walls, setWalls] = useState(0);
+  const [surfList, setSurfList] = useState([]); // superficies confirmadas (para la lista): {id, name, color}
+  const [activeId, setActiveId] = useState(null); // superficie seleccionada en la lista: el próximo color es para ella
   const [mode, setMode] = useState(1); // 1 = "es pared", 0 = "no es pared"
   const [color, setColor] = useState(null);
   const [lum, setLum] = useState('relative');
@@ -38,7 +39,8 @@ export function Visualizer() {
   const photo = useRef(null); // { data, width, height } foto de trabajo
   const gains = useRef([1, 1, 1]);
   const current = useRef(null); // máscara de la selección en curso (Uint8Array)
-  const committed = useRef([]); // máscaras de paños ya confirmados
+  const surfaces = useRef([]); // superficies confirmadas: {id, name, mask, color}; cada una con su propio color
+  const surfSeq = useRef(0);
   const result = useRef(null); // imagen recoloreada
   const showBefore = useRef(false);
   const colorRef = useRef(null); // color elegido, legible desde render() sin quedar "viejo" en una clausura
@@ -99,16 +101,20 @@ export function Visualizer() {
   const repaint = (col = color, opts = {}) => {
     const p = photo.current;
     if (!p) return;
-    const masks = [...committed.current, ...(current.current ? [current.current] : [])];
-    setWallPx(wallPixels(masks));
-    if (!col || !masks.length) { result.current = null; render(); return; }
+    const cur = current.current;
+    setWallPx(wallPixels([...surfaces.current.map((s) => s.mask), ...(cur ? [cur] : [])]));
+    // Capas a pintar, en orden: cada superficie confirmada con SU color + la selección en curso con el color elegido.
+    const layers = surfaces.current.filter((s) => s.color).map((s) => ({ mask: s.mask, hex: s.color.hex }));
+    if (cur && colorRef.current) layers.push({ mask: cur, hex: colorRef.current.hex });
+    if (!layers.length) { result.current = null; render(); return; }
     const t0 = performance.now();
-    const size = p.width * p.height;
-    const union = unionMasks(masks.map((m) => Float32Array.from(m)), size);
-    const soft = featherMask(union, p.width, p.height, Math.max(1, Math.round(p.width / 500)));
-    const { image } = recolorWall(p, soft, col.hex, {
-      mode: opts.lum ?? lum, intensity: opts.intensity ?? intensity, gains: (opts.wb ?? wb) ? gains.current : [1, 1, 1],
-    });
+    let image = p;
+    for (const L of layers) {
+      const soft = featherMask(Float32Array.from(L.mask), p.width, p.height, Math.max(1, Math.round(p.width / 500)));
+      image = recolorWall(image, soft, L.hex, {
+        mode: opts.lum ?? lum, intensity: opts.intensity ?? intensity, gains: (opts.wb ?? wb) ? gains.current : [1, 1, 1],
+      }).image;
+    }
     result.current = image;
     setTiming((t) => ({ ...t, recolorMs: Math.round(performance.now() - t0) }));
     render();
@@ -130,9 +136,9 @@ export function Visualizer() {
       const img = ctx.getImageData(0, 0, width, height);
       photo.current = { data: img.data, width, height };
       gains.current = estimateWhiteBalance(photo.current);
-      current.current = null; committed.current = []; result.current = null; pointsRef.current = [];
+      current.current = null; surfaces.current = []; surfSeq.current = 0; result.current = null; pointsRef.current = [];
       calibRef.current = { tapping: false, pts: [], pxPerM: null, meters: 0 }; setCalib({ tapping: false, pxPerM: null }); setWallPx(0);
-      setPoints([]); setWalls(0); setHasPhoto(true); render();
+      setPoints([]); setSurfList([]); setActiveId(null); setHasPhoto(true); render();
 
       setStatus(model.state === 'ready' ? 'Analizando la foto…' : 'Esperando que cargue el modelo…');
       await ready.current;
@@ -200,20 +206,48 @@ export function Visualizer() {
     if (!pts.length) { current.current = null; pointsRef.current = []; setPoints([]); await sam.current.call('reset'); repaint(); return; }
     await runSegment(pts, true);
   };
+  const syncSurfaces = () => setSurfList(surfaces.current.map(({ id, name, color: c }) => ({ id, name, color: c })));
   const commit = async () => {
-    if (!current.current) return;
-    committed.current.push(current.current);
-    current.current = null; pointsRef.current = []; setPoints([]); setWalls(committed.current.length);
+    const m = current.current, p = photo.current;
+    if (!m) return;
+    // Nombre sugerido: si la mayor parte de la selección está en el 20 % de arriba de la foto, es el techo.
+    let sumY = 0, n = 0;
+    for (let i = 0; i < m.length; i += 7) if (m[i]) { sumY += Math.floor(i / p.width); n++; }
+    const isCeiling = n > 0 && sumY / n / p.height < 0.2 && !surfaces.current.some((s) => s.name === 'Techo');
+    const name = isCeiling ? 'Techo' : `Pared ${surfaces.current.filter((s) => /^Pared/.test(s.name)).length + 1}`;
+    surfaces.current.push({ id: ++surfSeq.current, name, mask: m, color: colorRef.current });
+    current.current = null; pointsRef.current = []; setPoints([]); setActiveId(null); syncSurfaces();
     await sam.current.call('reset');
-    setStatus('Pared confirmada. Tocá otra pared o elegí un color.');
+    setStatus(`${name} confirmada. Tocá otra superficie y elegí su color, o tocá una de la lista para cambiarle el color.`);
     repaint();
   };
   const clearAll = async () => {
-    current.current = null; committed.current = []; result.current = null; pointsRef.current = [];
-    setPoints([]); setWalls(0); await sam.current.call('reset'); render();
+    current.current = null; surfaces.current = []; surfSeq.current = 0; result.current = null; pointsRef.current = [];
+    setPoints([]); setSurfList([]); setActiveId(null); await sam.current.call('reset'); render();
+  };
+  const selectSurface = (id) => {
+    setActiveId(activeId === id ? null : id);
+    if (activeId !== id) setStatus('Elegí un color: se aplica a la superficie seleccionada.');
+  };
+  const removeSurface = (id) => {
+    surfaces.current = surfaces.current.filter((s) => s.id !== id);
+    if (activeId === id) setActiveId(null);
+    syncSurfaces(); setTimeout(() => repaint(), 0);
+  };
+  const renameSurface = (id, name) => {
+    const s = surfaces.current.find((x) => x.id === id);
+    if (s) { s.name = name.slice(0, 30); syncSurfaces(); }
   };
 
-  const pick = (c) => { colorRef.current = c; setColor(c); setTimeout(() => repaint(c), 0); };
+  // El color elegido va a la superficie seleccionada en la lista; si no hay, a la selección en curso.
+  const pick = (c) => {
+    const s = surfaces.current.find((x) => x.id === activeId);
+    if (s) { s.color = c; syncSurfaces(); } else colorRef.current = c;
+    setColor(c);
+    setTimeout(() => repaint(), 0);
+  };
+  const activeSurface = surfList.find((s) => s.id === activeId) ?? null;
+  const hasColor = !!color || surfList.some((s) => s.color);
   // Imagen LIMPIA (sin puntos de selección ni línea de calibración): la recoloreada, o la original si no hay resultado.
   const getImageBlob = () => {
     const img = result.current ?? photo.current;
@@ -266,13 +300,27 @@ export function Visualizer() {
           <button class={mode === 1 ? 'on' : ''} onClick={() => setMode(1)}>🟢 Es pared</button>
           <button class={mode === 0 ? 'on' : ''} onClick={() => setMode(0)}>🔴 No es pared</button>
           <button onClick={undo} disabled={!points.length}>↩︎ Deshacer</button>
-          <button onClick={commit} disabled={!points.length}>✔︎ Confirmar pared</button>
+          <button onClick={commit} disabled={!points.length}>✔︎ Confirmar superficie</button>
           <button onClick={clearAll}>Empezar de nuevo</button>
         </div>
-        {walls > 0 && <p class="muted small">Paredes confirmadas: {walls}</p>}
 
-        <h3>Elegí un color</h3>
-        <ColorPicker colors={colors} selected={color} onPick={pick} />
+        {surfList.length > 0 && (
+          <div class="card surfaces">
+            <strong>Superficies</strong>
+            {surfList.map((s) => (
+              <div key={s.id} class={`surf ${activeId === s.id ? 'on' : ''}`} onClick={() => selectSurface(s.id)}>
+                <input class="surfname" value={s.name} onClick={(e) => e.stopPropagation()} onInput={(e) => renameSurface(s.id, e.target.value)} aria-label="Nombre de la superficie" />
+                <span class="sw" style={{ background: s.color?.hex ?? '#fff' }} />
+                <span class="muted small">{s.color ? s.color.name : 'sin color'}</span>
+                <button onClick={(e) => { e.stopPropagation(); removeSurface(s.id); }} aria-label={`Quitar ${s.name}`}>✕</button>
+              </div>
+            ))}
+            <p class="muted small">{activeSurface ? `Elegí un color para "${activeSurface.name}".` : 'Tocá una superficie de la lista para cambiarle el color; si no, el color va a la selección nueva.'}</p>
+          </div>
+        )}
+
+        <h3>{activeSurface ? `Color para "${activeSurface.name}"` : 'Elegí un color'}</h3>
+        <ColorPicker colors={colors} selected={activeSurface ? activeSurface.color : color} onPick={pick} />
 
         <div class="card grid">
           <label>Luminancia
@@ -287,12 +335,13 @@ export function Visualizer() {
           </label>
           <label class="check"><input type="checkbox" checked={wb} onChange={(e) => { setWb(e.target.checked); repaint(color, { wb: e.target.checked }); }} /> Corregir balance de blancos</label>
           <div class="row">
-            <button onPointerDown={hold(true)} onPointerUp={hold(false)} onPointerLeave={hold(false)} disabled={!color}>Mantené para ver el antes</button>
-            <button onClick={download} disabled={!color}>⬇︎ Descargar</button>
+            <button onPointerDown={hold(true)} onPointerUp={hold(false)} onPointerLeave={hold(false)} disabled={!hasColor}>Mantené para ver el antes</button>
+            <button onClick={download} disabled={!hasColor}>⬇︎ Descargar</button>
           </div>
         </div>
 
         <Calculator wallPx={wallPx} calib={calib} products={products} branches={branches} tenant={tenant} color={color} getImageBlob={getImageBlob}
+          surfaceColors={surfList.filter((s) => s.color).map((s) => ({ surface: s.name, name: s.color.name, code: s.color.code }))}
           onStartCalib={startCalib} onResetCalib={resetCalib} />
 
         <p class="warn">⚠️ El color en pantalla puede diferir del color real de la pintura (depende de tu pantalla, la luz de la foto y la textura de la pared). Pedí una muestra antes de comprar.</p>

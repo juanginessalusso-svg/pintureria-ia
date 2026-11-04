@@ -47,6 +47,17 @@
     "colores": [{ "nombre": "Verde Salvia", "hex": "#a3b18a" }, { "nombre": "Gris Cemento", "hex": "#9a9d9f" }]
   },
   {
+    "id": "06-vs-sinteplast-estante",
+    "comentario": "Misma foto y mismos colores que el video del Decorador Virtual de Sinteplast (pared central, techo y pared derecha)",
+    "foto": "01-living-estante.jpg",
+    "capas": [
+      { "nombre": "Pared central", "hex": "#9a6a76", "puntos": [[0.42, 0.4, 1]] },
+      { "nombre": "Techo", "hex": "#dcc164", "puntos": [[0.4, 0.05, 1]] },
+      { "nombre": "Pared derecha", "hex": "#cbc7b0", "puntos": [[0.91, 0.3, 1]] }
+    ],
+    "modos": ["relative"]
+  },
+  {
     "id": "04-pasillo-fondo",
     "foto": "04-pasillo.jpg",
     "paredes": [[[0.5, 0.6, 1]]],

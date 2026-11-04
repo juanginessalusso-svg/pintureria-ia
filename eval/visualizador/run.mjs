@@ -78,6 +78,26 @@ for (const [foto, lista] of porFoto) {
   console.log(`\n${foto} ${width}x${height}  análisis ${Math.round(performance.now() - t0)} ms  WB=[${gains.map((g) => g.toFixed(2)).join(', ')}]`);
 
   for (const caso of lista) {
+    if (caso.capas) { // varias superficies, cada una con su propio color (pared, techo…), pintadas en orden
+      let cur = img;
+      const masksAll = [], resumenCapas = [];
+      for (const capa of caso.capas) {
+        sam.reset();
+        const pts = capa.puntos.map(([x, y, label]) => ({ x: x * width, y: y * height, label }));
+        let last;
+        for (let i = 1; i <= pts.length; i++) last = await sam.segment(pts.slice(0, i));
+        const m = Float32Array.from(cleanMask(last.mask, width, height));
+        masksAll.push(m);
+        cur = recolorWall(cur, featherMask(m, width, height, Math.max(1, Math.round(width / 500))), capa.hex, { mode: caso.modos?.[0] ?? 'relative', gains }).image;
+        resumenCapas.push(`${capa.nombre} ${capa.hex} (${(maskFraction(m) * 100).toFixed(1)}%)`);
+      }
+      const vistasC = [img, tint(img, unionMasks(masksAll, width * height)), cur];
+      const s = strip(vistasC);
+      fs.writeFileSync(path.join(outDir, `${caso.id}.png`), PNG.sync.write({ width: s.width, height: s.height, data: Buffer.from(s.data) }));
+      fs.writeFileSync(path.join(outDir, `${caso.id}-final.png`), PNG.sync.write({ width, height, data: Buffer.from(cur.data) }));
+      console.log(`  ${caso.id}: ${resumenCapas.join(' · ')}`);
+      continue;
+    }
     const masks = [];
     for (const grupo of caso.paredes) { // cada "pared" es un conjunto de toques [x,y,label] relativos (0..1)
       sam.reset();

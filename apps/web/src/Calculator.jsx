@@ -15,7 +15,7 @@ const PRESETS = [
  *  - m² a partir de la pared marcada (visible) y la escala calibrada, o ingresados a mano;
  *  - litros = m² × manos ÷ rendimiento × 1,10;  latas: menor costo que cubra los litros.
  */
-export function Calculator({ wallPx, calib, products, branches = [], tenant, color, getImageBlob, onStartCalib, onResetCalib }) {
+export function Calculator({ wallPx, calib, products, branches = [], tenant, color, surfaceColors = [], getImageBlob, onStartCalib, onResetCalib }) {
   const [branchId, setBranchId] = useState(null);
   const [copied, setCopied] = useState(false);
   const [shareMsg, setShareMsg] = useState('');
@@ -50,9 +50,9 @@ export function Calculator({ wallPx, calib, products, branches = [], tenant, col
   const number = branch?.whatsapp || tenant?.whatsapp; // la sucursal puede no tener número propio
 
   const message = useMemo(() => (calc ? buildBudgetMessage({
-    shop: tenant?.name, branch: branch?.name, color, product, coats, m2, liters: calc.liters, cans: calc.cans, margin: DEFAULT_MARGIN, ref,
+    shop: tenant?.name, branch: branch?.name, color, colors: surfaceColors, product, coats, m2, liters: calc.liters, cans: calc.cans, margin: DEFAULT_MARGIN, ref,
     date: new Date().toLocaleDateString('es-AR'),
-  }) : ''), [calc, tenant, branch, color, product, coats, m2]);
+  }) : ''), [calc, tenant, branch, color, surfaceColors, product, coats, m2]);
   const hasNumber = !!cleanWhatsapp(number);
   const canShareImage = typeof navigator !== 'undefined' && !!navigator.canShare && navigator.canShare({ files: [new File([], 'a.png', { type: 'image/png' })] });
 
