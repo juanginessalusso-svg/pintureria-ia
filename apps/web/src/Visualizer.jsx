@@ -211,11 +211,19 @@ export function Visualizer() {
   };
 
   const pick = (c) => { colorRef.current = c; setColor(c); setTimeout(() => repaint(c), 0); };
-  const download = () => canvasRef.current.toBlob((b) => {
+  // Imagen LIMPIA (sin puntos de selección ni línea de calibración): la recoloreada, o la original si no hay resultado.
+  const getImageBlob = () => {
+    const img = result.current ?? photo.current;
+    const cv = new OffscreenCanvas(img.width, img.height);
+    cv.getContext('2d').putImageData(new ImageData(img.data, img.width, img.height), 0, 0);
+    return cv.convertToBlob({ type: 'image/png' });
+  };
+  const download = async () => {
+    const b = await getImageBlob();
     const a = document.createElement('a');
     a.href = URL.createObjectURL(b); a.download = 'mi-ambiente.png'; a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 5000);
-  });
+  };
   const hold = (v) => () => { showBefore.current = v; render(); };
 
   const families = [...new Set(colors.map((c) => c.family))];
@@ -289,7 +297,8 @@ export function Visualizer() {
           </div>
         </div>
 
-        <Calculator wallPx={wallPx} calib={calib} products={products} onStartCalib={startCalib} onResetCalib={resetCalib} />
+        <Calculator wallPx={wallPx} calib={calib} products={products} tenant={tenant} color={color} getImageBlob={getImageBlob}
+          onStartCalib={startCalib} onResetCalib={resetCalib} />
 
         <p class="warn">⚠️ El color en pantalla puede diferir del color real de la pintura (depende de tu pantalla, la luz de la foto y la textura de la pared). Pedí una muestra antes de comprar.</p>
         <p class="muted small">

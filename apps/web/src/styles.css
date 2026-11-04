@@ -52,3 +52,7 @@ select { font: inherit; padding: 8px; border: 1px solid var(--line); border-radi
 .result p { margin: 4px 0; }
 .cans { margin: 6px 0; padding-left: 20px; }
 .total { font-size: 1.1rem; }
+
+/* ---- whatsapp ---- */
+.wa-row { margin-top: 10px; }
+.btn.wa { background: #25d366; color: #063d1c; border-color: #1ebe5a; text-decoration: none; font-weight: 600; }

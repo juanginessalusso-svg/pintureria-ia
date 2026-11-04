@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'preact/hooks';
-import { areaM2, litersNeeded, suggestCans, DEFAULT_MARGIN } from '@pintureria/core';
+import { areaM2, litersNeeded, suggestCans, DEFAULT_MARGIN, buildBudgetMessage, whatsappUrl, cleanWhatsapp } from '@pintureria/core';
 
 const ars = (cents) => (cents / 100).toLocaleString('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 });
 const fmt = (n, d = 1) => n.toLocaleString('es-AR', { minimumFractionDigits: d, maximumFractionDigits: d });
@@ -15,7 +15,11 @@ const PRESETS = [
  *  - m² a partir de la pared marcada (visible) y la escala calibrada, o ingresados a mano;
  *  - litros = m² × manos ÷ rendimiento × 1,10;  latas: menor costo que cubra los litros.
  */
-export function Calculator({ wallPx, calib, products, onStartCalib, onResetCalib }) {
+export function Calculator({ wallPx, calib, products, tenant, color, getImageBlob, onStartCalib, onResetCalib }) {
+  const [copied, setCopied] = useState(false);
+  const [shareMsg, setShareMsg] = useState('');
+  // Referencia corta del presupuesto: ayuda a la pinturería a encontrarlo en el chat. No se guarda en ningún lado.
+  const ref = useMemo(() => `PA-${Math.random().toString(36).slice(2, 6).toUpperCase()}`, []);
   const [preset, setPreset] = useState('puerta');
   const [custom, setCustom] = useState('');
   const [extra, setExtra] = useState('');
@@ -38,6 +42,26 @@ export function Calculator({ wallPx, calib, products, onStartCalib, onResetCalib
     const liters = litersNeeded({ m2, coats, yieldM2PerL: product.yield_m2_per_l });
     return { liters, cans: suggestCans(liters, product.sizes) };
   }, [m2, product, coats]);
+
+  const message = useMemo(() => (calc ? buildBudgetMessage({
+    shop: tenant?.name, color, product, coats, m2, liters: calc.liters, cans: calc.cans, margin: DEFAULT_MARGIN, ref,
+    date: new Date().toLocaleDateString('es-AR'),
+  }) : ''), [calc, tenant, color, product, coats, m2]);
+  const hasNumber = !!cleanWhatsapp(tenant?.whatsapp);
+  const canShareImage = typeof navigator !== 'undefined' && !!navigator.canShare && navigator.canShare({ files: [new File([], 'a.png', { type: 'image/png' })] });
+
+  const copy = async () => {
+    try { await navigator.clipboard.writeText(message); setCopied(true); setTimeout(() => setCopied(false), 2500); }
+    catch { setShareMsg('No se pudo copiar. Seleccioná el texto a mano.'); }
+  };
+  const shareImage = async () => {
+    try {
+      const blob = await getImageBlob();
+      const file = new File([blob], 'mi-ambiente.png', { type: 'image/png' });
+      await navigator.share({ files: [file], text: message });
+      setShareMsg('');
+    } catch (e) { if (e?.name !== 'AbortError') setShareMsg('No se pudo compartir la imagen.'); }
+  };
 
   return (
     <section class="card calc">
@@ -114,6 +138,15 @@ export function Calculator({ wallPx, calib, products, onStartCalib, onResetCalib
               <p class="muted small">Compraría {fmt(calc.cans.total_liters)} L en total y te sobrarían unos {fmt(calc.cans.leftover_liters)} L para retoques.</p>
             </>
           ) : <p class="muted small">Este producto no tiene presentaciones cargadas.</p>}
+
+          <div class="row wa-row">
+            <a class="btn wa" href={whatsappUrl(tenant?.whatsapp, message)} target="_blank" rel="noopener noreferrer">💬 Enviar presupuesto por WhatsApp</a>
+            <button onClick={copy}>{copied ? '✓ Copiado' : 'Copiar texto'}</button>
+            {canShareImage && color && <button onClick={shareImage}>🖼️ Compartir con la imagen</button>}
+          </div>
+          {!hasNumber && <p class="muted small">Esta pinturería no cargó su número: WhatsApp te va a dejar elegir a quién enviarlo.</p>}
+          {shareMsg && <p class="err small">{shareMsg}</p>}
+          <p class="muted small">🔒 Se abre WhatsApp con el mensaje ya escrito; no se envía nada hasta que vos toques Enviar. No se adjunta tu foto ni se guardan tus datos.</p>
         </div>
       )}
       {!calc && !product && products.length > 0 && <p class="muted">Elegí un producto para ver los litros y las latas.</p>}
