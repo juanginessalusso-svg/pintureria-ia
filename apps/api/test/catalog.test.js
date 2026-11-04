@@ -121,6 +121,23 @@ test('público: tenant por dominio (Host) y por ?tenant; no filtra datos interno
   assert.equal(prods[0].embedding_stale, undefined);
 });
 
+test('?tenant= tiene prioridad sobre el dominio solo si allowTenantParam; si no, se ignora', async () => {
+  // El Host del test (127.0.0.1) no está mapeado: sin param -> 404 en ambos modos.
+  db.prepare("INSERT INTO tenant_domains (domain, tenant_id) VALUES ('127.0.0.1', (SELECT id FROM tenants WHERE slug='b'))").run();
+  try {
+    // staging (param permitido): ?tenant=a pisa al dominio (que apunta a b)
+    assert.equal((await (await fetch(`${base}/api/public/tenant?tenant=a`)).json()).name, 'Pinturería A');
+    assert.equal((await (await fetch(`${base}/api/public/tenant`)).json()).name, 'Pinturería B'); // sin param -> dominio
+    // producción (param NO permitido): ?tenant=a se ignora, manda el dominio
+    const prod = createApp({ db, allowTenantParam: false }).listen(0);
+    const r = await (await fetch(`http://127.0.0.1:${prod.address().port}/api/public/tenant?tenant=a`)).json();
+    prod.close();
+    assert.equal(r.name, 'Pinturería B');
+  } finally {
+    db.prepare("DELETE FROM tenant_domains WHERE domain = '127.0.0.1'").run();
+  }
+});
+
 test('público: colores inactivos no aparecen', async () => {
   const c = client();
   await c.login('a', 'clave-de-prueba-A1');

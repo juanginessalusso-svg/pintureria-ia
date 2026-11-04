@@ -2,9 +2,10 @@ import { hashPassword } from './auth.js';
 import { catalog } from './catalog.js';
 
 /** Crea una pinturería con su dominio(s) y su usuario admin. Devuelve el id del tenant. */
-export function createTenant(db, { slug, name, domains = [], username, password }) {
+export function createTenant(db, { slug, name, domains = [], username, password, whatsapp = '', primaryColor = '#1f6feb' }) {
   return db.transaction(() => {
-    const { lastInsertRowid: id } = db.prepare('INSERT INTO tenants (slug, name) VALUES (?, ?)').run(slug, name);
+    const { lastInsertRowid: id } = db.prepare('INSERT INTO tenants (slug, name, whatsapp, primary_color) VALUES (?, ?, ?, ?)')
+      .run(slug, name, whatsapp, primaryColor);
     for (const d of domains) db.prepare('INSERT INTO tenant_domains (domain, tenant_id) VALUES (?, ?)').run(d.toLowerCase(), id);
     db.prepare('INSERT INTO admin_users (tenant_id, username, password_hash) VALUES (?,?,?)')
       .run(id, username, hashPassword(password));
