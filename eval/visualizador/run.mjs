@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import jpeg from 'jpeg-js';
 import { PNG } from 'pngjs';
 import * as ort from 'onnxruntime-web/wasm';
-import { estimateWhiteBalance, featherMask, maskFraction, recolorWall, cleanMask, unionMasks } from '@pintureria/core';
+import { estimateWhiteBalance, featherMask, maskFraction, recolorWall, cleanMask, unionMasks, pxPerMeter, areaM2, wallPixels } from '@pintureria/core';
 import { Sam, encoderSize, rgbaToRgbFloat, workingSize } from '../../apps/web/src/sam.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -87,6 +87,12 @@ for (const [foto, lista] of porFoto) {
     const union = unionMasks(masks, width * height);
     const soft = featherMask(union, width, height, Math.max(1, Math.round(width / 500)));
     const frac = maskFraction(union);
+    let m2txt = '';
+    if (caso.referencia) { // línea de calibración: dos puntos relativos + metros reales
+      const [a, b] = [caso.referencia.p1, caso.referencia.p2].map(([x, y]) => ({ x: x * width, y: y * height }));
+      const ppm = pxPerMeter(a, b, caso.referencia.metros);
+      m2txt = ` · escala ${ppm.toFixed(0)} px/m => ${areaM2(wallPixels(masks), ppm).toFixed(2)} m²`;
+    }
     const vistas = [img, tint(img, union)];
     const resumen = [];
     for (const col of caso.colores) {
@@ -99,6 +105,6 @@ for (const [foto, lista] of porFoto) {
     const png = PNG.sync.write({ ...strip(vistas), data: Buffer.from(strip(vistas).data) });
     const file = path.join(outDir, `${caso.id}.png`);
     fs.writeFileSync(file, png);
-    console.log(`  ${caso.id}: pared = ${(frac * 100).toFixed(1)}% de la foto · ${resumen.join(' · ')}\n    -> ${path.relative(process.cwd(), file)}`);
+    console.log(`  ${caso.id}: pared = ${(frac * 100).toFixed(1)}% de la foto${m2txt} · ${resumen.join(' · ')}\n    -> ${path.relative(process.cwd(), file)}`);
   }
 }

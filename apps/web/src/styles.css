@@ -42,3 +42,13 @@ tr.off { opacity: .5; }
 .warn { background: #fff8e1; border: 1px solid #f5d97a; border-radius: 8px; padding: 10px; font-size: .85rem; }
 progress { width: 100%; }
 select { font: inherit; padding: 8px; border: 1px solid var(--line); border-radius: 6px; background: #fff; }
+
+/* ---- calculadora ---- */
+.calc { gap: 14px; }
+.calc h3 { margin: 0; }
+.calc input[readonly] { background: #f3f4f6; }
+.calc .num { width: 110px; }
+.result { background: #f0f7ff; border: 1px solid #bfdbfe; border-radius: 8px; padding: 10px 12px; }
+.result p { margin: 4px 0; }
+.cans { margin: 6px 0; padding-left: 20px; }
+.total { font-size: 1.1rem; }

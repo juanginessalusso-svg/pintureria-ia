@@ -10,6 +10,7 @@
     "id": "02-pared-izquierda",
     "foto": "02-living-puerta.jpg",
     "paredes": [[[0.15, 0.35, 1]]],
+    "referencia": { "p1": [0.31, 0.297], "p2": [0.31, 0.955], "metros": 2.05 },
     "colores": [{ "nombre": "Terracota", "hex": "#b9694a" }, { "nombre": "Azul Noche", "hex": "#1f3a5f" }],
     "modos": ["relative"]
   },

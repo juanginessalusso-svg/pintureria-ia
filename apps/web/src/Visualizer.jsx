@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { estimateWhiteBalance, featherMask, recolorWall, cleanMask, unionMasks } from '@pintureria/core';
+import { estimateWhiteBalance, featherMask, recolorWall, cleanMask, unionMasks, pxPerMeter, wallPixels } from '@pintureria/core';
 import { SamClient } from './samClient.js';
 import { workingSize } from './sam.js';
+import { Calculator } from './Calculator.jsx';
 
 const tenantQ = () => {
   const t = new URLSearchParams(location.search).get('tenant');
@@ -24,7 +25,11 @@ export function Visualizer() {
   const [intensity, setIntensity] = useState(1);
   const [wb, setWb] = useState(true);
   const [timing, setTiming] = useState({});
+  const [products, setProducts] = useState([]);
+  const [wallPx, setWallPx] = useState(0); // píxeles de pared marcados (confirmados + selección en curso)
+  const [calib, setCalib] = useState({ tapping: false, pxPerM: null });
 
+  const calibRef = useRef({ tapping: false, pts: [], pxPerM: null, meters: 0 }); // línea de referencia (coords de la foto)
   const canvasRef = useRef(null);
   const sam = useRef(null);
   const ready = useRef(null); // promesa de carga del modelo
@@ -40,6 +45,7 @@ export function Visualizer() {
   useEffect(() => {
     getJson('tenant').then(setTenant).catch(() => {});
     getJson('colors').then(setColors).catch(() => {});
+    getJson('products').then(setProducts).catch(() => {});
     sam.current = new SamClient(({ loaded, total }) => setModel((m) => ({ ...m, loaded, total })));
     ready.current = sam.current.init().then((r) => {
       setModel((m) => ({ ...m, state: 'ready', info: `${r.threads} hilo(s), init ${r.initMs} ms` }));
@@ -71,6 +77,19 @@ export function Visualizer() {
       ctx.fillStyle = pt.label ? '#16a34a' : '#dc2626'; ctx.fill();
       ctx.lineWidth = 2; ctx.strokeStyle = '#fff'; ctx.stroke();
     }
+    // línea de referencia de la calibración (ámbar)
+    const cp = calibRef.current.pts;
+    if (cp.length) {
+      const r = Math.max(6, p.width / 110);
+      if (cp.length === 2) {
+        ctx.beginPath(); ctx.moveTo(cp[0].x, cp[0].y); ctx.lineTo(cp[1].x, cp[1].y);
+        ctx.lineWidth = Math.max(3, p.width / 300); ctx.strokeStyle = '#f59e0b'; ctx.stroke();
+      }
+      for (const pt of cp) {
+        ctx.beginPath(); ctx.arc(pt.x, pt.y, r, 0, 7);
+        ctx.fillStyle = '#f59e0b'; ctx.fill(); ctx.lineWidth = 2; ctx.strokeStyle = '#fff'; ctx.stroke();
+      }
+    }
   };
   const pointsRef = useRef([]);
 
@@ -78,6 +97,7 @@ export function Visualizer() {
     const p = photo.current;
     if (!p) return;
     const masks = [...committed.current, ...(current.current ? [current.current] : [])];
+    setWallPx(wallPixels(masks));
     if (!col || !masks.length) { result.current = null; render(); return; }
     const t0 = performance.now();
     const size = p.width * p.height;
@@ -108,6 +128,7 @@ export function Visualizer() {
       photo.current = { data: img.data, width, height };
       gains.current = estimateWhiteBalance(photo.current);
       current.current = null; committed.current = []; result.current = null; pointsRef.current = [];
+      calibRef.current = { tapping: false, pts: [], pxPerM: null, meters: 0 }; setCalib({ tapping: false, pxPerM: null }); setWallPx(0);
       setPoints([]); setWalls(0); setHasPhoto(true); render();
 
       setStatus(model.state === 'ready' ? 'Analizando la foto…' : 'Esperando que cargue el modelo…');
@@ -132,11 +153,42 @@ export function Visualizer() {
     setStatus('Si falta o sobra algo, tocá de nuevo (verde = es pared, rojo = no es pared).');
     repaint();
   };
+  // ---- calibración de escala ----
+  const startCalib = (meters) => {
+    calibRef.current = { tapping: true, pts: [], pxPerM: null, meters };
+    setCalib({ tapping: true, pxPerM: null });
+    setStatus('Calibrando: tocá los dos extremos de la medida (ej: arriba y abajo del marco de la puerta).');
+    render();
+  };
+  const resetCalib = () => {
+    calibRef.current = { tapping: false, pts: [], pxPerM: null, meters: 0 };
+    setCalib({ tapping: false, pxPerM: null });
+    render();
+  };
+  const calibClick = (pt) => {
+    const c = calibRef.current;
+    c.pts.push({ x: pt.x, y: pt.y });
+    if (c.pts.length === 2) {
+      try {
+        c.pxPerM = pxPerMeter(c.pts[0], c.pts[1], c.meters);
+        c.tapping = false;
+        setCalib({ tapping: false, pxPerM: c.pxPerM });
+        setStatus('Escala lista. Si la foto está muy de costado, la estimación pierde precisión.');
+      } catch (err) {
+        c.pts = [];
+        setStatus(`${err.message}. Probá de nuevo.`);
+      }
+    }
+    render();
+  };
+
   const onCanvasClick = async (e) => {
     const p = photo.current;
-    if (!p || model.state !== 'ready') return;
+    if (!p) return;
     const rect = e.currentTarget.getBoundingClientRect();
     const pt = { x: ((e.clientX - rect.left) * p.width) / rect.width, y: ((e.clientY - rect.top) * p.height) / rect.height, label: mode };
+    if (calibRef.current.tapping) return calibClick(pt);
+    if (model.state !== 'ready') return;
     try { await runSegment([...pointsRef.current, pt], pointsRef.current.length === 0); }
     catch (err) { setStatus(`Error: ${err.message}`); }
   };
@@ -236,6 +288,8 @@ export function Visualizer() {
             <button onClick={download} disabled={!color}>⬇︎ Descargar</button>
           </div>
         </div>
+
+        <Calculator wallPx={wallPx} calib={calib} products={products} onStartCalib={startCalib} onResetCalib={resetCalib} />
 
         <p class="warn">⚠️ El color en pantalla puede diferir del color real de la pintura (depende de tu pantalla, la luz de la foto y la textura de la pared). Pedí una muestra antes de comprar.</p>
         <p class="muted small">
