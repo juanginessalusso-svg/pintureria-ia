@@ -65,7 +65,10 @@ const casos = JSON.parse(fs.readFileSync(casosFile, 'utf8'));
 const porFoto = Map.groupBy(casos.filter((c) => !filtro || c.id.includes(filtro)), (c) => c.foto);
 
 for (const [foto, lista] of porFoto) {
-  const raw = jpeg.decode(fs.readFileSync(path.join(here, 'fotos', foto)), { useTArray: true, formatAsRGBA: true });
+  const bytes = fs.readFileSync(path.join(here, 'fotos', foto));
+  const raw = /\.png$/i.test(foto)
+    ? (({ width, height, data }) => ({ width, height, data }))(PNG.sync.read(bytes))
+    : jpeg.decode(bytes, { useTArray: true, formatAsRGBA: true });
   const { width, height } = workingSize(raw.width, raw.height);
   const img = { data: new Uint8ClampedArray(resize(raw.data, raw.width, raw.height, width, height)), width, height };
   const gains = estimateWhiteBalance(img);

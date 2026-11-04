@@ -29,6 +29,24 @@
     "modos": ["relative"]
   },
   {
+    "id": "05a-frente-franja-superior",
+    "foto": "05-frente-plazaolmos.png",
+    "paredes": [[[0.5, 0.26, 1]]],
+    "colores": [{ "nombre": "Terracota", "hex": "#b9694a" }, { "nombre": "Azul Noche", "hex": "#1f3a5f" }]
+  },
+  {
+    "id": "05b-frente-solo-franja",
+    "foto": "05-frente-plazaolmos.png",
+    "paredes": [[[0.5, 0.26, 1], [0.35, 0.5, 0], [0.2, 0.5, 0]]],
+    "colores": [{ "nombre": "Terracota", "hex": "#b9694a" }]
+  },
+  {
+    "id": "05c-frente-solo-ladrillo",
+    "foto": "05-frente-plazaolmos.png",
+    "paredes": [[[0.45, 0.58, 1], [0.5, 0.26, 0], [0.2, 0.5, 0], [0.59, 0.55, 0]]],
+    "colores": [{ "nombre": "Verde Salvia", "hex": "#a3b18a" }, { "nombre": "Gris Cemento", "hex": "#9a9d9f" }]
+  },
+  {
     "id": "04-pasillo-fondo",
     "foto": "04-pasillo.jpg",
     "paredes": [[[0.5, 0.6, 1]]],
