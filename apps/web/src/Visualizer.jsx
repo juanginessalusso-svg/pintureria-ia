@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { estimateWhiteBalance, featherMask, recolorWall, cleanMask, pxPerMeter, wallPixels, paintStroke, maskCount } from '@pintureria/core';
+import { estimateWhiteBalance, featherMask, recolorWall, cleanMask, pxPerMeter, wallPixels, paintStroke, maskCount, detectSurfaces } from '@pintureria/core';
 import { SamClient } from './samClient.js';
 import { workingSize } from './sam.js';
 import { Calculator } from './Calculator.jsx';
@@ -28,7 +28,7 @@ export function Visualizer() {
   const [surfList, setSurfList] = useState([]); // superficies confirmadas (para la lista): {id, name, color}
   const [activeId, setActiveId] = useState(null); // superficie seleccionada en la lista: el próximo color es para ella
   const [mode, setMode] = useState('pos'); // 'pos' es pared · 'neg' no es pared · 'brush' pincel · 'erase' borrador · 'pan' mover
-  const [radius, setRadius] = useState(22); // radio del pincel en píxeles de PANTALLA
+  const [radius, setRadius] = useState(16); // radio del pincel en píxeles de PANTALLA
   const [zoom, setZoom] = useState(1);
   const [, setTick] = useState(0); // fuerza re-render cuando cambian refs que la interfaz lee (trazos, deshacer)
   const bump = () => setTick((t) => t + 1);
@@ -41,6 +41,7 @@ export function Visualizer() {
   const [branches, setBranches] = useState([]);
   const [wallPx, setWallPx] = useState(0); // píxeles de pared marcados (confirmados + selección en curso)
   const [calib, setCalib] = useState({ tapping: false, pxPerM: null });
+  const [manual, setManual] = useState(false); // herramientas manuales (clics de SAM, pincel, borrador): opcionales, la detección es automática
 
   const calibRef = useRef({ tapping: false, pts: [], pxPerM: null, meters: 0 }); // línea de referencia (coords de la foto)
   const canvasRef = useRef(null);
@@ -51,6 +52,10 @@ export function Visualizer() {
   const current = useRef(null); // máscara de la selección en curso (Uint8Array)
   const surfaces = useRef([]); // superficies confirmadas: {id, name, mask, color}; cada una con su propio color
   const surfSeq = useRef(0);
+  const activeRef = useRef(null); // espejo de activeId para render()
+  const flash = useRef(null); // superficie que parpadea un instante al seleccionarla
+  const autoCache = useRef([]); // superficies detectadas solas (para volver a empezar sin recalcular)
+  const photoSeq = useRef(0); // identifica la foto en análisis: si cambia mientras tanto, se descarta el resultado
   const result = useRef(null); // imagen recoloreada
   const showBefore = useRef(false);
   const colorRef = useRef(null); // color elegido, legible desde render() sin quedar "viejo" en una clausura
@@ -81,6 +86,15 @@ export function Visualizer() {
     return () => sam.current?.terminate();
   }, []);
 
+  // La superficie seleccionada parpadea un instante (y se queda resaltada mientras no tenga color) para ver cuál es.
+  useEffect(() => {
+    activeRef.current = activeId;
+    if (!activeId) { render(); return undefined; }
+    flash.current = activeId; render();
+    const t = setTimeout(() => { if (flash.current === activeId) { flash.current = null; render(); } }, 900);
+    return () => clearTimeout(t);
+  }, [activeId]);
+
   // Si cambia el ancho (girar el celular, redimensionar la ventana), el desplazamiento se vuelve a acomodar para no dejar bordes vacíos.
   useEffect(() => {
     const onResize = () => applyView();
@@ -98,7 +112,9 @@ export function Visualizer() {
     const live = stroke.current?.target ?? null;
     const base = !live && !showBefore.current && result.current ? result.current : p;
     let data = base.data;
-    const veil = live ?? (current.current && !(result.current && !showBefore.current && colorRef.current) ? current.current : null);
+    const act = activeRef.current ? surfaces.current.find((x) => x.id === activeRef.current) : null;
+    const actVeil = act && !showBefore.current && (!act.color || flash.current === act.id) ? act.mask : null;
+    const veil = live ?? actVeil ?? (current.current && !(result.current && !showBefore.current && colorRef.current) ? current.current : null);
     if (veil) {
       // resalta la selección en curso con un velo azul
       data = new Uint8ClampedArray(base.data);
@@ -136,7 +152,7 @@ export function Visualizer() {
     const p = photo.current;
     if (!p) return;
     const cur = current.current;
-    setWallPx(wallPixels([...surfaces.current.map((s) => s.mask), ...(cur ? [cur] : [])]));
+    setWallPx(wallPixels([...surfaces.current.filter((s) => s.color || !s.auto).map((s) => s.mask), ...(cur ? [cur] : [])])); // las detectadas solas cuentan recién cuando tienen color
     // Capas a pintar, en orden: cada superficie confirmada con SU color + la selección en curso con el color elegido.
     const layers = surfaces.current.filter((s) => s.color).map((s) => ({ mask: s.mask, hex: s.color.hex }));
     if (cur && colorRef.current) layers.push({ mask: cur, hex: colorRef.current.hex });
@@ -170,7 +186,8 @@ export function Visualizer() {
       const img = ctx.getImageData(0, 0, width, height);
       photo.current = { data: img.data, width, height };
       gains.current = estimateWhiteBalance(photo.current);
-      current.current = null; surfaces.current = []; surfSeq.current = 0; result.current = null; pointsRef.current = [];
+      const mySeq = ++photoSeq.current;
+      current.current = null; surfaces.current = []; surfSeq.current = 0; result.current = null; pointsRef.current = []; autoCache.current = []; activeRef.current = null; flash.current = null; setManual(false);
       samMask.current = null; strokes.current = []; surfUndo.current = []; stroke.current = null; gesture.current = null; pointers.current.clear();
       view.current = { s: 1, tx: 0, ty: 0 }; applyView();
       calibRef.current = { tapping: false, pts: [], pxPerM: null, meters: 0 }; setCalib({ tapping: false, pxPerM: null }); setWallPx(0);
@@ -181,10 +198,34 @@ export function Visualizer() {
       setStatus('Analizando la foto…');
       const r = await sam.current.embed(img.data.slice().buffer, width, height);
       setTiming((t) => ({ ...t, embedMs: r.embedMs }));
-      setStatus('Listo: tocá una pared.');
+      if (mySeq !== photoSeq.current) return;
+      setStatus('Buscando paredes y techo…');
+      const t1 = performance.now();
+      const found = await detectSurfaces(photo.current, async (pts) => {
+        const r = await sam.current.segment(pts.map((q) => ({ x: q.x, y: q.y, label: 1 })), true);
+        return cleanMask(new Uint8Array(r.mask), width, height);
+      });
+      if (mySeq !== photoSeq.current) return; // mientras tanto eligió otra foto
+      setTiming((t) => ({ ...t, detectMs: Math.round(performance.now() - t1) }));
+      autoCache.current = found.map((f) => ({ name: f.name, kind: f.kind, area: f.area, mask: f.mask }));
+      applyAuto();
     } catch (err) {
       setStatus(`No se pudo procesar la foto: ${err.message}`);
     }
+  };
+
+  // Carga en la lista las superficies detectadas solas; la pared más grande queda seleccionada: elegir un color ya la pinta.
+  const applyAuto = () => {
+    const found = autoCache.current;
+    surfaces.current = found.map((f) => ({ id: ++surfSeq.current, name: f.name, kind: f.kind, auto: true, mask: f.mask.slice(), color: null }));
+    syncSurfaces();
+    const first = found.length ? surfaces.current.filter((x) => x.kind === 'pared').sort((a, b) => maskCount(b.mask) - maskCount(a.mask))[0] ?? surfaces.current[0] : null;
+    if (first && colorRef.current) { first.color = colorRef.current; colorRef.current = null; syncSurfaces(); } // ya había elegido un color mientras se analizaba
+    setActiveId(first?.id ?? null);
+    setStatus(found.length
+      ? `Listo: detecté ${found.length} ${found.length === 1 ? 'superficie' : 'superficies'}. Elegí un color para "${first.name}"; para pintar otra, tocala en la foto o en la lista.`
+      : 'No pude detectar paredes solas. Tocá "Ajustar a mano" y marcá una pared.');
+    repaint();
   };
 
   // ---- selección ----
@@ -249,6 +290,13 @@ export function Visualizer() {
     if (!p) return;
     const pt = { ...toImg(e.clientX, e.clientY), label: mode === 'neg' ? 0 : 1 };
     if (calibRef.current.tapping) return calibClick(pt);
+    if (!manual) { // modo automático: un toque elige la superficie detectada que está debajo (sin volver a segmentar)
+      const x = Math.floor(pt.x), y = Math.floor(pt.y), i = y * p.width + x;
+      const hit = surfaces.current.find((s) => s.mask[i]);
+      if (hit) { setActiveId(hit.id); setStatus(`"${hit.name}" seleccionada: elegí su color.`); }
+      else setStatus('Ahí no detecté una superficie. Si falta una pared, usá "Ajustar a mano".');
+      return;
+    }
     if (mode !== 'pos' && mode !== 'neg') return; // pincel, borrador y mover no marcan puntos de SAM
     if (model.state !== 'ready') return;
     try { await runSegment([...pointsRef.current, pt], pointsRef.current.length === 0); }
@@ -441,7 +489,8 @@ export function Visualizer() {
   const clearAll = async () => {
     current.current = null; samMask.current = null; strokes.current = []; surfUndo.current = [];
     surfaces.current = []; surfSeq.current = 0; result.current = null; pointsRef.current = [];
-    setPoints([]); setSurfList([]); setActiveId(null); setWallPx(0); await sam.current.call('reset'); render();
+    setPoints([]); setSurfList([]); setActiveId(null); setWallPx(0); await sam.current.call('reset');
+    if (autoCache.current.length) applyAuto(); else render(); // vuelve a las superficies detectadas solas, sin recalcular
   };
   const selectSurface = (id) => {
     setActiveId(activeId === id ? null : id);
@@ -513,10 +562,10 @@ export function Visualizer() {
 
       <div class={hasPhoto ? '' : 'hide'}>
         <div ref={viewportRef} class="viewport" onWheel={onWheel}>
-          <canvas ref={canvasRef} class="photo" style={{ touchAction, transform: viewTransform(view.current), cursor: mode === 'pan' || zoom > 1 && mode !== 'brush' && mode !== 'erase' ? 'grab' : 'crosshair' }}
+          <canvas ref={canvasRef} class="photo" style={{ touchAction, transform: viewTransform(view.current), cursor: !manual ? 'pointer' : mode === 'pan' || zoom > 1 && mode !== 'brush' && mode !== 'erase' ? 'grab' : 'crosshair' }}
             onClick={onCanvasClick} onPointerDown={onPointerDown} onPointerMove={onPointerMove}
             onPointerUp={onPointerUp} onPointerCancel={onPointerUp} onPointerLeave={onPointerLeave} />
-          {(mode === 'brush' || mode === 'erase') && <div ref={ringRef} class="ring" style={{ width: `${radius * 2}px`, height: `${radius * 2}px` }} />}
+          {manual && (mode === 'brush' || mode === 'erase') && <div ref={ringRef} class="ring" style={{ width: `${radius * 2}px`, height: `${radius * 2}px` }} />}
         </div>
         <div class="row zoombar">
           <button onClick={() => zoomCenter(1 / 1.5)} disabled={zoom <= 1} aria-label="Alejar">−</button>
@@ -527,22 +576,32 @@ export function Visualizer() {
         {status && <p class="muted">{status}</p>}
 
         <div class="row">
-          <button class={mode === 'pos' ? 'on' : ''} onClick={() => chooseMode('pos')}>🟢 Es pared</button>
-          <button class={mode === 'neg' ? 'on' : ''} onClick={() => chooseMode('neg')}>🔴 No es pared</button>
-          <button class={mode === 'brush' ? 'on' : ''} onClick={() => chooseMode('brush')}>🖌️ Pincel</button>
-          <button class={mode === 'erase' ? 'on' : ''} onClick={() => chooseMode('erase')}>🧽 Borrador</button>
-          <button class={mode === 'pan' ? 'on' : ''} onClick={() => chooseMode('pan')}>✋ Mover</button>
+          <button class={manual ? 'on' : ''} onClick={() => { setManual(!manual); if (!manual) { setMode('pos'); setStatus('Ajuste manual: tocá la foto para marcar una pared (verde = es pared, rojo = no es pared) o usá el pincel y el borrador.'); } else { setMode('pos'); setStatus('Tocá una superficie en la foto o en la lista y elegí su color.'); } }}>
+            🛠️ {manual ? 'Listo, volver al modo automático' : 'Ajustar a mano'}
+          </button>
         </div>
-        {(mode === 'brush' || mode === 'erase') && (
-          <label class="brushsize">Tamaño {radius} px
-            <input type="range" min="6" max="60" step="1" value={radius} onInput={(e) => setRadius(Number(e.target.value))} />
-          </label>
+        {manual && (
+          <div class="card manual">
+            <div class="row">
+              <button class={mode === 'pos' ? 'on' : ''} onClick={() => chooseMode('pos')}>🟢 Es pared</button>
+              <button class={mode === 'neg' ? 'on' : ''} onClick={() => chooseMode('neg')}>🔴 No es pared</button>
+              <button class={mode === 'brush' ? 'on' : ''} onClick={() => chooseMode('brush')}>🖌️ Pincel</button>
+              <button class={mode === 'erase' ? 'on' : ''} onClick={() => chooseMode('erase')}>🧽 Borrador</button>
+              <button class={mode === 'pan' ? 'on' : ''} onClick={() => chooseMode('pan')}>✋ Mover</button>
+            </div>
+            {(mode === 'brush' || mode === 'erase') && (
+              <label class="brushsize">Tamaño {radius} px
+                <input type="range" min="6" max="60" step="1" value={radius} onInput={(e) => setRadius(Number(e.target.value))} />
+              </label>
+            )}
+            <p class="muted small">El pincel y el borrador editan la superficie seleccionada en la lista (o la selección nueva si no hay ninguna).</p>
+            <div class="row">
+              <button onClick={undo} disabled={!canUndo}>↩︎ Deshacer</button>
+              <button onClick={commit} disabled={!current.current}>✔︎ Confirmar superficie nueva</button>
+              <button onClick={clearAll}>Volver a lo detectado</button>
+            </div>
+          </div>
         )}
-        <div class="row">
-          <button onClick={undo} disabled={!canUndo}>↩︎ Deshacer</button>
-          <button onClick={commit} disabled={!current.current}>✔︎ Confirmar superficie</button>
-          <button onClick={clearAll}>Empezar de nuevo</button>
-        </div>
 
         {surfList.length > 0 && (
           <div class="card surfaces">
@@ -555,7 +614,7 @@ export function Visualizer() {
                 <button onClick={(e) => { e.stopPropagation(); removeSurface(s.id); }} aria-label={`Quitar ${s.name}`}>✕</button>
               </div>
             ))}
-            <p class="muted small">{activeSurface ? `Elegí un color para "${activeSurface.name}".` : 'Tocá una superficie de la lista para cambiarle el color; si no, el color va a la selección nueva.'}</p>
+            <p class="muted small">{activeSurface ? `Elegí un color para "${activeSurface.name}".` : 'Tocá una superficie (en la foto o acá) para elegir su color.'}</p>
           </div>
         )}
 
@@ -586,7 +645,7 @@ export function Visualizer() {
 
         <p class="warn">⚠️ El color en pantalla puede diferir del color real de la pintura (depende de tu pantalla, la luz de la foto y la textura de la pared). Pedí una muestra antes de comprar.</p>
         <p class="muted small">
-          Modelo: {model.info || '—'}{timing.embedMs ? ` · análisis ${timing.embedMs} ms` : ''}{timing.segMs ? ` · segmentación ${timing.segMs} ms` : ''}{timing.recolorMs ? ` · recoloreo ${timing.recolorMs} ms` : ''}
+          Modelo: {model.info || '—'}{timing.embedMs ? ` · análisis ${timing.embedMs} ms` : ''}{timing.detectMs ? ` · detección ${timing.detectMs} ms` : ''}{timing.segMs ? ` · segmentación ${timing.segMs} ms` : ''}{timing.recolorMs ? ` · recoloreo ${timing.recolorMs} ms` : ''}
         </p>
       </div>
     </main>
