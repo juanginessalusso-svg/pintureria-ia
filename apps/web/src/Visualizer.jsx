@@ -42,6 +42,7 @@ export function Visualizer() {
   const [branches, setBranches] = useState([]);
   const [wallPx, setWallPx] = useState(0); // píxeles de pared marcados (confirmados + selección en curso)
   const [calib, setCalib] = useState({ tapping: false, pxPerM: null });
+  const [cutMode, setCutMode] = useState(false); // "Sacar un objeto": el próximo toque recorta lo que quedó pintado y no es pared
   const [manual, setManual] = useState(false); // herramientas manuales (clics de SAM, pincel, borrador): opcionales, la detección es automática
 
   const calibRef = useRef({ tapping: false, pts: [], pxPerM: null, meters: 0 }); // línea de referencia (coords de la foto)
@@ -190,7 +191,7 @@ export function Visualizer() {
       photo.current = { data: img.data, width, height };
       gains.current = estimateWhiteBalance(photo.current);
       const mySeq = ++photoSeq.current;
-      current.current = null; surfaces.current = []; surfSeq.current = 0; result.current = null; pointsRef.current = []; autoCache.current = []; activeRef.current = null; flash.current = null; setManual(false);
+      current.current = null; surfaces.current = []; surfSeq.current = 0; result.current = null; pointsRef.current = []; autoCache.current = []; activeRef.current = null; flash.current = null; setManual(false); setCutMode(false);
       samMask.current = null; strokes.current = []; surfUndo.current = []; stroke.current = null; gesture.current = null; pointers.current.clear();
       view.current = { s: 1, tx: 0, ty: 0 }; applyView();
       calibRef.current = { tapping: false, pts: [], pxPerM: null, meters: 0 }; setCalib({ tapping: false, pxPerM: null }); setWallPx(0);
@@ -229,6 +230,38 @@ export function Visualizer() {
       ? `Listo: detecté ${found.length} ${found.length === 1 ? 'superficie' : 'superficies'}. Elegí un color para "${first.name}"; para pintar otra, tocala en la foto o en la lista.`
       : 'No pude detectar paredes solas. Tocá "Ajustar a mano" y marcá una pared.');
     repaint();
+  };
+
+  // "Sacar un objeto" (un solo toque, solo cuando hay un error): SAM recorta bien un objeto cuando se le da un punto sobre él, aunque sea del color de
+  // la pared (una tabla blanca, un mueble claro). La detección automática no puede adivinarlo; el cliente lo señala con un toque.
+  const cutObject = async (pt) => {
+    const p = photo.current;
+    const i = Math.floor(pt.y) * p.width + Math.floor(pt.x);
+    const hit = surfaces.current.find((x) => x.mask[i]);
+    if (!hit) { setStatus('Tocá algo que esté pintado (o resaltado) y no sea pared.'); return; }
+    if (model.state !== 'ready') return;
+    setStatus('Separando el objeto…');
+    try {
+      const r = await sam.current.segment([{ x: pt.x, y: pt.y, label: 1 }], true);
+      await sam.current.call('reset');
+      const m = cleanMask(new Uint8Array(r.mask), p.width, p.height);
+      let tot = 0, inter = 0, mn = 0;
+      for (let k = 0; k < m.length; k++) { if (hit.mask[k]) tot++; if (m[k]) { mn++; if (hit.mask[k]) inter++; } }
+      if (!mn || !inter) { setStatus('No pude separar ese objeto. Probá en "Ajustar a mano" con el borrador.'); return; }
+      if (inter / tot >= 0.85 || mn / tot > 0.6) { setStatus(`No pude separarlo de "${hit.name}": la selección salió demasiado grande. Probá en "Ajustar a mano" con el borrador.`); return; }
+      surfUndo.current.push({ id: hit.id, mask: hit.mask.slice() });
+      if (surfUndo.current.length > MAX_SURF_UNDO) surfUndo.current.shift();
+      for (let k = 0; k < m.length; k++) if (m[k]) hit.mask[k] = 0;
+      setCutMode(false); repaint(); bump();
+      setStatus(`Listo: saqué ese objeto de "${hit.name}". Si no era eso, tocá Deshacer.`);
+    } catch (err) { setStatus(`Error: ${err.message}`); }
+  };
+  const undoCut = () => {
+    const u = surfUndo.current.pop();
+    if (!u) return;
+    const sf = surfaces.current.find((x) => x.id === u.id);
+    if (sf) sf.mask = u.mask;
+    repaint(); bump(); setStatus('Deshecho.');
   };
 
   // ---- selección ----
@@ -293,6 +326,7 @@ export function Visualizer() {
     if (!p) return;
     const pt = { ...toImg(e.clientX, e.clientY), label: mode === 'neg' ? 0 : 1 };
     if (calibRef.current.tapping) return calibClick(pt);
+    if (cutMode && !manual) return cutObject(pt);
     if (!manual) { // modo automático: un toque elige la superficie detectada que está debajo (sin volver a segmentar)
       const x = Math.floor(pt.x), y = Math.floor(pt.y), i = y * p.width + x;
       const hit = surfaces.current.find((s) => s.mask[i]);
@@ -577,7 +611,7 @@ export function Visualizer() {
 
       <div class={hasPhoto ? '' : 'hide'}>
         <div ref={viewportRef} class="viewport" onWheel={onWheel}>
-          <canvas ref={canvasRef} class="photo" style={{ touchAction, transform: viewTransform(view.current), cursor: !manual ? 'pointer' : mode === 'pan' || zoom > 1 && mode !== 'brush' && mode !== 'erase' ? 'grab' : 'crosshair' }}
+          <canvas ref={canvasRef} class="photo" style={{ touchAction, transform: viewTransform(view.current), cursor: !manual ? (cutMode ? 'crosshair' : 'pointer') : mode === 'pan' || zoom > 1 && mode !== 'brush' && mode !== 'erase' ? 'grab' : 'crosshair' }}
             onClick={onCanvasClick} onPointerDown={onPointerDown} onPointerMove={onPointerMove}
             onPointerUp={onPointerUp} onPointerCancel={onPointerUp} onPointerLeave={onPointerLeave} />
           {manual && (mode === 'brush' || mode === 'erase') && <div ref={ringRef} class="ring" style={{ width: `${radius * 2}px`, height: `${radius * 2}px` }} />}
@@ -590,8 +624,14 @@ export function Visualizer() {
         </div>
         {status && <p class="muted">{status}</p>}
 
+        {!manual && surfList.length > 0 && (
+          <div class="row">
+            <button class={cutMode ? 'on' : ''} onClick={() => { setCutMode(!cutMode); setStatus(cutMode ? 'Tocá una superficie en la foto o en la lista y elegí su color.' : 'Tocá lo que quedó pintado y no es pared (una tabla, un mueble, una puerta).'); }}>✂️ Sacar un objeto</button>
+            <button onClick={undoCut} disabled={!surfUndo.current.length}>↩︎ Deshacer</button>
+          </div>
+        )}
         <div class="row">
-          <button class={manual ? 'on' : ''} onClick={() => { setManual(!manual); if (!manual) { setMode('pos'); setStatus('Ajuste manual: tocá la foto para marcar una pared (verde = es pared, rojo = no es pared) o usá el pincel y el borrador.'); } else { setMode('pos'); setStatus('Tocá una superficie en la foto o en la lista y elegí su color.'); } }}>
+          <button class={manual ? 'on' : ''} onClick={() => { setCutMode(false); setManual(!manual); if (!manual) { setMode('pos'); setStatus('Ajuste manual: tocá la foto para marcar una pared (verde = es pared, rojo = no es pared) o usá el pincel y el borrador.'); } else { setMode('pos'); setStatus('Tocá una superficie en la foto o en la lista y elegí su color.'); } }}>
             🛠️ {manual ? 'Listo, volver al modo automático' : 'Ajustar a mano'}
           </button>
         </div>
