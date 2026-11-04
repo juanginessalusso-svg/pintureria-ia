@@ -18,6 +18,8 @@ test('pesos: formato argentino con puntos de mil', () => {
   assert.equal(pesos(4800000), '$48.000');
   assert.equal(pesos(123456700), '$1.234.567');
   assert.equal(pesos(0), '$0');
+  assert.equal(pesos(700050), '$7.000,50'); // con centavos
+  assert.equal(pesos(1905), '$19,05');
 });
 
 test('cleanWhatsapp: deja dígitos y valida el largo', () => {

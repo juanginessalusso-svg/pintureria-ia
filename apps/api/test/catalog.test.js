@@ -138,6 +138,82 @@ test('?tenant= tiene prioridad sobre el dominio solo si allowTenantParam; si no,
   }
 });
 
+const CSV_OK = ['sku;nombre;rendimiento;manos;litros;precio', 'IMP-1;Importado uno;10,5;2;4;$ 48.000', 'IMP-1;;;;10;$ 110.000', 'IMP-2;Importado dos;8;;1;19.000,50'].join('\r\n');
+
+test('importar CSV: vista previa no escribe; aplicar crea; reimportar actualiza (y marca el embedding viejo)', async () => {
+  const c = client();
+  await c.login('a', 'clave-de-prueba-A1');
+  const antes = (await c.call('GET', '/api/admin/products')).body.length;
+
+  const prev = await c.call('POST', '/api/admin/products/import', { csv: CSV_OK, dryRun: true });
+  assert.equal(prev.status, 200);
+  assert.deepEqual([prev.body.summary.create, prev.body.summary.update, prev.body.summary.sizes, prev.body.applied], [2, 0, 3, false]);
+  assert.equal((await c.call('GET', '/api/admin/products')).body.length, antes); // no escribió
+
+  const ok = await c.call('POST', '/api/admin/products/import', { csv: CSV_OK });
+  assert.equal(ok.status, 200);
+  assert.equal(ok.body.applied, true);
+  const list = (await c.call('GET', '/api/admin/products')).body;
+  assert.equal(list.length, antes + 2);
+  const uno = list.find((p) => p.sku === 'IMP-1');
+  assert.equal(uno.yield_m2_per_l, 10.5);
+  assert.deepEqual(uno.sizes, [{ liters: 4, price_cents: 4800000 }, { liters: 10, price_cents: 11000000 }]);
+
+  db.prepare('UPDATE products SET embedding_stale = 0 WHERE id = ?').run(uno.id);
+  const again = await c.call('POST', '/api/admin/products/import', { csv: CSV_OK.replace('48.000', '50.000') });
+  assert.deepEqual([again.body.summary.create, again.body.summary.update], [0, 2]);
+  const uno2 = (await c.call('GET', '/api/admin/products')).body.find((p) => p.sku === 'IMP-1');
+  assert.equal(uno2.sizes[0].price_cents, 5000000);
+  assert.equal(db.prepare('SELECT embedding_stale FROM products WHERE id = ?').get(uno.id).embedding_stale, 1);
+});
+
+test('importar CSV: todo o nada ante un error, con la línea del problema', async () => {
+  const c = client();
+  await c.login('a', 'clave-de-prueba-A1');
+  const antes = (await c.call('GET', '/api/admin/products')).body.length;
+  const bad = ['sku;nombre;rendimiento;litros;precio', 'OK-1;Bueno;10;4;100', 'MAL-1;Malo;abc;4;100'].join('\n');
+  const r = await c.call('POST', '/api/admin/products/import', { csv: bad });
+  assert.equal(r.status, 400);
+  assert.equal(r.body.applied, false);
+  assert.deepEqual(r.body.errors.map((e) => e.line), [3]);
+  assert.equal((await c.call('GET', '/api/admin/products')).body.length, antes); // OK-1 tampoco entró
+});
+
+test('importar CSV: reemplazo borra solo lo de MI pinturería; la otra no se toca; exige sesión y CSRF', async () => {
+  const a = client(), b = client();
+  await a.login('a', 'clave-de-prueba-A1');
+  await b.login('b', 'clave-de-prueba-B1');
+  await b.call('POST', '/api/admin/products/import', { csv: CSV_OK });
+  const bAntes = (await b.call('GET', '/api/admin/products')).body.length;
+
+  const prev = await a.call('POST', '/api/admin/products/import', { csv: CSV_OK, mode: 'replace', dryRun: true });
+  assert.ok(prev.body.summary.remove > 0); // borraría los demás productos de A
+  assert.ok(prev.body.summary.removeNames.length > 0);
+  const rep = await a.call('POST', '/api/admin/products/import', { csv: CSV_OK, mode: 'replace' });
+  assert.equal(rep.status, 200);
+  assert.deepEqual((await a.call('GET', '/api/admin/products')).body.map((p) => p.sku).sort(), ['IMP-1', 'IMP-2']);
+  assert.equal((await b.call('GET', '/api/admin/products')).body.length, bAntes); // B intacta
+
+  assert.equal((await client().call('POST', '/api/admin/products/import', { csv: CSV_OK })).status, 401);
+  a.noCsrf();
+  assert.equal((await a.call('POST', '/api/admin/products/import', { csv: CSV_OK })).status, 403);
+});
+
+test('importar CSV: un catálogo grande (más de 100 KB) entra; el límite general sigue en 100 KB', async () => {
+  const c = client();
+  await c.login('b', 'clave-de-prueba-B1');
+  const filas = ['sku;nombre;rendimiento;ficha_tecnica;litros;precio'];
+  for (let i = 0; i < 400; i++) filas.push(`BIG-${i};Producto grande ${i};10;"${'x'.repeat(300)}";4;1000`);
+  const csv = filas.join('\n');
+  assert.ok(csv.length > 120_000);
+  const r = await c.call('POST', '/api/admin/products/import', { csv });
+  assert.equal(r.status, 200);
+  assert.equal(r.body.summary.create, 400);
+  // el resto de la API sigue con el límite de 100 KB
+  const grande = await c.call('POST', '/api/admin/products', { sku: 'X', name: 'X', yield_m2_per_l: 10, tech_sheet: 'y'.repeat(150_000) });
+  assert.equal(grande.status, 413);
+});
+
 test('sucursales: CRUD, normaliza el WhatsApp, valida y es público solo lo activo', async () => {
   const c = client();
   await c.login('a', 'clave-de-prueba-A1');

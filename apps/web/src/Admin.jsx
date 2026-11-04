@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'preact/hooks';
+import { CSV_TEMPLATE, decodeCsvBytes, pesos } from '@pintureria/core';
 import { api, mensaje, setCsrf } from './api.js';
 
-const pesos = (cents) => (cents / 100).toLocaleString('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 });
 
 export function Admin() {
   const [me, setMe] = useState(undefined); // undefined = cargando, null = sin sesión
@@ -141,6 +141,108 @@ function Colors() {
   );
 }
 
+/** Importar productos desde un CSV (Excel): vista previa con errores por línea y recién después se aplica. */
+function ProductImport({ onDone }) {
+  const [open, setOpen] = useState(false);
+  const [csv, setCsv] = useState('');
+  const [fileName, setFileName] = useState('');
+  const [replace, setReplace] = useState(false);
+  const [res, setRes] = useState(null); // respuesta de la vista previa (ok o con errores)
+  const [msg, setMsg] = useState({ ok: '', err: '' });
+  const [busy, setBusy] = useState(false);
+
+  const call = async (text, mode, dryRun) => {
+    try { return await api('/admin/products/import', { method: 'POST', body: { csv: text, mode, dryRun } }); }
+    catch (e) { if (e.body?.errors) return e.body; throw e; } // 400 con errores por línea: se muestra igual
+  };
+  const preview = async (text, mode) => {
+    setBusy(true); setMsg({ ok: '', err: '' });
+    try { setRes(await call(text, mode, true)); } catch (e) { setRes(null); setMsg({ ok: '', err: mensaje(e) }); }
+    setBusy(false);
+  };
+  const plantilla = () => {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([CSV_TEMPLATE], { type: 'text/csv;charset=utf-8' }));
+    a.download = 'plantilla-productos.csv'; a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  };
+  const elegir = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    const text = decodeCsvBytes(new Uint8Array(await file.arrayBuffer())); // UTF-8 o, si no, Windows-1252 (Excel)
+    setCsv(text); setFileName(file.name); setReplace(false);
+    await preview(text, 'upsert');
+  };
+  const cambiarModo = async (v) => { setReplace(v); if (csv) await preview(csv, v ? 'replace' : 'upsert'); };
+  const importar = async () => {
+    const s = res.summary;
+    if (replace && !confirm(`Se van a BORRAR ${s.remove} productos que no están en el archivo (${s.removeNames.join(', ')}${s.remove > s.removeNames.length ? '…' : ''}). ¿Seguro?`)) return;
+    setBusy(true); setMsg({ ok: '', err: '' });
+    try {
+      const out = await call(csv, replace ? 'replace' : 'upsert', false);
+      if (out.applied) {
+        setMsg({ ok: `Listo: ${out.summary.create} productos nuevos y ${out.summary.update} actualizados${out.summary.remove ? `, ${out.summary.remove} borrados` : ''}.`, err: '' });
+        setRes(null); setCsv(''); setFileName(''); onDone();
+      } else setRes(out);
+    } catch (e) { setMsg({ ok: '', err: mensaje(e) }); }
+    setBusy(false);
+  };
+
+  const s = res?.summary;
+  return (
+    <div class="card">
+      <div class="row">
+        <strong>Importar productos desde Excel / CSV</strong>
+        <button onClick={() => setOpen(!open)}>{open ? 'Cerrar' : 'Abrir'}</button>
+      </div>
+      {open && (
+        <>
+          <p class="muted small">
+            Una fila por <strong>presentación</strong>: repetí el SKU y cambiá litros y precio. Obligatorias: <em>sku, nombre, rendimiento</em> (m² por litro y por mano).
+            Acepta separador <code>;</code> o <code>,</code>, coma decimal y precios como <code>$ 48.000,50</code>. Si el SKU ya existe se actualiza.
+          </p>
+          <div class="row">
+            <button onClick={plantilla}>⬇︎ Descargar plantilla</button>
+            <label class="btn primary">📄 Elegir archivo CSV<input type="file" accept=".csv,.txt,text/csv" onChange={elegir} hidden /></label>
+            {fileName && <span class="muted small">{fileName}</span>}
+          </div>
+          {busy && <p class="muted">Procesando…</p>}
+          {s && (
+            <div class="result">
+              <p>
+                {s.products} productos ({s.sizes} presentaciones): <strong>{s.create} nuevos</strong>, <strong>{s.update} se actualizan</strong>
+                {replace && <>, <strong class="err">{s.remove} se borran</strong>{s.remove ? ` (${s.removeNames.join(', ')}${s.remove > s.removeNames.length ? '…' : ''})` : ''}</>}.
+              </p>
+              {res.errors.length > 0 && (
+                <>
+                  <p class="err"><strong>Corregí {res.errors.length} {res.errors.length === 1 ? 'error' : 'errores'} y volvé a elegir el archivo (no se importó nada):</strong></p>
+                  <ul class="small">{res.errors.slice(0, 30).map((e) => <li><strong>Línea {e.line}:</strong> {e.message}</li>)}</ul>
+                  {res.errors.length > 30 && <p class="muted small">…y {res.errors.length - 30} más.</p>}
+                </>
+              )}
+              {res.warnings.length > 0 && (
+                <details><summary class="muted small">{res.warnings.length} {res.warnings.length === 1 ? 'aviso' : 'avisos'}</summary>
+                  <ul class="small">{res.warnings.slice(0, 30).map((w) => <li>Línea {w.line}: {w.message}</li>)}</ul>
+                </details>
+              )}
+              {res.ignoredColumns?.length > 0 && <p class="muted small">Columnas que no se usan: {res.ignoredColumns.join(', ')}.</p>}
+              {res.ok && (
+                <>
+                  <label class="check"><input type="checkbox" checked={replace} onChange={(e) => cambiarModo(e.target.checked)} /> Reemplazar todo: borrar los productos que no estén en el archivo</label>
+                  <button class="primary" onClick={importar} disabled={busy}>Importar {s.products} productos</button>
+                </>
+              )}
+            </div>
+          )}
+        </>
+      )}
+      {msg.ok && <p class="ok">{msg.ok}</p>}
+      {msg.err && <p class="err">{msg.err}</p>}
+    </div>
+  );
+}
+
 const EMPTY_PRODUCT = { sku: '', name: '', category: '', description: '', coats: 2, yield_m2_per_l: 10, tech_sheet: '', active: true, sizes: [{ liters: 4, price: '' }] };
 
 function Products() {
@@ -175,6 +277,7 @@ function Products() {
 
   return (
     <section>
+      <ProductImport onDone={reload} />
       <form onSubmit={guardar} class="card grid">
         <label>SKU<input value={f.sku} onInput={set('sku')} required /></label>
         <label>Nombre<input value={f.name} onInput={set('name')} required /></label>

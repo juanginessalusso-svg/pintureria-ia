@@ -6,8 +6,14 @@ import {
 } from '../auth.js';
 import { catalog, colorSchema, productSchema, settingsSchema } from '../catalog.js';
 import { branches, branchSchema } from '../branches.js';
+import { importProducts } from '../productImport.js';
 
 const loginSchema = z.object({ tenant: z.string().min(1).max(60), username: z.string().min(1).max(60), password: z.string().min(1).max(200) });
+const importSchema = z.object({
+  csv: z.string().min(1).max(3_000_000),
+  mode: z.enum(['upsert', 'replace']).default('upsert'),
+  dryRun: z.boolean().default(false),
+});
 const passwordSchema = z.object({ current: z.string().min(1).max(200), next: z.string().min(10).max(200) });
 
 const isUnique = (e) => e?.code === 'SQLITE_CONSTRAINT_UNIQUE';
@@ -119,6 +125,13 @@ export function adminRoutes(db, { secureCookies = false } = {}) {
   });
   r.delete('/branches/:id', (req, res) =>
     branchRepo.remove(req.session.tenantId, idOf(req)) ? res.status(204).end() : res.status(404).json({ error: 'no_encontrado' }));
+
+  // ---- importar productos desde CSV (vista previa con dryRun, o aplicar) -----
+  r.post('/products/import', (req, res) => {
+    const { csv, mode, dryRun } = importSchema.parse(req.body);
+    const out = importProducts(db, req.session.tenantId, csv, { mode, dryRun });
+    res.status(out.ok ? 200 : 400).json(out);
+  });
 
   // ---- productos ----------------------------------------------------------
   r.get('/products', (req, res) => res.json(cat.listProducts(req.session.tenantId)));

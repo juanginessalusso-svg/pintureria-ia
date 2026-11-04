@@ -2,10 +2,11 @@ let csrf = '';
 export const setCsrf = (t) => { csrf = t; };
 
 export class ApiError extends Error {
-  constructor(code, status, details) {
+  constructor(code, status, details, body) {
     super(code);
     this.status = status;
     this.details = details;
+    this.body = body; // respuesta completa (la importación de CSV devuelve ahí la lista de errores por línea)
   }
 }
 
@@ -28,6 +29,6 @@ export async function api(path, { method = 'GET', body } = {}) {
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const data = res.status === 204 ? null : await res.json().catch(() => null);
-  if (!res.ok) throw new ApiError(data?.error ?? `http_${res.status}`, res.status, data?.details);
+  if (!res.ok) throw new ApiError(data?.error ?? `http_${res.status}`, res.status, data?.details, data);
   return data;
 }

@@ -3,7 +3,12 @@
 
 /** 48000 -> "48.000" (formato es-AR sin depender de ICU). */
 const miles = (n) => Math.round(n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, '.');
-export const pesos = (cents) => `$${miles(cents / 100)}`;
+// Solo muestra centavos cuando los hay: 4800000 -> "$48.000"; 700050 -> "$7.000,50".
+export const pesos = (cents) => {
+  const n = Math.round(cents);
+  const rest = Math.abs(n % 100);
+  return `$${miles(Math.trunc(n / 100))}${rest ? `,${String(rest).padStart(2, '0')}` : ''}`;
+};
 /** 4 -> "4", 1.4 -> "1,4" */
 const lit = (n) => (Math.round(n * 10) / 10).toString().replace('.', ',');
 

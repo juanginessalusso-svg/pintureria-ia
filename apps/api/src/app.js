@@ -29,6 +29,8 @@ export function createApp({ db, webDir, modelsDir, uploadsDir, allowTenantParam 
     res.setHeader('Content-Security-Policy', CSP);
     next();
   });
+  // La importación de un catálogo en CSV puede pesar más que un pedido normal: límite propio, ANTES del general.
+  app.use('/api/admin/products/import', express.json({ limit: '3mb' }));
   app.use(express.json({ limit: '100kb' }));
 
   app.get('/api/health', (_req, res) => {

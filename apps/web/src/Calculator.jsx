@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'preact/hooks';
-import { areaM2, litersNeeded, suggestCans, DEFAULT_MARGIN, buildBudgetMessage, whatsappUrl, cleanWhatsapp } from '@pintureria/core';
+import { areaM2, litersNeeded, suggestCans, DEFAULT_MARGIN, buildBudgetMessage, whatsappUrl, cleanWhatsapp, pesos } from '@pintureria/core';
 
-const ars = (cents) => (cents / 100).toLocaleString('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 });
+const ars = pesos; // formato argentino; muestra centavos solo si los hay
 const fmt = (n, d = 1) => n.toLocaleString('es-AR', { minimumFractionDigits: d, maximumFractionDigits: d });
 
 const PRESETS = [
