@@ -27,3 +27,18 @@ tr.off { opacity: .5; }
 .err { color: #b42318; margin: 4px 0; }
 .ok { color: #067647; margin: 4px 0; }
 @media (max-width: 640px) { table { display: block; overflow-x: auto; } }
+
+/* ---- visualizador ---- */
+.hide { display: none; }
+.vis h3 { margin: 16px 0 6px; font-size: 1rem; }
+.photo { width: 100%; height: auto; border-radius: 10px; background: #ddd; touch-action: manipulation; cursor: crosshair; }
+.btn { display: inline-block; padding: 10px 14px; border: 1px solid var(--line); border-radius: 8px; background: #fff; cursor: pointer; }
+.btn.primary { background: var(--brand); color: #fff; border-color: var(--brand); }
+.swatches { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 10px; }
+.sw-btn { width: 44px; height: 44px; padding: 0; border-radius: 10px; border: 2px solid #0002; }
+.sw-btn.sel { outline: 3px solid var(--brand); outline-offset: 2px; }
+.row button.on { background: var(--brand); color: #fff; border-color: var(--brand); }
+.small { font-size: .8rem; }
+.warn { background: #fff8e1; border: 1px solid #f5d97a; border-radius: 8px; padding: 10px; font-size: .85rem; }
+progress { width: 100%; }
+select { font: inherit; padding: 8px; border: 1px solid var(--line); border-radius: 6px; background: #fff; }

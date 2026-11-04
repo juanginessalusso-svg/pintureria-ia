@@ -1,0 +1,183 @@
+// Recoloreo determinístico de paredes en espacio LAB. Sin IA generativa, sin dependencias.
+// Trabaja sobre {data: Uint8ClampedArray RGBA, width, height} y una máscara Float32Array (0..1).
+import { hexToLab } from './color.js';
+
+// ---- tablas para no llamar a Math.pow por píxel ----
+const SRGB_TO_LIN = new Float32Array(256);
+for (let i = 0; i < 256; i++) {
+  const v = i / 255;
+  SRGB_TO_LIN[i] = v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+}
+const LIN_STEPS = 4096;
+const LIN_TO_SRGB = new Uint8ClampedArray(LIN_STEPS + 1);
+for (let i = 0; i <= LIN_STEPS; i++) {
+  const v = i / LIN_STEPS;
+  LIN_TO_SRGB[i] = Math.round((v <= 0.0031308 ? 12.92 * v : 1.055 * v ** (1 / 2.4) - 0.055) * 255);
+}
+const toSrgb8 = (lin) => LIN_TO_SRGB[Math.min(LIN_STEPS, Math.max(0, Math.round(lin * LIN_STEPS)))];
+
+const XN = 0.95047, ZN = 1.08883;
+const EPS = 216 / 24389, KAPPA = 24389 / 27;
+const fwd = (t) => (t > EPS ? Math.cbrt(t) : (KAPPA * t + 16) / 116);
+const inv = (t) => { const t3 = t * t * t; return t3 > EPS ? t3 : (116 * t - 16) / KAPPA; };
+
+/** Lineal (r,g,b en 0..1) -> LAB. Escribe en out[0..2]. */
+function linToLab(r, g, b, out) {
+  const x = (0.4124564 * r + 0.3575761 * g + 0.1804375 * b) / XN;
+  const y = 0.2126729 * r + 0.7151522 * g + 0.072175 * b;
+  const z = (0.0193339 * r + 0.119192 * g + 0.9503041 * b) / ZN;
+  const fx = fwd(x), fy = fwd(y), fz = fwd(z);
+  out[0] = 116 * fy - 16; out[1] = 500 * (fx - fy); out[2] = 200 * (fy - fz);
+}
+/** LAB -> lineal sin recortar (puede salir de gamut). */
+function labToLin(L, a, b, out) {
+  const fy = (L + 16) / 116, fx = fy + a / 500, fz = fy - b / 200;
+  const x = inv(fx) * XN, y = inv(fy), z = inv(fz) * ZN;
+  out[0] = 3.2404542 * x - 1.5371385 * y - 0.4985314 * z;
+  out[1] = -0.969266 * x + 1.8760108 * y + 0.041556 * z;
+  out[2] = 0.0556434 * x - 0.2040259 * y + 1.0572252 * z;
+}
+
+// ---------------------------------------------------------------------------
+// Balance de blancos (gray-world robusto)
+// ---------------------------------------------------------------------------
+
+/**
+ * Estima ganancias [gR,gG,gB] que neutralizan la dominante de color de la foto.
+ * Ignora píxeles muy oscuros o quemados (no informan el color de la luz) y limita la
+ * corrección (maxGain) para no "arreglar" de más una habitación legítimamente cálida.
+ */
+export function estimateWhiteBalance(img, { maxGain = 1.35, strength = 1 } = {}) {
+  const { data } = img;
+  let r = 0, g = 0, b = 0, n = 0;
+  // submuestreo: con ~40k píxeles alcanza para estimar la media
+  const step = Math.max(1, Math.floor((data.length / 4) / 40000));
+  for (let p = 0; p < data.length; p += 4 * step) {
+    const R = data[p], G = data[p + 1], B = data[p + 2];
+    const mx = Math.max(R, G, B), mn = Math.min(R, G, B);
+    if (mx > 240 || mx < 25 || (mx - mn) > 120) continue; // quemado / oscuro / muy saturado
+    r += SRGB_TO_LIN[R]; g += SRGB_TO_LIN[G]; b += SRGB_TO_LIN[B]; n++;
+  }
+  if (n < 100) return [1, 1, 1];
+  const avg = (r + g + b) / 3 / n;
+  const clamp = (x) => Math.min(maxGain, Math.max(1 / maxGain, x));
+  const gain = (c) => 1 + (clamp(avg / (c / n)) - 1) * strength;
+  return [gain(r), gain(g), gain(b)];
+}
+
+// ---------------------------------------------------------------------------
+// Máscara
+// ---------------------------------------------------------------------------
+
+/** Suaviza el borde de una máscara binaria con un box-blur separable (radio en píxeles). */
+export function featherMask(mask, width, height, radius = 2) {
+  if (radius <= 0) return mask;
+  const tmp = new Float32Array(mask.length), out = new Float32Array(mask.length);
+  const win = 2 * radius + 1;
+  for (let y = 0; y < height; y++) {
+    const row = y * width;
+    let acc = 0;
+    for (let x = -radius; x <= radius; x++) acc += mask[row + Math.min(width - 1, Math.max(0, x))];
+    for (let x = 0; x < width; x++) {
+      tmp[row + x] = acc / win;
+      acc += mask[row + Math.min(width - 1, x + radius + 1)] - mask[row + Math.max(0, x - radius)];
+    }
+  }
+  for (let x = 0; x < width; x++) {
+    let acc = 0;
+    for (let y = -radius; y <= radius; y++) acc += tmp[Math.min(height - 1, Math.max(0, y)) * width + x];
+    for (let y = 0; y < height; y++) {
+      out[y * width + x] = acc / win;
+      acc += tmp[Math.min(height - 1, y + radius + 1) * width + x] - tmp[Math.max(0, y - radius) * width + x];
+    }
+  }
+  return out;
+}
+
+/** Fracción (0..1) de la imagen cubierta por la máscara. */
+export function maskFraction(mask) {
+  let s = 0;
+  for (let i = 0; i < mask.length; i++) if (mask[i] > 0.5) s++;
+  return s / mask.length;
+}
+
+/** Une varias máscaras (máximo por píxel). */
+export function unionMasks(masks, size) {
+  const out = new Float32Array(size);
+  for (const m of masks) for (let i = 0; i < size; i++) if (m[i] > out[i]) out[i] = m[i];
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// Recoloreo
+// ---------------------------------------------------------------------------
+
+function wallStats(img, mask, gains) {
+  // Luminancia media de la pared (en espacio ya balanceado), recortando 5% de extremos
+  // para que brillos especulares y sombras muy duras no arrastren la media.
+  const { data } = img;
+  const hist = new Uint32Array(101);
+  const lab = [0, 0, 0];
+  let n = 0;
+  const step = Math.max(1, Math.floor(mask.length / 60000));
+  for (let i = 0; i < mask.length; i += step) {
+    if (mask[i] <= 0.5) continue;
+    const p = i * 4;
+    linToLab(Math.min(1, SRGB_TO_LIN[data[p]] * gains[0]), Math.min(1, SRGB_TO_LIN[data[p + 1]] * gains[1]),
+      Math.min(1, SRGB_TO_LIN[data[p + 2]] * gains[2]), lab);
+    hist[Math.max(0, Math.min(100, Math.round(lab[0])))]++;
+    n++;
+  }
+  if (!n) return { meanL: 50, n: 0 };
+  let lo = Math.floor(n * 0.05), hi = Math.ceil(n * 0.95), acc = 0, sum = 0, cnt = 0;
+  for (let l = 0; l <= 100; l++) {
+    const inRange = Math.max(0, Math.min(acc + hist[l], hi) - Math.max(acc, lo));
+    sum += l * inRange; cnt += inRange; acc += hist[l];
+  }
+  return { meanL: cnt ? sum / cnt : 50, n };
+}
+
+/**
+ * Pinta la pared con `targetHex`.
+ *  - mode 'pure'     : conserva L de cada píxel; solo reemplaza a/b por los del color elegido.
+ *  - mode 'relative' : escala L por (L_color / L_media_pared): conserva las luces y sombras RELATIVAS pero
+ *                      los colores oscuros se ven oscuros y los claros claros (L puro los lava).
+ *  - gains           : balance de blancos. La pared se neutraliza, se recolorea y se vuelve a aplicar la
+ *                      dominante de la foto, así la pintura nueva respeta la luz del ambiente.
+ *  - intensity       : 0..1, mezcla entre original y resultado.
+ * Devuelve una imagen nueva (no modifica la de entrada) y estadísticas.
+ */
+export function recolorWall(img, mask, targetHex, { mode = 'relative', gains = [1, 1, 1], intensity = 1 } = {}) {
+  const { data, width, height } = img;
+  if (mask.length !== width * height) throw new Error('la máscara no coincide con el tamaño de la imagen');
+  const target = hexToLab(targetHex);
+  const { meanL } = wallStats(img, mask, gains);
+  const ratio = mode === 'relative' ? target.L / Math.max(meanL, 1) : 1;
+
+  const out = new Uint8ClampedArray(data);
+  const lab = [0, 0, 0], lin = [0, 0, 0];
+  const [gr, gg, gb] = gains;
+  for (let i = 0; i < mask.length; i++) {
+    const alpha = mask[i] * intensity;
+    if (alpha <= 0.002) continue;
+    const p = i * 4;
+    // 1) neutralizar la luz de la foto
+    linToLab(Math.min(1, SRGB_TO_LIN[data[p]] * gr), Math.min(1, SRGB_TO_LIN[data[p + 1]] * gg),
+      Math.min(1, SRGB_TO_LIN[data[p + 2]] * gb), lab);
+    // 2) nuevo L y nuevos a/b
+    const L = Math.min(100, Math.max(0, lab[0] * ratio));
+    let a = target.a, b = target.b;
+    // 3) volver a RGB; si el color queda fuera de gamut se reduce el croma de a poco (mantiene el tono)
+    for (let k = 0; k < 6; k++) {
+      labToLin(L, a, b, lin);
+      if (lin[0] >= -0.002 && lin[0] <= 1.002 && lin[1] >= -0.002 && lin[1] <= 1.002 && lin[2] >= -0.002 && lin[2] <= 1.002) break;
+      a *= 0.85; b *= 0.85;
+    }
+    // 4) reaplicar la dominante original de la foto
+    const R = toSrgb8(lin[0] / gr), G = toSrgb8(lin[1] / gg), B = toSrgb8(lin[2] / gb);
+    out[p] = data[p] + (R - data[p]) * alpha;
+    out[p + 1] = data[p + 1] + (G - data[p + 1]) * alpha;
+    out[p + 2] = data[p + 2] + (B - data[p + 2]) * alpha;
+  }
+  return { image: { data: out, width, height }, wallMeanL: meanL, targetL: target.L };
+}

@@ -6,6 +6,7 @@ COPY apps/api/package.json apps/api/
 COPY apps/web/package.json apps/web/
 COPY packages/core/package.json packages/core/
 RUN npm ci
+COPY packages/core packages/core
 COPY apps/web apps/web
 RUN npm run build -w @pintureria/web
 

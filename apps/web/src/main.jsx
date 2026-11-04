@@ -1,7 +1,7 @@
 import { render } from 'preact';
 import { Admin } from './Admin.jsx';
-import { Public } from './Public.jsx';
+import { Visualizer } from './Visualizer.jsx';
 import './styles.css';
 
 const isAdmin = location.pathname.startsWith('/admin');
-render(isAdmin ? <Admin /> : <Public />, document.getElementById('app'));
+render(isAdmin ? <Admin /> : <Visualizer />, document.getElementById('app'));

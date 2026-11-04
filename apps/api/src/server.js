@@ -13,6 +13,8 @@ const db = openDb(path.join(dataDir, 'app.db'));
 const app = createApp({
   db,
   webDir: fs.existsSync(webDir) ? webDir : undefined,
+  // Los modelos NO van en la imagen ni en git: viven en el volumen de datos (data/models).
+  modelsDir: process.env.MODELS_DIR ?? path.join(dataDir, 'models'),
   allowTenantParam: process.env.ALLOW_TENANT_PARAM === '1',
   secureCookies: process.env.NODE_ENV === 'production',
 });

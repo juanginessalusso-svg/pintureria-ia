@@ -5,13 +5,16 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build"
+    "build": "vite build",
+    "test": "node --test"
   },
   "devDependencies": {
     "@preact/preset-vite": "^2.10.6",
     "vite": "^8.3.5"
   },
   "dependencies": {
+    "@pintureria/core": "*",
+    "onnxruntime-web": "^1.31.1",
     "preact": "^11.1.1"
   }
 }

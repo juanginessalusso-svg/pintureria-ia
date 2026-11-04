@@ -5,9 +5,18 @@ import { tenantMiddleware } from './tenant.js';
 import { publicRoutes } from './routes/public.js';
 import { adminRoutes } from './routes/admin.js';
 
-const CSP = "default-src 'self'; img-src 'self' data: blob: https:; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'";
+// 'wasm-unsafe-eval' = permitir compilar WebAssembly (ONNX Runtime); no habilita eval() de JavaScript.
+const CSP = [
+  "default-src 'self'",
+  "script-src 'self' 'wasm-unsafe-eval'",
+  "worker-src 'self' blob:",
+  "connect-src 'self'",
+  "img-src 'self' data: blob: https:",
+  "style-src 'self' 'unsafe-inline'",
+  "frame-ancestors 'none'",
+].join('; ');
 
-export function createApp({ db, webDir, allowTenantParam = false, secureCookies = false } = {}) {
+export function createApp({ db, webDir, modelsDir, allowTenantParam = false, secureCookies = false } = {}) {
   const app = express();
   app.disable('x-powered-by');
   // Nginx va adelante: confiamos en 1 proxy para leer la IP real del cliente.
@@ -32,8 +41,18 @@ export function createApp({ db, webDir, allowTenantParam = false, secureCookies 
   }
   app.use('/api', (_req, res) => res.status(404).json({ error: 'no_encontrado' }));
 
+  // Modelos ONNX (~45 MB): archivos fijos, cacheables por mucho tiempo (el navegador además los guarda en Cache Storage).
+  if (modelsDir) app.use('/models', express.static(modelsDir, { maxAge: '30d', immutable: true, index: false, dotfiles: 'deny' }));
+
   if (webDir) {
-    app.use(express.static(webDir, { maxAge: '1h' }));
+    app.use(express.static(webDir, {
+      maxAge: 0,
+      // Los archivos de /assets llevan hash en el nombre: nunca cambian, se pueden cachear un año.
+      // El resto (index.html) se revalida siempre, así un deploy nuevo llega en la próxima visita.
+      setHeaders(res, file) {
+        res.setHeader('Cache-Control', /[\\/]assets[\\/]/.test(file) ? 'public, max-age=31536000, immutable' : 'no-cache');
+      },
+    }));
     // SPA: cualquier ruta que no sea /api devuelve el index
     app.get(/^\/(?!api\/).*/, (_req, res) => res.sendFile(path.join(webDir, 'index.html')));
   }

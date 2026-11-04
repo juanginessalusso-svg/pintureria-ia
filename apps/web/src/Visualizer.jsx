@@ -1,0 +1,246 @@
+import { useEffect, useRef, useState } from 'preact/hooks';
+import { estimateWhiteBalance, featherMask, recolorWall, unionMasks } from '@pintureria/core';
+import { SamClient } from './samClient.js';
+import { workingSize } from './sam.js';
+
+const tenantQ = () => {
+  const t = new URLSearchParams(location.search).get('tenant');
+  return t ? `?tenant=${encodeURIComponent(t)}` : '';
+};
+const getJson = (path) => fetch(`/api/public/${path}${tenantQ()}`).then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))));
+const mb = (n) => (n / 1048576).toFixed(0);
+
+export function Visualizer() {
+  const [tenant, setTenant] = useState(null);
+  const [colors, setColors] = useState([]);
+  const [model, setModel] = useState({ state: 'loading', loaded: 0, total: 0, info: '' });
+  const [status, setStatus] = useState('');
+  const [hasPhoto, setHasPhoto] = useState(false);
+  const [points, setPoints] = useState([]);
+  const [walls, setWalls] = useState(0);
+  const [mode, setMode] = useState(1); // 1 = "es pared", 0 = "no es pared"
+  const [color, setColor] = useState(null);
+  const [lum, setLum] = useState('relative');
+  const [intensity, setIntensity] = useState(1);
+  const [wb, setWb] = useState(true);
+  const [timing, setTiming] = useState({});
+
+  const canvasRef = useRef(null);
+  const sam = useRef(null);
+  const ready = useRef(null); // promesa de carga del modelo
+  const photo = useRef(null); // { data, width, height } foto de trabajo
+  const gains = useRef([1, 1, 1]);
+  const current = useRef(null); // máscara de la selección en curso (Uint8Array)
+  const committed = useRef([]); // máscaras de paños ya confirmados
+  const result = useRef(null); // imagen recoloreada
+  const showBefore = useRef(false);
+  const colorRef = useRef(null); // color elegido, legible desde render() sin quedar "viejo" en una clausura
+
+  // ---- carga inicial: datos de la pinturería y modelo ----
+  useEffect(() => {
+    getJson('tenant').then(setTenant).catch(() => {});
+    getJson('colors').then(setColors).catch(() => {});
+    sam.current = new SamClient(({ loaded, total }) => setModel((m) => ({ ...m, loaded, total })));
+    ready.current = sam.current.init().then((r) => {
+      setModel((m) => ({ ...m, state: 'ready', info: `${r.threads} hilo(s), init ${r.initMs} ms` }));
+    }).catch((e) => setModel({ state: 'error', loaded: 0, total: 0, info: e.message }));
+    return () => sam.current?.terminate();
+  }, []);
+
+  // ---- dibujo ----
+  const render = () => {
+    const c = canvasRef.current, p = photo.current;
+    if (!c || !p) return;
+    if (c.width !== p.width) { c.width = p.width; c.height = p.height; }
+    const base = !showBefore.current && result.current ? result.current : p;
+    let data = base.data;
+    if (current.current && !(result.current && !showBefore.current && colorRef.current)) {
+      // resalta la selección en curso con un velo azul
+      data = new Uint8ClampedArray(base.data);
+      const m = current.current;
+      for (let i = 0; i < m.length; i++) if (m[i]) {
+        const q = i * 4;
+        data[q] = data[q] * 0.55 + 31 * 0.45; data[q + 1] = data[q + 1] * 0.55 + 111 * 0.45; data[q + 2] = data[q + 2] * 0.55 + 235 * 0.45;
+      }
+    }
+    c.getContext('2d').putImageData(new ImageData(data, p.width, p.height), 0, 0);
+    // puntos
+    const ctx = c.getContext('2d');
+    for (const pt of pointsRef.current) {
+      ctx.beginPath(); ctx.arc(pt.x, pt.y, Math.max(5, p.width / 120), 0, 7);
+      ctx.fillStyle = pt.label ? '#16a34a' : '#dc2626'; ctx.fill();
+      ctx.lineWidth = 2; ctx.strokeStyle = '#fff'; ctx.stroke();
+    }
+  };
+  const pointsRef = useRef([]);
+
+  const repaint = (col = color, opts = {}) => {
+    const p = photo.current;
+    if (!p) return;
+    const masks = [...committed.current, ...(current.current ? [current.current] : [])];
+    if (!col || !masks.length) { result.current = null; render(); return; }
+    const t0 = performance.now();
+    const size = p.width * p.height;
+    const union = unionMasks(masks.map((m) => Float32Array.from(m)), size);
+    const soft = featherMask(union, p.width, p.height, Math.max(1, Math.round(p.width / 500)));
+    const { image } = recolorWall(p, soft, col.hex, {
+      mode: opts.lum ?? lum, intensity: opts.intensity ?? intensity, gains: (opts.wb ?? wb) ? gains.current : [1, 1, 1],
+    });
+    result.current = image;
+    setTiming((t) => ({ ...t, recolorMs: Math.round(performance.now() - t0) }));
+    render();
+  };
+
+  // ---- foto ----
+  const onFile = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    try {
+      setStatus('Leyendo la foto…');
+      const bmp = await createImageBitmap(file); // respeta la orientación EXIF
+      const { width, height } = workingSize(bmp.width, bmp.height);
+      const cv = new OffscreenCanvas(width, height);
+      const ctx = cv.getContext('2d', { willReadFrequently: true });
+      ctx.drawImage(bmp, 0, 0, width, height);
+      bmp.close?.();
+      const img = ctx.getImageData(0, 0, width, height);
+      photo.current = { data: img.data, width, height };
+      gains.current = estimateWhiteBalance(photo.current);
+      current.current = null; committed.current = []; result.current = null; pointsRef.current = [];
+      setPoints([]); setWalls(0); setHasPhoto(true); render();
+
+      setStatus(model.state === 'ready' ? 'Analizando la foto…' : 'Esperando que cargue el modelo…');
+      await ready.current;
+      setStatus('Analizando la foto…');
+      const r = await sam.current.embed(img.data.slice().buffer, width, height);
+      setTiming((t) => ({ ...t, embedMs: r.embedMs }));
+      setStatus('Listo: tocá una pared.');
+    } catch (err) {
+      setStatus(`No se pudo procesar la foto: ${err.message}`);
+    }
+  };
+
+  // ---- selección ----
+  const runSegment = async (pts, fresh) => {
+    setStatus('Detectando pared…');
+    const r = await sam.current.segment(pts, fresh);
+    current.current = new Uint8Array(r.mask);
+    pointsRef.current = pts; setPoints(pts);
+    setTiming((t) => ({ ...t, segMs: r.ms }));
+    setStatus('Si falta o sobra algo, tocá de nuevo (verde = es pared, rojo = no es pared).');
+    repaint();
+  };
+  const onCanvasClick = async (e) => {
+    const p = photo.current;
+    if (!p || model.state !== 'ready') return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const pt = { x: ((e.clientX - rect.left) * p.width) / rect.width, y: ((e.clientY - rect.top) * p.height) / rect.height, label: mode };
+    try { await runSegment([...pointsRef.current, pt], pointsRef.current.length === 0); }
+    catch (err) { setStatus(`Error: ${err.message}`); }
+  };
+  const undo = async () => {
+    const pts = pointsRef.current.slice(0, -1);
+    if (!pts.length) { current.current = null; pointsRef.current = []; setPoints([]); await sam.current.call('reset'); repaint(); return; }
+    await runSegment(pts, true);
+  };
+  const commit = async () => {
+    if (!current.current) return;
+    committed.current.push(current.current);
+    current.current = null; pointsRef.current = []; setPoints([]); setWalls(committed.current.length);
+    await sam.current.call('reset');
+    setStatus('Pared confirmada. Tocá otra pared o elegí un color.');
+    repaint();
+  };
+  const clearAll = async () => {
+    current.current = null; committed.current = []; result.current = null; pointsRef.current = [];
+    setPoints([]); setWalls(0); await sam.current.call('reset'); render();
+  };
+
+  const pick = (c) => { colorRef.current = c; setColor(c); setTimeout(() => repaint(c), 0); };
+  const download = () => canvasRef.current.toBlob((b) => {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(b); a.download = 'mi-ambiente.png'; a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  });
+  const hold = (v) => () => { showBefore.current = v; render(); };
+
+  const families = [...new Set(colors.map((c) => c.family))];
+  const brand = tenant?.primary_color ?? '#1f6feb';
+  const pct = model.total ? Math.round((model.loaded / model.total) * 100) : 0;
+
+  return (
+    <main class="wrap vis" style={{ '--brand': brand }}>
+      <header class="bar">
+        <h1>{tenant ? tenant.name : 'Visualizador de color'}</h1>
+        <a class="muted" href="/admin">Admin</a>
+      </header>
+
+      {model.state === 'loading' && (
+        <div class="card"><strong>Preparando el visualizador…</strong>
+          <progress max="100" value={pct} />
+          <span class="muted">{model.total ? `${mb(model.loaded)} de ${mb(model.total)} MB (solo la primera vez)` : 'Conectando…'}</span>
+        </div>
+      )}
+      {model.state === 'error' && <p class="err">No se pudo cargar el modelo: {model.info}</p>}
+
+      <div class="card">
+        <div class="row">
+          <label class="btn primary">📷 Sacar foto<input type="file" accept="image/*" capture="environment" onChange={onFile} hidden /></label>
+          <label class="btn">🖼️ Elegir de la galería<input type="file" accept="image/*" onChange={onFile} hidden /></label>
+        </div>
+        <p class="muted small">🔒 Tu foto se procesa en tu dispositivo y no se sube ni se guarda.</p>
+      </div>
+
+      <div class={hasPhoto ? '' : 'hide'}>
+        <canvas ref={canvasRef} class="photo" onClick={onCanvasClick} />
+        {status && <p class="muted">{status}</p>}
+
+        <div class="row">
+          <button class={mode === 1 ? 'on' : ''} onClick={() => setMode(1)}>🟢 Es pared</button>
+          <button class={mode === 0 ? 'on' : ''} onClick={() => setMode(0)}>🔴 No es pared</button>
+          <button onClick={undo} disabled={!points.length}>↩︎ Deshacer</button>
+          <button onClick={commit} disabled={!points.length}>✔︎ Confirmar pared</button>
+          <button onClick={clearAll}>Empezar de nuevo</button>
+        </div>
+        {walls > 0 && <p class="muted small">Paredes confirmadas: {walls}</p>}
+
+        <h3>Elegí un color</h3>
+        {families.map((f) => (
+          <div>
+            <div class="muted small">{f}</div>
+            <div class="swatches">
+              {colors.filter((c) => c.family === f).map((c) => (
+                <button class={`sw-btn ${color?.id === c.id ? 'sel' : ''}`} title={`${c.name} (${c.code})`} style={{ background: c.hex }} onClick={() => pick(c)} />
+              ))}
+            </div>
+          </div>
+        ))}
+        {color && <p><strong>{color.name}</strong> <span class="muted">({color.code})</span></p>}
+
+        <div class="card grid">
+          <label>Luminancia
+            <select value={lum} onChange={(e) => { setLum(e.target.value); repaint(color, { lum: e.target.value }); }}>
+              <option value="relative">Relativa (recomendada)</option>
+              <option value="pure">Pura (L original)</option>
+            </select>
+          </label>
+          <label>Intensidad {Math.round(intensity * 100)}%
+            <input type="range" min="0.2" max="1" step="0.05" value={intensity}
+              onInput={(e) => setIntensity(Number(e.target.value))} onChange={(e) => repaint(color, { intensity: Number(e.target.value) })} />
+          </label>
+          <label class="check"><input type="checkbox" checked={wb} onChange={(e) => { setWb(e.target.checked); repaint(color, { wb: e.target.checked }); }} /> Corregir balance de blancos</label>
+          <div class="row">
+            <button onPointerDown={hold(true)} onPointerUp={hold(false)} onPointerLeave={hold(false)} disabled={!color}>Mantené para ver el antes</button>
+            <button onClick={download} disabled={!color}>⬇︎ Descargar</button>
+          </div>
+        </div>
+
+        <p class="warn">⚠️ El color en pantalla puede diferir del color real de la pintura (depende de tu pantalla, la luz de la foto y la textura de la pared). Pedí una muestra antes de comprar.</p>
+        <p class="muted small">
+          Modelo: {model.info || '—'}{timing.embedMs ? ` · análisis ${timing.embedMs} ms` : ''}{timing.segMs ? ` · segmentación ${timing.segMs} ms` : ''}{timing.recolorMs ? ` · recoloreo ${timing.recolorMs} ms` : ''}
+        </p>
+      </div>
+    </main>
+  );
+}
