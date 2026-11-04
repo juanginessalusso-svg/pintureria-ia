@@ -1,8 +1,14 @@
 {
   "name": "pintureria-ia",
   "private": true,
-  "workspaces": ["apps/*", "packages/*"],
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
   "scripts": {
     "test": "npm test --workspaces --if-present"
+  },
+  "allowScripts": {
+    "better-sqlite3@12.11.1": true
   }
 }
