@@ -94,6 +94,62 @@ export function featherMask(mask, width, height, radius = 2) {
   return out;
 }
 
+/**
+ * Elimina "islas" sueltas de la máscara binaria (Uint8Array 0/1) más chicas que `minPixels` (conectividad 4).
+ * SAM a veces deja puntitos aislados en bordes de bajo contraste (ej. unión pared/cielorraso).
+ * NO rellena huecos: un tomacorriente o una moldura sin pintar dentro de la pared es correcto.
+ */
+export function removeSmallIslands(mask, width, height, minPixels) {
+  const out = new Uint8Array(mask);
+  const seen = new Uint8Array(mask.length);
+  const queue = new Int32Array(mask.length);
+  for (let start = 0; start < mask.length; start++) {
+    if (!mask[start] || seen[start]) continue;
+    let head = 0, tail = 0;
+    queue[tail++] = start; seen[start] = 1;
+    while (head < tail) {
+      const i = queue[head++], x = i % width;
+      if (x > 0 && mask[i - 1] && !seen[i - 1]) { seen[i - 1] = 1; queue[tail++] = i - 1; }
+      if (x < width - 1 && mask[i + 1] && !seen[i + 1]) { seen[i + 1] = 1; queue[tail++] = i + 1; }
+      if (i >= width && mask[i - width] && !seen[i - width]) { seen[i - width] = 1; queue[tail++] = i - width; }
+      if (i < mask.length - width && mask[i + width] && !seen[i + width]) { seen[i + width] = 1; queue[tail++] = i + width; }
+    }
+    if (tail < minPixels) for (let k = 0; k < tail; k++) out[queue[k]] = 0;
+  }
+  return out;
+}
+
+/** Erosión (erode=true) o dilatación de una máscara 0/1 con kernel cuadrado (2r+1), separable. Borde = se replica. */
+function morph(mask, width, height, r, erode) {
+  const win = 2 * r + 1;
+  const pass = (src, dst, len, lines, at) => {
+    const P = new Int32Array(len + 2 * r + 1);
+    for (let l = 0; l < lines; l++) {
+      for (let i = 0; i < len + 2 * r; i++) P[i + 1] = P[i] + src[at(l, Math.min(len - 1, Math.max(0, i - r)))];
+      for (let x = 0; x < len; x++) {
+        const s = P[x + win] - P[x];
+        dst[at(l, x)] = erode ? (s === win ? 1 : 0) : (s > 0 ? 1 : 0);
+      }
+    }
+  };
+  const tmp = new Uint8Array(mask.length), out = new Uint8Array(mask.length);
+  pass(mask, tmp, width, height, (y, x) => y * width + x); // horizontal
+  pass(tmp, out, height, width, (x, y) => y * width + x); // vertical
+  return out;
+}
+
+/** Apertura: erosión + dilatación. Corta puentes y filamentos finos (< 2r+1 px) sin cambiar el resto del borde. */
+export const openMask = (mask, width, height, r) => morph(morph(mask, width, height, r, true), width, height, r, false);
+
+/**
+ * Post-proceso estándar de una máscara de SAM: apertura (corta hilos finos) + sacar islas chicas.
+ * Se usa igual en la app y en el script de evaluación.
+ */
+export function cleanMask(mask, width, height) {
+  const r = Math.max(1, Math.round(width / 400));
+  return removeSmallIslands(openMask(mask, width, height, r), width, height, Math.round(width * height * 0.0005));
+}
+
 /** Fracción (0..1) de la imagen cubierta por la máscara. */
 export function maskFraction(mask) {
   let s = 0;

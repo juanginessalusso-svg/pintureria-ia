@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { recolorWall, estimateWhiteBalance, featherMask, maskFraction, hexToLab, rgbToLab } from '../src/index.js';
+import { recolorWall, estimateWhiteBalance, featherMask, maskFraction, hexToLab, rgbToLab, removeSmallIslands, cleanMask } from '../src/index.js';
 
 const W = 40, H = 30;
 
@@ -91,6 +91,39 @@ test('featherMask suaviza el borde y conserva el interior; maskFraction cuenta b
   const edge = f[10 * W + W / 2];
   assert.ok(edge > 0 && edge < 1, `borde suave: ${edge}`);
   close(maskFraction(m), 0.5, 0.001);
+});
+
+test('removeSmallIslands: saca puntitos sueltos, conserva la pared y NO rellena huecos', () => {
+  const m = new Uint8Array(W * H);
+  for (let y = 5; y < 25; y++) for (let x = 5; x < 30; x++) m[y * W + x] = 1; // pared 25x20
+  m[12 * W + 15] = 0; m[12 * W + 16] = 0; // hueco (tomacorriente): debe seguir sin pintar
+  m[1 * W + 35] = 1; m[1 * W + 36] = 1; // islita de 2 px
+  m[28 * W + 2] = 1; // punto de 1 px
+  const out = require_count(removeSmallIslands(m, W, H, 10));
+  assert.equal(out.islita, 0);
+  assert.equal(out.punto, 0);
+  assert.equal(out.hueco, 0);
+  assert.equal(out.pared, 25 * 20 - 2);
+  function require_count(o) {
+    let pared = 0;
+    for (let y = 5; y < 25; y++) for (let x = 5; x < 30; x++) pared += o[y * W + x];
+    return { pared, islita: o[1 * W + 35] + o[1 * W + 36], punto: o[28 * W + 2], hueco: o[12 * W + 15] + o[12 * W + 16] };
+  }
+});
+
+test('cleanMask: corta un hilo fino que une una mancha a la pared, y conserva la pared', () => {
+  const w = 200, h = 100, m = new Uint8Array(w * h);
+  for (let y = 20; y < 90; y++) for (let x = 10; x < 150; x++) m[y * w + x] = 1; // pared 140x70
+  for (let x = 150; x < 185; x++) m[19 * w + x] = 1; // hilo de 1 px pegado al borde...
+  for (let y = 14; y < 17; y++) for (let x = 183; x < 186; x++) m[y * w + x] = 1; // ...que lleva a una manchita de 3x3
+  for (let y = 17; y < 20; y++) m[y * w + 184] = 1; // conexión vertical fina
+  const c = cleanMask(m, w, h);
+  let wall = 0;
+  for (let y = 20; y < 90; y++) for (let x = 10; x < 150; x++) wall += c[y * w + x];
+  assert.ok(wall >= 0.99 * 140 * 70, `la pared se conserva (${wall})`);
+  let stray = 0;
+  for (let y = 0; y < 20; y++) for (let x = 150; x < w; x++) stray += c[y * w + x];
+  assert.equal(stray, 0, 'hilo y manchita eliminados');
 });
 
 test('rechaza máscara de otro tamaño', () => {

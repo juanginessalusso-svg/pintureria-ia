@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { estimateWhiteBalance, featherMask, recolorWall, unionMasks } from '@pintureria/core';
+import { estimateWhiteBalance, featherMask, recolorWall, cleanMask, unionMasks } from '@pintureria/core';
 import { SamClient } from './samClient.js';
 import { workingSize } from './sam.js';
 
@@ -125,7 +125,8 @@ export function Visualizer() {
   const runSegment = async (pts, fresh) => {
     setStatus('Detectando pared…');
     const r = await sam.current.segment(pts, fresh);
-    current.current = new Uint8Array(r.mask);
+    const p = photo.current;
+    current.current = cleanMask(new Uint8Array(r.mask), p.width, p.height);
     pointsRef.current = pts; setPoints(pts);
     setTiming((t) => ({ ...t, segMs: r.ms }));
     setStatus('Si falta o sobra algo, tocá de nuevo (verde = es pared, rojo = no es pared).');

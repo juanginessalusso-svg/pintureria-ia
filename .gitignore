@@ -8,3 +8,4 @@ data/
 dist/
 eval/visualizador/fotos/*
 !eval/visualizador/fotos/.gitkeep
+eval/visualizador/salidas/

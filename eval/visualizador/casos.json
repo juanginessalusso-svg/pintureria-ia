@@ -1,0 +1,37 @@
+[
+  {
+    "id": "01-pared-grande",
+    "foto": "01-living-estante.jpg",
+    "paredes": [[[0.42, 0.4, 1]]],
+    "colores": [{ "nombre": "Verde Salvia", "hex": "#a3b18a" }, { "nombre": "Azul Noche", "hex": "#1f3a5f" }],
+    "modos": ["relative"]
+  },
+  {
+    "id": "02-pared-izquierda",
+    "foto": "02-living-puerta.jpg",
+    "paredes": [[[0.15, 0.35, 1]]],
+    "colores": [{ "nombre": "Terracota", "hex": "#b9694a" }, { "nombre": "Azul Noche", "hex": "#1f3a5f" }],
+    "modos": ["relative"]
+  },
+  {
+    "id": "02b-pared-izquierda-corregida",
+    "foto": "02-living-puerta.jpg",
+    "paredes": [[[0.15, 0.35, 1], [0.34, 0.55, 0], [0.88, 0.965, 0]]],
+    "colores": [{ "nombre": "Terracota", "hex": "#b9694a" }],
+    "modos": ["relative"]
+  },
+  {
+    "id": "03-pared-derecha-tv",
+    "foto": "03-living-ventanal-tv.jpg",
+    "paredes": [[[0.7, 0.4, 1]]],
+    "colores": [{ "nombre": "Verde Salvia", "hex": "#a3b18a" }, { "nombre": "Grafito", "hex": "#4a4d52" }],
+    "modos": ["relative"]
+  },
+  {
+    "id": "04-pasillo-fondo",
+    "foto": "04-pasillo.jpg",
+    "paredes": [[[0.5, 0.6, 1]]],
+    "colores": [{ "nombre": "Arena", "hex": "#d9c3a0" }, { "nombre": "Verde Bosque", "hex": "#3a5a40" }],
+    "modos": ["relative"]
+  }
+]
