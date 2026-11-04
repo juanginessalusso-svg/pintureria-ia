@@ -1,0 +1,20 @@
+# Staging liviano: solo la API, detrás del Nginx del HOST (el que ya usa n8n).
+# La imagen se construye fuera del servidor (poca RAM) y se carga con `docker load`.
+services:
+  api:
+    image: pintureria-api:${TAG:-latest}
+    env_file: .env
+    environment:
+      NODE_OPTIONS: "--max-old-space-size=96"
+    ports:
+      - "127.0.0.1:3000:3000"   # solo local: Nginx del host hace de proxy
+    mem_limit: 150m
+    memswap_limit: 150m          # sin swap: si se pasa, muere ella y no arrastra a n8n
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/api/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+    volumes:
+      - ./data:/app/data
