@@ -909,7 +909,7 @@ export async function partitionBySmallest(regions, segment, width, height, { gri
  * color y la luz de esa pared, (2) está cerca de ella (`maxDist`) y (3) pertenece a una tira fina (no sobrevive a una apertura de radio
  * `thinR`): un objeto grande del color de la pared (un refrigerador blanco, una tabla) NO es fino y queda afuera. Con tope por pared.
  */
-export function fillThinGaps(regions, img, { blocked = null, maxDist = Math.round(img.width * 0.2), thinR = Math.max(6, Math.round(img.width * 0.03)), tolLuma = 22, tolChroma = 0.03, maxAdd = 0.03, darkDelta = 45, minDarkRing = 0.75, minDarkAll = 0.4, sandwich = Math.round(img.width * 0.06), debug = null } = {}) {
+export function fillThinGaps(regions, img, { blocked = null, maxDist = Math.round(img.width * 0.2), thinR = Math.max(6, Math.round(img.width * 0.03)), tolLuma = 22, tolChroma = 0.03, maxAdd = 0.03, darkDelta = 45, minDarkRing = 0.75, minDarkAll = 0.4, minAspect = 3.2, minFill = 0.45, minBox = 0.004, slatDark = 0.95, sandwich = Math.round(img.width * 0.06), debug = null } = {}) {
   const { data, width, height } = img;
   const N = width * height;
   const owner = new Uint8Array(N);
@@ -959,6 +959,7 @@ export function fillThinGaps(regions, img, { blocked = null, maxDist = Math.roun
     let add = new Uint8Array(N), na = 0;
     for (let i = 0; i < N; i++) if (cand[i] && !opened[i]) { add[i] = 1; na++; }
     const etapaFinos = na;
+    let debugComps = null;
     add = removeSmallIslands(add, width, height, Math.round(N * 0.0004));
     let etapaIslas = 0;
     for (let i = 0; i < N; i++) if (add[i]) etapaIslas++;
@@ -991,12 +992,21 @@ export function fillThinGaps(regions, img, { blocked = null, maxDist = Math.roun
             else ring++;
           }
         }
-        if (!ring || ringDark / ring < minDarkRing || ringDark / ringAll < minDarkAll) for (let k = 0; k < tail; k++) add[q[k]] = 0;
+        // Forma del hueco: los de una silla son tiras HORIZONTALES (ancho >= minAspect veces el alto), rectas (relleno de su caja >= minFill), grandes (caja >= minBox de la foto: un hueco chico no es el de una silla) y rodeadas
+        // casi solo por lo oscuro del objeto (>= slatDark del contorno). Medido en 9 fotos: los aciertos (r1 x2, r3 x2) cumplen las tres; los errores (franja
+        // vertical sobre una puerta o un marco de ventana, hojas/lámpara, zonas bajo un sillón) fallan por forma. minAspect = 0 desactiva la condición de forma.
+        let x0 = width, x1 = 0, y0 = height, y1 = 0, sl = 0, sc = 0;
+        for (let k = 0; k < tail; k++) { const i = q[k], x = i % width, y = (i - x) / width; if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; if (debug) { sl += Math.abs(lum[i] - ml); sc += Math.abs(cr[i] - mr) + Math.abs(cg[i] - mg); } }
+        const bw = x1 - x0 + 1, bh = y1 - y0 + 1, aspect = bw / bh, fill = tail / (bw * bh);
+        const forma = !minAspect || (aspect >= minAspect && fill >= minFill && bw * bh >= minBox * N && ringDark / Math.max(1, ring) >= slatDark);
+        const keep = ring && ringDark / ring >= minDarkRing && ringDark / ringAll >= minDarkAll && forma;
+        if (debug) (debugComps ??= []).push({ n: tail, caja: [x0, y0, x1, y1].map((v, k) => +(v / (k % 2 ? height : width)).toFixed(3)), aspect: +aspect.toFixed(2), fill: +fill.toFixed(2), oscuro: +(ringDark / Math.max(1, ring)).toFixed(3), dL: +(sl / tail).toFixed(1), dC: +(sc / tail).toFixed(4), keep: !!keep });
+        if (!keep) for (let k = 0; k < tail; k++) add[q[k]] = 0;
       }
     }
     na = 0;
     for (let i = 0; i < N; i++) if (add[i]) na++;
-    debug?.({ pared: r.name, candidatos: +(nc / N).toFixed(4), finos: +(etapaFinos / N).toFixed(4), traslaslas: +(etapaIslas / N).toFixed(4), traselcontorno: +(na / N).toFixed(4), add: addAntes });
+    debug?.({ pared: r.name, candidatos: +(nc / N).toFixed(4), finos: +(etapaFinos / N).toFixed(4), traslaslas: +(etapaIslas / N).toFixed(4), traselcontorno: +(na / N).toFixed(4), comps: debugComps, add: addAntes });
     if (!na || na > maxAdd * N) continue;
     for (let i = 0; i < N; i++) if (add[i]) { r.mask[i] = 1; owner[i] = 1; }
   }

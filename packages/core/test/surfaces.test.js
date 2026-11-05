@@ -258,6 +258,22 @@ test('relleno de huecos: pinta la pared que se ve entre los listones, no el marc
   assert.equal(w.mask[40 * GW + 170], 0, 'un objeto grande del color de la pared NO se rellena');
 });
 
+test('relleno de huecos: una franja VERTICAL entre dos partes oscuras (marco/puerta) no se rellena, una chica tampoco', () => {
+  const data = new Uint8ClampedArray(GW * GH * 4), m = new Uint8Array(GW * GH);
+  for (let y = 0; y < GH; y++) for (let x = 0; x < GW; x++) {
+    const oscuro = (x >= 60 && x < 150 && y >= 20 && y < 140) && !(x >= 100 && x < 108 && y >= 30 && y < 130) && !(x >= 125 && x < 135 && y >= 60 && y < 66);
+    const v = oscuro ? 40 : 150, i = (y * GW + x) * 4;
+    data[i] = data[i + 1] = data[i + 2] = v; data[i + 3] = 255;
+    if (!(x >= 60 && x < 150 && y >= 20 && y < 140)) m[y * GW + x] = 1;
+  }
+  const w = { kind: 'pared', name: 'Pared', mask: m };
+  fillThinGaps([w], { data, width: GW, height: GH }, { thinR: 8, maxDist: 80, sandwich: 20, maxAdd: 0.2 });
+  assert.equal(w.mask[80 * GW + 104], 0, 'franja vertical (ancho/alto < 1): no es un hueco de silla');
+  assert.equal(w.mask[63 * GW + 130], 0, 'hueco chico: no se rellena');
+  fillThinGaps([w], { data, width: GW, height: GH }, { thinR: 8, maxDist: 80, sandwich: 20, maxAdd: 0.2, minAspect: 0 });
+  assert.equal(w.mask[80 * GW + 104], 1, 'con minAspect = 0 la condición de forma se apaga (comportamiento anterior)');
+});
+
 test('relleno de huecos: sin objetos oscuros no toca nada', () => {
   const data = new Uint8ClampedArray(GW * GH * 4).fill(150);
   for (let i = 3; i < data.length; i += 4) data[i] = 255;
