@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { detectSurfaces, classifySurface, maskGeometry, textureRatio, distanceTransform } from '../src/index.js';
+import { detectSurfaces, classifySurface, maskGeometry, textureRatio, distanceTransform, findVerticalCorner, splitAtCorner } from '../src/index.js';
 
 const W = 240, H = 320;
 const px = (data, x, y, r, g, b) => { const i = (y * W + x) * 4; data[i] = r; data[i + 1] = g; data[i + 2] = b; data[i + 3] = 255; };
@@ -265,4 +265,50 @@ test('relleno de huecos: sin objetos oscuros no toca nada', () => {
   const w = { kind: 'pared', name: 'Pared', mask: m.slice() };
   fillThinGaps([w], { data, width: GW, height: GH }, { thinR: 8 });
   assert.deepEqual([...w.mask], [...m]);
+});
+
+// --- esquina vertical suave (dos paredes que se juntan sin arista) ---
+// Escena: pared desde la unión con el techo hasta el piso. `kink` hace que la unión con el techo cambie de dirección en x=150;
+// `lum(x, y)` da la luminancia de cada píxel.
+function wallScene({ kink, lum, topFlat = false }) {
+  const data = new Uint8ClampedArray(W * H * 4), mask = new Uint8Array(W * H);
+  const topY = (x) => (topFlat ? 0 : kink ? (x < 150 ? 40 + 0.2 * x : 40 + 0.2 * 150 - 0.2 * (x - 150)) : 40 + 0.05 * x);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const v = Math.round(lum(x, y));
+    px(data, x, y, v, v, v);
+    if (y > topY(x) + 1 && y < H - 20) mask[y * W + x] = 1;
+  }
+  return { img: { data, width: W, height: H }, mask };
+}
+const esquina = (x) => (x < 150 ? 200 - 0.35 * (x - 60) : 200 - 0.35 * 90 + 12 + 0.15 * (x - 150)); // el degradé salta (+12) y cambia de pendiente en x=150
+
+test('esquina vertical: salto de pendiente + la unión con el techo cambia de dirección → se divide', () => {
+  const { img, mask } = wallScene({ kink: true, lum: esquina });
+  const c = findVerticalCorner(mask, img);
+  assert.ok(c, 'tendría que encontrar la esquina');
+  assert.ok(Math.abs(c.x0 - 150) <= 4, `x0=${c.x0}`);
+  const [a, b] = splitAtCorner(mask, W, H, c);
+  const na = a.reduce((s, v) => s + v, 0), nb = b.reduce((s, v) => s + v, 0), nm = mask.reduce((s, v) => s + v, 0);
+  assert.equal(na + nb, nm);
+  assert.ok(na > 0 && nb > 0);
+});
+
+test('esquina vertical: un degradé de sombra liso sobre una pared no se divide', () => {
+  const { img, mask } = wallScene({ kink: false, lum: (x) => 215 - 0.4 * x });
+  assert.equal(findVerticalCorner(mask, img), null);
+});
+
+test('esquina vertical: una sombra proyectada (escalón recto) sin quiebre en el techo no se divide', () => {
+  const { img, mask } = wallScene({ kink: false, lum: (x) => (x < 150 ? 205 : 160) });
+  assert.equal(findVerticalCorner(mask, img), null);
+});
+
+test('esquina vertical: sin unión con el techo visible (pared contra el borde de arriba) no se arriesga', () => {
+  const { img, mask } = wallScene({ kink: false, topFlat: true, lum: esquina });
+  assert.equal(findVerticalCorner(mask, img), null);
+});
+
+test('esquina vertical: el quiebre del techo solo, sin cambio de luz, no alcanza', () => {
+  const { img, mask } = wallScene({ kink: true, lum: () => 200 });
+  assert.equal(findVerticalCorner(mask, img), null);
 });

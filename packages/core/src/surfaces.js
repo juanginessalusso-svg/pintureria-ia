@@ -344,6 +344,159 @@ export function splitMerged(mask, grad, w, h, width, height, { strictMax = 2.2, 
 }
 
 /**
+ * ¿Hay una ESQUINA vertical suave dentro de esta pared? Dos paredes que se juntan casi sin arista (mismo color, solo cambia la sombra)
+ * llegan fusionadas desde SAM y `splitMerged` no las separa porque no hay gradiente fuerte. Se busca, solo con la imagen:
+ *  1. Luminancia: en cada fila, se ajusta una recta a la ventana de la izquierda y otra a la de la derecha de la columna candidata y se
+ *     mide cuánto se aparta cada lado de lo que predice el otro. Solo cuenta si los dos lados coinciden en signo (salto de nivel, con o sin
+ *     cambio de pendiente): un degradé liso (una sola pared con sombra) se predice a sí mismo y da error ≈ 0.
+ *  2. Que ese quiebre sea de signo consistente en casi todas las filas (`minFrac`), cubra casi toda la altura de la pared en esa columna
+ *     (`minCov`), no sea un pedacito (`minRows`) y forme una recta casi vertical (`maxSpread`, `maxTilt`).
+ *  3. Que la unión con el techo cambie de dirección justo ahí (`minAngle`): es lo que distingue una esquina de una sombra proyectada,
+ *     que también da un escalón vertical de luz pero no dobla la línea del techo.
+ * Si algo no se cumple con claridad devuelve null (pintar de más es peor que dejar la pared entera). Devuelve { x0, tilt, ... } en
+ * píxeles de la foto de trabajo: la esquina es la recta x = x0 + tilt·(y − ym).
+ * Con `debug`, informa siempre el mejor candidato y por qué se aceptó o se rechazó.
+ */
+export function findVerticalCorner(mask, img, { win = 10, gap = 2, minE = 5, minFrac = 0.65, minCov = 0.8, minRows = 0.08, maxSpread = 2.5, maxTilt = 0.12, minAngle = 10, maxAngleOffset = 0.06, minPart = 0.004, debug = null } = {}) {
+  const { width, height, data } = img;
+  const f = Math.max(1, Math.round(Math.max(width, height) / 400));
+  const lw = Math.floor(width / f), lh = Math.floor(height / f), full = f * f;
+  if (lw < 2 * (win + gap) + 4) return null;
+  const L = new Float32Array(lw * lh), M = new Uint8Array(lw * lh);
+  for (let y = 0; y < lh; y++) for (let x = 0; x < lw; x++) {
+    let s = 0, m = 0;
+    for (let yy = y * f; yy < (y + 1) * f; yy++) for (let xx = x * f; xx < (x + 1) * f; xx++) {
+      const p = yy * width + xx;
+      s += 0.2126 * data[p * 4] + 0.7152 * data[p * 4 + 1] + 0.0722 * data[p * 4 + 2];
+      m += mask[p];
+    }
+    L[y * lw + x] = s / full;
+    M[y * lw + x] = m >= full * 0.99 ? 1 : 0;
+  }
+  // sumas acumuladas por fila: Σ L, Σ x·L y Σ máscara
+  const S = lw + 1, cl = new Float64Array(lh * S), cx = new Float64Array(lh * S), cm = new Int32Array(lh * S);
+  for (let y = 0; y < lh; y++) for (let x = 0; x < lw; x++) {
+    const i = y * S + x, v = L[y * lw + x];
+    cl[i + 1] = cl[i] + v; cx[i + 1] = cx[i] + x * v; cm[i + 1] = cm[i] + M[y * lw + x];
+  }
+  const sxx = (win * (win * win - 1)) / 12, dist = 2 * gap + win;
+  const E = new Float32Array(lw * lh).fill(NaN);
+  const stats = [];
+  const col = [];
+  for (let x = gap + win; x <= lw - gap - win; x++) {
+    const l0 = x - gap - win, l1 = x - gap, r0 = x + gap, r1 = x + gap + win;
+    col.length = 0;
+    let extent = 0;
+    for (let y = 0; y < lh; y++) {
+      const b = y * S;
+      if (M[y * lw + x]) extent++;
+      if (cm[b + l1] - cm[b + l0] !== win || cm[b + r1] - cm[b + r0] !== win) continue;
+      const mL = (cl[b + l1] - cl[b + l0]) / win, mR = (cl[b + r1] - cl[b + r0]) / win;
+      const cL = (l0 + l1 - 1) / 2, cR = (r0 + r1 - 1) / 2;
+      const sL = (cx[b + l1] - cx[b + l0] - cL * (cl[b + l1] - cl[b + l0])) / sxx, sR = (cx[b + r1] - cx[b + r0] - cR * (cl[b + r1] - cl[b + r0])) / sxx;
+      const eR = mR - (mL + sL * dist), eL = mR - sR * dist - mL; // los dos: "derecha menos izquierda", predicho desde cada lado
+      const e = Math.sign(eR) === Math.sign(eL) ? (eR + eL) / 2 : 0;
+      E[y * lw + x] = e; col.push(e);
+    }
+    if (col.length < 5) continue;
+    const sorted = Float64Array.from(col).sort();
+    const med = sorted[sorted.length >> 1];
+    if (!med) continue;
+    let ok = 0;
+    for (const v of col) if (Math.sign(v) === Math.sign(med) && Math.abs(v) >= 0.5 * Math.abs(med)) ok++;
+    stats.push({ x, med, n: col.length, frac: ok / col.length, cov: col.length / Math.max(1, extent) });
+  }
+  stats.sort((a, b) => Math.abs(b.med) - Math.abs(a.med));
+  const cand = [];
+  for (const s of stats) { if (cand.every((c) => Math.abs(c.x - s.x) >= 8)) cand.push(s); if (cand.length >= 3) break; }
+
+  // contorno superior (unión con el techo) en resolución completa
+  const top = new Int32Array(width).fill(-1);
+  let lastCol = -1;
+  for (let x = 0; x < width; x++) for (let y = 0; y < height; y++) if (mask[y * width + x]) { top[x] = y; lastCol = x; break; }
+  const fit = (xa, xb) => { // Theil–Sen sobre el contorno: pendiente, ordenada y residuo mediano
+    const pts = [];
+    const step = Math.max(1, Math.round(width / 300));
+    for (let x = xa; x <= xb; x += step) if (x >= 0 && x < width && top[x] > height * 0.01) pts.push([x, top[x]]);
+    if (pts.length < 0.7 * ((xb - xa) / step) || pts.length < 8) return null;
+    const sl = [];
+    for (let i = 0; i < pts.length; i++) for (let j = i + 1; j < pts.length; j++) if (pts[j][0] - pts[i][0] >= 10) sl.push((pts[j][1] - pts[i][1]) / (pts[j][0] - pts[i][0]));
+    if (!sl.length) return null;
+    sl.sort((a, b) => a - b);
+    const b = sl[sl.length >> 1];
+    const ic = pts.map(([x, y]) => y - b * x).sort((a, c) => a - c), a = ic[ic.length >> 1];
+    const res = pts.map(([x, y]) => Math.abs(y - a - b * x)).sort((p, q) => p - q);
+    return { a, b, res: res[res.length >> 1] };
+  };
+
+  let found = null;
+  for (const c of cand) {
+    const info = { ...c, x: c.x };
+    const why = [];
+    if (Math.abs(c.med) < minE) why.push('e');
+    if (c.n < minRows * lh) why.push('filas');
+    if (c.frac < minFrac) why.push('signo');
+    if (c.cov < minCov) why.push('cobertura');
+    // recta casi vertical: la mejor columna de cada fila cerca de la candidata
+    const xs = [], ys = [];
+    const sg = Math.sign(c.med);
+    for (let y = 0; y < lh; y++) {
+      let bx = -1, bv = 0;
+      for (let x = Math.max(0, c.x - 6); x <= Math.min(lw - 1, c.x + 6); x++) { const v = sg * E[y * lw + x]; if (v > bv) { bv = v; bx = x; } }
+      if (bx >= 0) { xs.push(bx); ys.push(y); }
+    }
+    if (xs.length < 5) why.push('recta');
+    else {
+      const med = Float64Array.from(xs).sort()[xs.length >> 1];
+      const dev = xs.map((x) => Math.abs(x - med)).sort((p, q) => p - q);
+      info.spread = dev[dev.length >> 1];
+      const kept = xs.map((x, i) => i).filter((i) => Math.abs(xs[i] - med) <= 4);
+      const my = kept.reduce((a, i) => a + ys[i], 0) / kept.length, mx = kept.reduce((a, i) => a + xs[i], 0) / kept.length;
+      let num = 0, den = 0;
+      for (const i of kept) { num += (ys[i] - my) * (xs[i] - mx); den += (ys[i] - my) ** 2; }
+      info.tilt = den ? num / den : 0; info.ym = my * f; info.xm = mx;
+      if (info.spread > maxSpread) why.push('recta');
+      if (Math.abs(info.tilt) > maxTilt) why.push('inclinada');
+    }
+    // unión con el techo: ¿cambia de dirección justo en la esquina?
+    const xc = Math.round((info.xm ?? c.x) * f);
+    const gl = Math.round(0.08 * width), wl = Math.round(0.15 * width), gr = Math.round(0.01 * width);
+    const wr = Math.min(Math.round(0.15 * width), lastCol - xc - 2);
+    const left = fit(xc - gl - wl, xc - gl), right = wr - gr >= 0.04 * width ? fit(xc + gr, xc + wr) : null;
+    if (!left || !right) why.push('techo?');
+    else {
+      info.angle = Math.abs(Math.atan(right.b) - Math.atan(left.b)) * 180 / Math.PI;
+      info.resTop = Math.max(left.res, right.res);
+      info.xInt = Math.abs(left.b - right.b) > 1e-6 ? (right.a - left.a) / (left.b - right.b) : NaN;
+      info.offInt = Math.abs(info.xInt - xc) / width;
+      if (info.angle < minAngle) why.push('quiebre');
+      else if (!(info.offInt <= maxAngleOffset)) why.push('quiebre-lejos');
+      if (info.resTop > 0.006 * height) why.push('contorno');
+    }
+    info.why = why;
+    info.xFull = xc;
+    if (debug) debug(info);
+    if (!why.length && !found) found = info;
+  }
+  if (!found) return null;
+  const x0 = found.xFull, tilt = found.tilt, ym = found.ym;
+  let nl = 0, nr = 0;
+  for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) if (mask[y * width + x]) { if (x < x0 + tilt * (y - ym)) nl++; else nr++; }
+  if (Math.min(nl, nr) < minPart * width * height) { if (debug) debug({ why: ['parte-chica'], nl, nr }); return null; }
+  return { x0, tilt, ym };
+}
+
+/** Parte la máscara por la recta de la esquina (ver `findVerticalCorner`): [izquierda, derecha]. */
+export function splitAtCorner(mask, width, height, { x0, tilt, ym }) {
+  const a = new Uint8Array(width * height), b = new Uint8Array(width * height);
+  for (let y = 0; y < height; y++) {
+    const xl = x0 + tilt * (y - ym);
+    for (let x = 0; x < width; x++) if (mask[y * width + x]) (x < xl ? a : b)[y * width + x] = 1;
+  }
+  return [a, b];
+}
+
+/**
  * Fracción del interior de una región (a ≥ 5 px del borde) con gradiente fuerte a resolución completa: las juntas de un azulejo
  * son líneas finas y rectas que una pared no tiene. Una pared lisa da ≈ 0; un paño de azulejo da bastante más.
  */
@@ -663,7 +816,7 @@ export function fillThinGaps(regions, img, { blocked = null, maxDist = Math.roun
  * Devuelve [{ kind: 'pared'|'techo', name, mask, area, cx, cy, texture }], máscaras DISJUNTAS, paredes de izquierda a derecha.
  */
 export async function detectSurfaces(img, segment, opts = {}) {
-  const { maxSeeds = 9, gradMax = 7, minDist = 2.5, minArea = 0.025, maxPared = 5, maxTexture = 0.12, refineMin = 2, minLumaRatio = 0.55, grow = true, snap = true, partition = true, thinGaps = true, splitMax = 2.2, splitEdge = 4.5, maxLine = 0.004, minCoverage = 0.35, relaxFactor = 1.8 } = opts;
+  const { maxSeeds = 9, gradMax = 7, minDist = 2.5, minArea = 0.025, maxPared = 5, maxTexture = 0.12, refineMin = 2, minLumaRatio = 0.55, grow = true, snap = true, partition = true, thinGaps = true, splitMax = 2.2, splitEdge = 4.5, maxLine = 0.004, minCoverage = 0.35, relaxFactor = 1.8, corner = true } = opts;
   const { width, height } = img;
   const { luma, w, h } = downscaleLuma(img);
   const grad = gradientMap(luma, w, h);
@@ -773,6 +926,15 @@ export async function detectSurfaces(img, segment, opts = {}) {
     for (const s of out) s.mask = removeSmallIslands(s.mask, width, height, Math.round(width * height * 0.002));
   }
   for (const s of out) Object.assign(s, maskGeometry(s.mask, width, height));
+  if (corner) { // esquina vertical suave (dos paredes que se juntan sin arista): solo con la imagen, sin decodificaciones extra
+    for (const s of [...out]) {
+      if (s.kind !== 'pared') continue;
+      const c = findVerticalCorner(s.mask, img, { ...opts.cornerOpts, debug: opts.debugCorner });
+      if (!c) continue;
+      const partes = splitAtCorner(s.mask, width, height, c).map((m) => removeSmallIslands(m, width, height, Math.round(width * height * 0.002)));
+      out.splice(out.indexOf(s), 1, ...partes.map((m) => ({ ...s, mask: m, ...maskGeometry(m, width, height) })));
+    }
+  }
   const paredes = out.filter((s) => s.kind === 'pared').sort((a, b) => b.area - a.area).slice(0, maxPared).sort((a, b) => a.cx - b.cx);
   const techo = out.filter((s) => s.kind === 'techo').sort((a, b) => b.area - a.area).slice(0, 1);
   const nombre = (i, n) => (n === 1 ? 'Pared' : n === 2 ? ['Pared izquierda', 'Pared derecha'][i] : n === 3 ? ['Pared izquierda', 'Pared del medio', 'Pared derecha'][i] : `Pared ${i + 1}`);
