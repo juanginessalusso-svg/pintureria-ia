@@ -90,17 +90,18 @@ const handlers = {
    * Detección automática de paredes y techo, ACÁ en el Worker: antes corría en el hilo principal y congelaba la pantalla
    * (35-50 % del tiempo era JS puro). Avisa el progreso con 'detect-progress' y devuelve las máscaras transferidas (sin copiar).
    */
-  async detect() {
+  async detect({ mode = 'auto' } = {}) {
     if (!lastImg || !sam) throw new Error('falta analizar la foto antes de detectar');
     cancelDetect = false;
-    const { found, decodes } = await runDetect({
+    const { found, decodes, mode: used } = await runDetect({
       image: lastImg,
       segment: (pts) => { sam.reset(); return sam.segment(pts); }, // cada semilla es independiente (como antes: fresh = true)
       onProgress: (n) => postMessage({ type: 'detect-progress', n }),
       isCancelled: () => cancelDetect,
+      mode,
     });
     const safe = found.map((f) => ({ ...f, mask: f.mask.slice() })); // buffer propio de cada máscara: se pueden transferir sin choques
-    return { result: { found: safe, decodes }, transfer: safe.map((f) => f.mask.buffer) };
+    return { result: { found: safe, decodes, mode: used }, transfer: safe.map((f) => f.mask.buffer) };
   },
 };
 

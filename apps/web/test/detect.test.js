@@ -72,3 +72,12 @@ test('runDetect: un error de SAM se propaga (la interfaz lo muestra)', async () 
     /SAM falló/,
   );
 });
+
+test('modo fachada: usa el detector de fachadas y avisa cuál usó', async () => {
+  const W = 120, H = 90, data = new Uint8ClampedArray(W * H * 4);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) data.set(y < 20 ? [40, 110, 220, 255] : y >= 72 ? [120, 120, 118, 255] : [225, 205, 170, 255], (y * W + x) * 4);
+  const segment = async ([p]) => { const m = new Uint8Array(W * H), y0 = p.y < 20 ? 0 : p.y >= 72 ? 72 : 20, y1 = p.y < 20 ? 20 : p.y >= 72 ? H : 72; for (let y = y0; y < y1; y++) for (let x = 0; x < W; x++) m[y * W + x] = 1; return { mask: m }; };
+  const r = await runDetect({ image: { data, width: W, height: H }, segment, mode: 'fachada' });
+  assert.equal(r.mode, 'fachada');
+  assert.equal(r.found.filter((f) => f.kind === 'pared').length, 1);
+});

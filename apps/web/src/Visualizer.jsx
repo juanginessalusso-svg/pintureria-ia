@@ -87,6 +87,7 @@ export function Visualizer() {
   const surfSeq = useRef(0);
   const activeRef = useRef(null); // espejo de activeId para render()
   const flash = useRef(null); // superficie que parpadea un instante al seleccionarla
+  const [detMode, setDetMode] = useState('interior'); // qué detector produjo la lista: 'interior' | 'fachada'
   const autoCache = useRef([]); // superficies detectadas solas (para volver a empezar sin recalcular)
   const photoName = useRef('foto');
   const photoSeq = useRef(0); // identifica la foto en análisis: si cambia mientras tanto, se descarta el resultado
@@ -256,12 +257,12 @@ export function Visualizer() {
       setProg({ stage: 'detect', n: 0, t0: Date.now(), tAll });
       // La detección corre en el Worker de SAM: la pantalla sigue respondiendo (antes se congelaba ~1 min). Solo llega el progreso y el resultado.
       sam.current.onDetectProgress = (n) => { if (mySeq === photoSeq.current) setProg((q) => (q && q.stage === 'detect' ? { ...q, n } : q)); };
-      const { found } = await sam.current.detect();
+      const { found, mode: usedMode } = await sam.current.detect(); // 'auto': interior y, si no encuentra nada, fachada
       if (mySeq !== photoSeq.current) return; // mientras tanto eligió otra foto
-      setProg(null);
+      setProg(null); setDetMode(usedMode ?? 'interior');
       setTiming((t) => ({ ...t, detectMs: Math.round(performance.now() - t1) }));
       autoCache.current = found.map((f) => ({ name: f.name, kind: f.kind, area: f.area, mask: f.mask }));
-      applyAuto();
+      applyAuto(null, '', usedMode);
     } catch (err) {
       if (mySeqOf(err)) return; // la foto fue reemplazada por otra: la pantalla ya muestra el análisis nuevo
       setProg(null);
@@ -272,20 +273,45 @@ export function Visualizer() {
 
   // Carga en la lista las superficies detectadas solas; la pared más grande queda seleccionada: elegir un color ya la pinta.
   // `keep`: colores a conservar por índice de la detección (al "Volver a lo detectado" no se pierde lo ya pintado).
-  const applyAuto = (keep = null, note = '') => {
+  const applyAuto = (keep = null, note = '', mode = detMode) => {
     const found = autoCache.current;
     surfaces.current = found.map((f, i) => ({ id: ++surfSeq.current, name: f.name, kind: f.kind, auto: true, autoIdx: i, mask: f.mask.slice(), color: keep?.get(i) ?? null }));
     syncSurfaces();
     // Balance de blancos con política: si la pared detectada ya tiene color (se separa del resto de la foto), no se la usa para estimar la luz.
     const paredes = found.filter((f) => f.kind === 'pared').map((f) => f.mask);
     if (paredes.length) { const wbp = whiteBalanceFor(photo.current, paredes); gains.current = wbp.gains; console.debug("[wb]", JSON.stringify({ excluido: wbp.excluded, gains: wbp.gains.map((g) => +g.toFixed(2)), dist: wbp.stats?.dist, croma: wbp.stats?.wall.C })); }
-    const first = found.length ? surfaces.current.filter((x) => x.kind === 'pared').sort((a, b) => maskCount(b.mask) - maskCount(a.mask))[0] ?? surfaces.current[0] : null;
+    const first = surfaces.current.filter((x) => x.kind === 'pared').sort((a, b) => maskCount(b.mask) - maskCount(a.mask))[0] ?? null; // el ladrillo/rugoso nunca queda elegido solo
     if (first && !first.color && colorRef.current) { first.color = colorRef.current; colorRef.current = null; syncSurfaces(); } // ya había elegido un color mientras se analizaba
     setActiveId(first?.id ?? null);
-    setStatus(note || (found.length
-      ? `Listo: detecté ${found.length} ${found.length === 1 ? 'superficie' : 'superficies'}. Elegí un color para "${first.name}"; para pintar otra, tocala en la foto o en la lista.`
-      : 'No pude detectar paredes solas. Tocá "Ajustar a mano" y marcá una pared.'));
+    const fach = mode === 'fachada', n = found.length;
+    setStatus(note || (!n
+      ? (fach ? 'No pude separar paños de pared en la fachada. Tocá "Ajustar a mano" y marcá la pared.' : 'No pude detectar paredes solas. Tocá "Ajustar a mano" y marcá una pared.')
+      : first
+        ? `Listo: detecté ${n} ${n === 1 ? 'superficie' : 'superficies'}${fach ? ' en la fachada (sin cielo, piso ni aberturas)' : ''}. Elegí un color para "${first.name}"; para pintar otra, tocala en la foto o en la lista.${found.some((f) => f.kind === 'ladrillo') ? ' El ladrillo o revoque rugoso queda sin color: tocalo si querés pintarlo.' : ''}`
+        : 'Detecté solo superficies rugosas (ladrillo o similar), que quedan sin color. Tocá la que quieras pintar en la foto o en la lista.'));
     repaint();
+  };
+
+  // Vuelve a detectar con el otro detector (fachada <-> interior) sobre la misma foto ya analizada: no repite el análisis de SAM, solo la detección.
+  const redetect = async (m) => {
+    if (!sam.current || !photo.current || prog) return;
+    if (surfaces.current.some((x) => x.color) && typeof confirm === 'function' && !confirm('Detectar de nuevo descarta lo que ya pintaste. ¿Seguimos?')) return;
+    const mySeq = photoSeq.current, t1 = performance.now(), tAll = Date.now();
+    setStatus(m === 'fachada' ? 'Buscando paños de la fachada…' : 'Buscando paredes y techo…');
+    setProg({ stage: 'detect', n: 0, t0: tAll, tAll });
+    sam.current.onDetectProgress = (n) => { if (mySeq === photoSeq.current) setProg((q) => (q && q.stage === 'detect' ? { ...q, n } : q)); };
+    try {
+      await yieldToUi();
+      const { found, mode: used } = await sam.current.detect(m);
+      if (mySeq !== photoSeq.current) return;
+      setProg(null); setDetMode(used);
+      setTiming((t) => ({ ...t, detectMs: Math.round(performance.now() - t1) }));
+      autoCache.current = found.map((f) => ({ name: f.name, kind: f.kind, area: f.area, mask: f.mask }));
+      applyAuto(null, '', used);
+    } catch (err) {
+      if (mySeqOf(err)) return;
+      setProg(null); setStatus(`No se pudo detectar: ${err.message}`);
+    }
   };
 
   // "Sacar un objeto" (un solo toque, solo cuando hay un error): SAM recorta bien un objeto cuando se le da un punto sobre él, aunque sea del color de
@@ -730,6 +756,13 @@ export function Visualizer() {
               <button onClick={clearAll}>Volver a lo detectado</button>
             </div>
           </div>
+        )}
+
+        {hasPhoto && !prog && (
+          <p class="muted small redetect">
+            {detMode === 'fachada' ? 'Detecté la foto como fachada.' : '¿La foto es una fachada o el exterior de una casa?'}{' '}
+            <button onClick={() => redetect(detMode === 'fachada' ? 'interior' : 'fachada')}>{detMode === 'fachada' ? 'Detectar como interior' : 'Detectar como fachada'}</button>
+          </p>
         )}
 
         {surfList.length > 0 && (
