@@ -115,10 +115,13 @@ export function maskGeometry(mask, width, height) {
  *  - piso: abajo de todo y chato (el suelo se ve como una franja inferior).
  *  - objeto: baja y sin llegar a ser una pared (muebles, puertas, ventanas…).
  */
-export function classifySurface(g) {
+export function classifySurface(g, { techoAlto = false } = {}) {
   if (g.area < 0.025) return null;
   const h = g.bottom - g.top;
   if (g.cy < 0.3 && g.top < 0.04 && h < 0.45) return 'techo';
+  // techoAlto (opt-in): un techo visto en perspectiva puede bajar hasta la mitad de la foto, pero es un trapecio ancho arriba: su centroide cae en el 40 % superior de su caja
+  // (un rectángulo, como una pared sobre una mesada, lo tiene en el 50 %).
+  if (techoAlto && g.area >= 0.08 && g.cy < 0.3 && g.top < 0.04 && h < 0.62 && (g.cy - g.top) / h < 0.42) return 'techo';
   if (g.cy > 0.7 && h < 0.4) return null; // piso
   if (g.cy > 0.62 && g.top > 0.35) return null; // algo bajo y chico: mueble, piso
   if (g.area / Math.max(0.01, g.bottom - g.top) < 0.06) return null; // tira angosta (ancho medio < 6 % de la foto): un marco o una puerta cortados por el encuadre
@@ -1436,7 +1439,7 @@ function morphOpen(src, mask, width, height, win) {
  * Devuelve [{ kind: 'pared'|'techo', name, mask, area, cx, cy, texture }], máscaras DISJUNTAS, paredes de izquierda a derecha.
  */
 export async function detectSurfaces(img, segment, opts = {}) {
-  const { maxSeeds = 9, gradMax = 7, minDist = 2.5, minArea = 0.025, maxPared = 5, maxTexture = 0.12, refineMin = 2, minLumaRatio = 0.55, grow = true, snap = true, partition = true, hang = true, lockObjects = true, thinGaps = true, enclosed = true, tableVeto = true, minWallLuma = 30, frames = true, strips = true, blockRejected = true, splitMax = 2.2, splitEdge = 4.5, maxLine = 0.004, minCoverage = 0.35, relaxFactor = 1.8, corner = true, patience = 3, sky = true, hotMax = 0.3, techoMaxTexture = 0.15, skyBlue = 0.12, techoNeedsWall = true, minTechoContact = 0.3, skyLuma = 210, loneLine = true, rescue = true, splitCornerOnly = true, techoMinLuma = 70, trim = false } = opts; // trim: opt-in (AUTO_OPTS {"trim":true}); sin verificar en las 15 propias
+  const { maxSeeds = 9, gradMax = 7, minDist = 2.5, minArea = 0.025, maxPared = 5, maxTexture = 0.12, refineMin = 2, minLumaRatio = 0.55, grow = true, snap = true, partition = true, hang = true, lockObjects = true, thinGaps = true, enclosed = true, tableVeto = true, minWallLuma = 30, frames = true, strips = true, blockRejected = true, splitMax = 2.2, splitEdge = 4.5, maxLine = 0.004, minCoverage = 0.35, relaxFactor = 1.8, corner = true, patience = 3, sky = true, hotMax = 0.3, techoMaxTexture = 0.15, skyBlue = 0.12, techoNeedsWall = true, minTechoContact = 0.3, skyLuma = 210, loneLine = true, rescue = true, splitCornerOnly = true, techoMinLuma = 70, trim = false, techoRelax = false, techoAlto = false } = opts; // techoRelax: {minLuma, maxTexture} (opt-in): techo oscuro/con textura que apoya en una pared aceptada; techoAlto: techo que baja hasta ~60 % de la foto (opt-in) // trim: opt-in (AUTO_OPTS {"trim":true}); sin verificar en las 15 propias
   const { width, height } = img;
   const { luma, w, h } = downscaleLuma(img);
   const grad = gradientMap(luma, w, h);
@@ -1485,7 +1488,7 @@ export async function detectSurfaces(img, segment, opts = {}) {
     for (let i = 0; i < free.length; i++) if (low[i]) free[i] = 0;
     for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (Math.hypot(x - sx, y - sy) <= bd) free[y * w + x] = 0;
     // Solo se divide lo que ya parece pared: un techo con una franja de sombra no es dos superficies.
-    const partes = classifySurface(maskGeometry(mask, width, height)) === 'techo' ? [mask] : splitMerged(mask, grad, w, h, width, height, { strictMax: splitMax, minEdge: splitEdge, debug: opts.debugSplit, fullGrad, cornerOnly: splitCornerOnly, ...opts.splitOpts });
+    const partes = classifySurface(maskGeometry(mask, width, height), { techoAlto }) === 'techo' ? [mask] : splitMerged(mask, grad, w, h, width, height, { strictMax: splitMax, minEdge: splitEdge, debug: opts.debugSplit, fullGrad, cornerOnly: splitCornerOnly, ...opts.splitOpts });
     let aporto = false;
     for (const parte of partes) {
       const g = maskGeometry(parte, width, height);
@@ -1524,7 +1527,7 @@ export async function detectSurfaces(img, segment, opts = {}) {
     for (let i = 0; i < m.length; i++) if (f.mask[i] && !taken[i]) m[i] = 1;
     const clean = removeSmallIslands(m, width, height, Math.round(width * height * 0.002));
     const g = maskGeometry(clean, width, height);
-    let kind = classifySurface(g), why = kind ? null : 'forma';
+    let kind = classifySurface(g, { techoAlto }), why = kind ? null : 'forma', dudoso = false;
     if (kind === 'pared' && f.texture > maxTexture) { kind = null; why = 'textura'; } // vidrio con paisaje, puerta con paneles, mueble…
     if (kind === 'pared' && f.line > maxLine) { kind = null; why = 'líneas'; } // azulejo: las juntas son líneas finas y rectas que una pared no tiene
     // Cielo, vidrio y luz de ventana: no son paredes aunque sean lisos y claros.
@@ -1537,8 +1540,8 @@ export async function detectSurfaces(img, segment, opts = {}) {
     if (sky && kind) {
       if (st.hot > hotMax) why = 'quemado';
       else if (kind === 'techo' && st.blue > skyBlue) why = 'cielo azul';
-      else if (kind === 'techo' && f.texture > techoMaxTexture) why = 'techo con textura';
-      else if (kind === 'techo' && techoMinLuma && f.luma < techoMinLuma) why = 'techo oscuro'; // un techo de madera oscura o un hueco no es un techo a pintar (n34 luma 41, n09 49; los techos propios, ≥ 125: margen 2,5×)
+      else if (kind === 'techo' && f.texture > techoMaxTexture) { if (techoRelax && f.texture <= (techoRelax.maxTexture ?? 0.35)) dudoso = true; else why = 'techo con textura'; }
+      if (!why && kind === 'techo' && techoMinLuma && f.luma < techoMinLuma) { if (techoRelax && f.luma >= (techoRelax.minLuma ?? 45)) dudoso = true; else why = 'techo oscuro'; } // un techo de madera oscura o un hueco no es un techo a pintar (n34 luma 41, n09 49; los techos propios, ≥ 125: margen 2,5×)
       if (why) kind = null;
     }
     if (opts.debugCand && st) opts.debugCand({ kind: kind ?? `veto:${why}`, area: +g.area.toFixed(3), cx: +g.cx.toFixed(2), cy: +g.cy.toFixed(2), top: +g.top.toFixed(2), tex: +f.texture.toFixed(3), ...Object.fromEntries(Object.entries(st).map(([k, v]) => [k, +v.toFixed(3)])) });
@@ -1550,7 +1553,7 @@ export async function detectSurfaces(img, segment, opts = {}) {
     if (kind === 'pared' && minWallLuma && f.luma < minWallLuma) { kind = null; why = 'casi negro'; } // casi negro (hueco de puerta, marco oscuro, boca de pasillo): no es una pared a pintar
     if (!kind) { rechazadas.push({ ...g, mask: clean, texture: f.texture, luma: f.luma, lines: f.lines, why }); continue; }
     for (let i = 0; i < clean.length; i++) if (clean[i]) taken[i] = 1;
-    out.push({ kind, mask: clean, ...g, texture: f.texture, luma: f.luma, lines: f.lines });
+    out.push({ kind, mask: clean, ...g, texture: f.texture, luma: f.luma, lines: f.lines, dudoso });
   }
 
   if (rescue && !out.some((s) => s.kind === 'pared')) { // ninguna pared aceptada: se prueba rescatar el color dominante de las máscaras rechazadas por textura
@@ -1584,6 +1587,14 @@ export async function detectSurfaces(img, segment, opts = {}) {
       const contacto = pm.length ? ceilingWallContact(out[i].mask, pm, width, height) : 0;
       opts.debugCand?.({ kind: 'techo-contacto', area: +out[i].area.toFixed(3), contacto: +contacto.toFixed(3) });
       if (contacto < minTechoContact && out[i].luma > skyLuma) { rechazadas.push({ ...out[i], why: 'techo sin pared' }); out.splice(i, 1); }
+    }
+  }
+  if (techoRelax) { // un techo oscuro o con textura (vigas, artesonado, lámpara) solo vale si apoya en una pared aceptada: sin pared debajo es un hueco, un paisaje o una persiana
+    const pm = out.filter((s) => s.kind === 'pared').map((s) => s.mask);
+    for (let i = out.length - 1; i >= 0; i--) {
+      if (out[i].kind !== 'techo' || !out[i].dudoso) continue;
+      const contacto = pm.length ? ceilingWallContact(out[i].mask, pm, width, height) : 0;
+      if (contacto < (techoRelax.minContact ?? minTechoContact)) { rechazadas.push({ ...out[i], why: 'techo dudoso sin pared' }); out.splice(i, 1); }
     }
   }
   let veto = null;

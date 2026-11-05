@@ -581,6 +581,34 @@ test('techo oscuro (madera, hueco): no se acepta; con techoMinLuma:0 se comporta
   assert.ok(claro.some((s) => s.kind === 'techo'), 'un techo de luma ~140 se mantiene');
 });
 
+test('techoRelax: un techo oscuro con pared debajo se acepta (apagado: no); demasiado oscuro, no', async () => {
+  const seg = async (pts) => fakeSegment(pts);
+  const l = await detectSurfaces(roomWith(() => [60, 52, 48]), seg, { techoRelax: {} });
+  assert.ok(l.some((s) => s.kind === 'techo'), nombres(l).join());
+  const apagado = await detectSurfaces(roomWith(() => [60, 52, 48]), seg);
+  assert.ok(!apagado.some((s) => s.kind === 'techo'));
+  const negro = await detectSurfaces(roomWith(() => [20, 18, 16]), seg, { techoRelax: {} });
+  assert.ok(!negro.some((s) => s.kind === 'techo'), 'casi negro sigue siendo hueco');
+});
+
+test('techoRelax: un techo con textura moderada se acepta, una persiana de alto contraste no', async () => {
+  const seg = async (pts) => fakeSegment(pts);
+  const ligero = (x) => (Math.floor(x / 6) % 2 ? [150, 150, 150] : [136, 136, 136]); // vigas de poco contraste
+
+  const rel = await detectSurfaces(roomWith(ligero), seg, { techoRelax: {} });
+  assert.ok(rel.some((s) => s.kind === 'techo'), 'con techoRelax: ' + nombres(rel).join());
+  const persiana = await detectSurfaces(roomWith((x) => (Math.floor(x / 3) % 2 ? [235, 235, 235] : [110, 110, 110])), seg, { techoRelax: {} });
+  assert.ok(!persiana.some((s) => s.kind === 'techo'), nombres(persiana).join());
+});
+
+test('classifySurface con techoAlto: trapecio que baja hasta la mitad es techo; un rectángulo apoyado arriba sigue siendo pared', () => {
+  const trap = { area: 0.2, cy: 0.2, top: 0, bottom: 0.55, left: 0, right: 1, touchesTop: true, touchesBottom: false };
+  assert.equal(classifySurface(trap), 'pared');
+  assert.equal(classifySurface(trap, { techoAlto: true }), 'techo');
+  const rect = { area: 0.3, cy: 0.28, top: 0, bottom: 0.56, left: 0, right: 1, touchesTop: true, touchesBottom: false };
+  assert.equal(classifySurface(rect, { techoAlto: true }), 'pared');
+});
+
 test('techo claro sin pared debajo (cielo, luz) se descarta; con pared debajo se mantiene', async () => {
   const sinPared = { data: new Uint8ClampedArray(W * H * 4), width: W, height: H };
   for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { if (y < H * 0.2) px(sinPared.data, x, y, 235, 235, 235); else px(sinPared.data, x, y, 30 + ((x * 37 + y * 11) % 90), 40 + ((x * 13 + y * 29) % 80), 20 + ((x * 7 + y * 3) % 100)); }
