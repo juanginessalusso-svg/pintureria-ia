@@ -4,6 +4,7 @@
 // Además el IoU entre lo que pintamos y lo que cambió Sinteplast. Uso interno: las capturas no se versionan.
 // Uso: MODELS_DIR=... node comparar-par.mjs <config.json> <carpeta salida>
 import fs from 'node:fs';
+import zlib from 'node:zlib';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import jpeg from 'jpeg-js';
@@ -14,6 +15,8 @@ import { Sam, encoderSize, rgbaToRgbFloat, workingSize } from '../../apps/web/sr
 import { runDetect } from '../../apps/web/src/detect.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
+const FOTOS = process.env.FOTOS_DIR ?? path.join(here, 'fotos'); // FOTOS_DIR: carpeta con las fotos originales (en un worktree no existe fotos/)
+const CACHE = process.env.PARES_CACHE ?? null; // PARES_CACHE: carpeta donde guardar/leer las máscaras detectadas; con caché NO hace falta SAM (ni el candado)
 const cfg = JSON.parse(fs.readFileSync(process.argv[2], 'utf8')), outDir = process.argv[3];
 fs.mkdirSync(outDir, { recursive: true });
 const hex = (s) => '#' + s.split(',').map((v) => Number(v).toString(16).padStart(2, '0')).join('');
@@ -34,9 +37,14 @@ function resize(s, w, h, nw, nh) {
   return o;
 }
 
-ort.env.wasm.numThreads = 1;
-const rd = (f) => new Uint8Array(fs.readFileSync(path.join(process.env.MODELS_DIR, f)));
-const sam = await Sam.create(ort, { encoder: rd('mobile_sam_image_encoder.onnx'), decoder: rd('sam_mask_decoder_single.onnx') });
+let sam = null; // SAM se carga recién si hace falta (sin caché)
+async function getSam() {
+  if (sam) return sam;
+  ort.env.wasm.numThreads = 1;
+  const rd = (f) => new Uint8Array(fs.readFileSync(path.join(process.env.MODELS_DIR, f)));
+  sam = await Sam.create(ort, { encoder: rd('mobile_sam_image_encoder.onnx'), decoder: rd('sam_mask_decoder_single.onnx') });
+  return sam;
+}
 const mean = (data, mask) => {
   let r = 0, g = 0, b = 0, n = 0;
   for (let i = 0; i < mask.length; i++) if (mask[i]) { r += data[i * 4]; g += data[i * 4 + 1]; b += data[i * 4 + 2]; n++; }
@@ -45,7 +53,7 @@ const mean = (data, mask) => {
 const dE = (a, b) => (a && b ? deltaE00(rgbToLab(a), rgbToLab(b)) : NaN);
 
 for (const c of cfg) {
-  const raw = jpeg.decode(fs.readFileSync(path.join(here, 'fotos', c.foto)), { useTArray: true, formatAsRGBA: true });
+  const raw = jpeg.decode(fs.readFileSync(path.join(FOTOS, c.foto)), { useTArray: true, formatAsRGBA: true });
   const { width, height } = workingSize(raw.width, raw.height), N = width * height;
   const img = { data: new Uint8ClampedArray(resize(raw.data, raw.width, raw.height, width, height)), width, height };
   // render de Sinteplast recortado a la foto y llevado al tamaño de trabajo
@@ -54,9 +62,17 @@ for (const c of cfg) {
   for (let y = 0; y < ch; y++) for (let x = 0; x < cw; x++) for (let k = 0; k < 4; k++) crop[(y * cw + x) * 4 + k] = cap.data[((y0 + y) * cap.width + x0 + x) * 4 + k];
   const theirs = resize(crop, cw, ch, width, height);
 
-  const { width: rw, height: rh } = encoderSize(width, height);
-  await sam.embed(rgbaToRgbFloat(resize(img.data, width, height, rw, rh), rw, rh), rw, rh, width, height);
-  const { found } = await runDetect({ image: img, segment: (p) => { sam.reset(); return sam.segment(p); }, mode: 'interior' });
+  const cacheFile = CACHE ? path.join(CACHE, `${c.foto}.masks.gz`) : null;
+  let found;
+  if (cacheFile && fs.existsSync(cacheFile)) {
+    found = JSON.parse(zlib.gunzipSync(fs.readFileSync(cacheFile)).toString('utf8')).map((f) => ({ ...f, mask: new Uint8Array(Buffer.from(f.mask, 'base64')) }));
+  } else {
+    const s = await getSam();
+    const { width: rw, height: rh } = encoderSize(width, height);
+    await s.embed(rgbaToRgbFloat(resize(img.data, width, height, rw, rh), rw, rh), rw, rh, width, height);
+    found = (await runDetect({ image: img, segment: (p) => { s.reset(); return s.segment(p); }, mode: 'interior' })).found;
+    if (cacheFile) { fs.mkdirSync(CACHE, { recursive: true }); fs.writeFileSync(cacheFile, zlib.gzipSync(JSON.stringify(found.map((f) => ({ name: f.name, kind: f.kind, area: f.area, mask: Buffer.from(f.mask).toString('base64') }))))); }
+  }
   console.log(`\n${c.foto}: ${found.map((f) => `${f.name} ${(f.area * 100).toFixed(0)}%`).join(' · ')}`);
 
   // lo que Sinteplast cambió: diferencia grande contra la foto original
