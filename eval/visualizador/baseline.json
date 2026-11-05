@@ -347,11 +347,6 @@
     "nombre": "Pared",
     "pct": 21,
     "md5": "44aca66c"
-   },
-   {
-    "nombre": "Techo",
-    "pct": 14.8,
-    "md5": "df442e8a"
    }
   ],
   "decodificaciones": 28
@@ -614,13 +609,7 @@
   "decodificaciones": 32
  },
  "n34-casa.jpg": {
-  "superficies": [
-   {
-    "nombre": "Techo",
-    "pct": 17.3,
-    "md5": "5a7f5346"
-   }
-  ],
-  "decodificaciones": 13
+  "superficies": [],
+  "decodificaciones": 12
  }
 }
