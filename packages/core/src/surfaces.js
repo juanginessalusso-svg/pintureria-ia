@@ -909,7 +909,7 @@ export async function partitionBySmallest(regions, segment, width, height, { gri
  * color y la luz de esa pared, (2) está cerca de ella (`maxDist`) y (3) pertenece a una tira fina (no sobrevive a una apertura de radio
  * `thinR`): un objeto grande del color de la pared (un refrigerador blanco, una tabla) NO es fino y queda afuera. Con tope por pared.
  */
-export function fillThinGaps(regions, img, { blocked = null, maxDist = Math.round(img.width * 0.2), thinR = Math.max(6, Math.round(img.width * 0.03)), tolLuma = 22, tolChroma = 0.03, maxAdd = 0.03, darkDelta = 45, minDarkRing = 0.75, minDarkAll = 0.4, minAspect = 3.2, minFill = 0.45, minBox = 0.004, slatDark = 0.95, sandwich = Math.round(img.width * 0.06), debug = null } = {}) {
+export function fillThinGaps(regions, img, { blocked = null, maxDist = Math.round(img.width * 0.2), thinR = Math.max(6, Math.round(img.width * 0.03)), tolLuma = 22, tolChroma = 0.03, maxAdd = 0.03, darkDelta = 45, minDarkRing = 0.75, minDarkAll = 0.4, minAspect = 3.4, minFill = 0.5, minBox = 0.004, slatDark = 0.95, sandwich = Math.round(img.width * 0.06), debug = null } = {}) {
   const { data, width, height } = img;
   const N = width * height;
   const owner = new Uint8Array(N);
@@ -1011,6 +1011,64 @@ export function fillThinGaps(regions, img, { blocked = null, maxDist = Math.roun
     for (let i = 0; i < N; i++) if (add[i]) { r.mask[i] = 1; owner[i] = 1; }
   }
   return regions;
+}
+
+/** Dilatación cuadrada de radio r (separable). */
+function dilateMask(mask, width, height, r) {
+  const N = width * height, tmp = new Uint8Array(N), out = new Uint8Array(N);
+  for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) if (mask[y * width + x]) for (let k = Math.max(0, x - r); k <= Math.min(width - 1, x + r); k++) tmp[y * width + k] = 1;
+  for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) if (tmp[y * width + x]) for (let k = Math.max(0, y - r); k <= Math.min(height - 1, y + r); k++) out[k * width + x] = 1;
+  return out;
+}
+
+/**
+ * Saca de las paredes los objetos CERRADOS por un contorno de aristas fuertes y de otro aspecto que la pared (un cuadro, un interruptor, un aire
+ * acondicionado, un espejo, una luminaria): SAM los une a la pared lisa, pero adentro de la máscara dibujan un lazo de aristas. Dentro de cada pared se
+ * buscan las zonas lisas (gradiente < `edgeThr`) que NO se conectan con la pared principal y cuyo borde nunca toca algo fuera de la máscara (un lazo
+ * cerrado); si además su luz o su color difieren de la mediana de la pared (`dLuma`, `dChroma`) y su tamaño es el de un objeto (`minArea`..`maxArea`
+ * de la foto), se sacan junto con el lazo (`pad` px) y se marcan en el mapa 0/1 que devuelve (para que nada lo vuelva a pintar).
+ * Una mancha o una grieta de la pared forman lazos del mismo color que ella: no se tocan.
+ */
+export function cutEnclosedObjects(regions, img, G, { edgeThr = 3.5, minArea = 0.0004, maxArea = 0.04, dLuma = 14, dChroma = 0.035, pad = 3, debug = null } = {}) {
+  const { data, width, height } = img, N = width * height, cut = new Uint8Array(N);
+  const lum = new Float32Array(N), cr = new Float32Array(N), cg = new Float32Array(N);
+  for (let i = 0; i < N; i++) { const R = data[i * 4], Gc = data[i * 4 + 1], B = data[i * 4 + 2], t = R + Gc + B + 1e-3; lum[i] = 0.2126 * R + 0.7152 * Gc + 0.0722 * B; cr[i] = R / t; cg[i] = Gc / t; }
+  const med = (a) => Float64Array.from(a).sort()[a.length >> 1];
+  for (const r of regions) {
+    if (r.kind !== 'pared') continue;
+    const sl = [], sr = [], sg = [];
+    for (let i = 0; i < N; i += 5) if (r.mask[i] && G[i] < edgeThr) { sl.push(lum[i]); sr.push(cr[i]); sg.push(cg[i]); }
+    if (sl.length < 50) continue;
+    const ml = med(sl), mr = med(sr), mg = med(sg);
+    const seen = new Uint8Array(N), q = new Int32Array(N), found = [];
+    let bigStart = -1, bigN = 0;
+    for (let st = 0; st < N; st++) {
+      if (!r.mask[st] || G[st] >= edgeThr || seen[st]) continue;
+      let head = 0, tail = 0, open = false, sL = 0, sR = 0, sG = 0;
+      q[tail++] = st; seen[st] = 1;
+      while (head < tail) {
+        const i = q[head++], x = i % width, y = (i - x) / width;
+        sL += lum[i]; sR += cr[i]; sG += cg[i];
+        for (const j of [x > 0 ? i - 1 : -1, x < width - 1 ? i + 1 : -1, y > 0 ? i - width : -1, y < height - 1 ? i + width : -1]) {
+          if (j < 0) { open = true; continue; } // llega al borde de la foto: no es un lazo cerrado
+          if (!r.mask[j]) { open = true; continue; } // toca algo fuera de la pared: no es un lazo cerrado
+          if (G[j] < edgeThr && !seen[j]) { seen[j] = 1; q[tail++] = j; }
+        }
+      }
+      if (tail > bigN) { bigN = tail; bigStart = st; }
+      if (!open && tail >= minArea * N && tail <= maxArea * N) found.push({ st, n: tail, dl: Math.abs(sL / tail - ml), dc: Math.abs(sR / tail - mr) + Math.abs(sG / tail - mg), pix: Int32Array.from(q.subarray(0, tail)) });
+    }
+    for (const f of found) {
+      const ok = f.dl >= dLuma || f.dc >= dChroma;
+      debug?.({ pared: r.name, n: +(f.n / N).toFixed(4), x: +((f.st % width) / width).toFixed(3), y: +(Math.floor(f.st / width) / height).toFixed(3), dl: +f.dl.toFixed(1), dc: +f.dc.toFixed(4), ok });
+      if (!ok) continue;
+      const m = new Uint8Array(N);
+      for (const i of f.pix) m[i] = 1;
+      const grown = pad > 0 ? dilateMask(m, width, height, pad) : m;
+      for (let i = 0; i < N; i++) if (grown[i]) { cut[i] = 1; r.mask[i] = 0; }
+    }
+  }
+  return cut;
 }
 
 /**
@@ -1177,7 +1235,7 @@ export function addShadowStrips(regions, img, G, blocked, { maxDist = Math.round
  * Devuelve [{ kind: 'pared'|'techo', name, mask, area, cx, cy, texture }], máscaras DISJUNTAS, paredes de izquierda a derecha.
  */
 export async function detectSurfaces(img, segment, opts = {}) {
-  const { maxSeeds = 9, gradMax = 7, minDist = 2.5, minArea = 0.025, maxPared = 5, maxTexture = 0.12, refineMin = 2, minLumaRatio = 0.55, grow = true, snap = true, partition = true, hang = true, lockObjects = true, thinGaps = true, frames = true, strips = true, blockRejected = true, splitMax = 2.2, splitEdge = 4.5, maxLine = 0.004, minCoverage = 0.35, relaxFactor = 1.8, corner = true, patience = 3, sky = true, hotMax = 0.3, techoMaxTexture = 0.15, skyBlue = 0.12, techoNeedsWall = true, minTechoContact = 0.3, skyLuma = 210 } = opts;
+  const { maxSeeds = 9, gradMax = 7, minDist = 2.5, minArea = 0.025, maxPared = 5, maxTexture = 0.12, refineMin = 2, minLumaRatio = 0.55, grow = true, snap = true, partition = true, hang = true, lockObjects = true, thinGaps = true, enclosed = true, tableVeto = true, minWallLuma = 30, frames = true, strips = true, blockRejected = true, splitMax = 2.2, splitEdge = 4.5, maxLine = 0.004, minCoverage = 0.35, relaxFactor = 1.8, corner = true, patience = 3, sky = true, hotMax = 0.3, techoMaxTexture = 0.15, skyBlue = 0.12, techoNeedsWall = true, minTechoContact = 0.3, skyLuma = 210 } = opts;
   const { width, height } = img;
   const { luma, w, h } = downscaleLuma(img);
   const grad = gradientMap(luma, w, h);
@@ -1282,6 +1340,12 @@ export async function detectSurfaces(img, segment, opts = {}) {
       if (why) kind = null;
     }
     if (opts.debugCand && st) opts.debugCand({ kind: kind ?? `veto:${why}`, area: +g.area.toFixed(3), cx: +g.cx.toFixed(2), cy: +g.cy.toFixed(2), top: +g.top.toFixed(2), tex: +f.texture.toFixed(3), ...Object.fromEntries(Object.entries(st).map(([k, v]) => [k, +v.toFixed(3)])) });
+    if (kind === 'pared' && tableVeto) { // una superficie horizontal vista desde arriba (tapa de escritorio, mesada): llena TODO el borde de abajo y su masa está en la mitad baja; una pared tiene piso o zócalo ahí
+      let b = 0;
+      for (let x = 0; x < width; x++) if (clean[(height - 2) * width + x]) b++;
+      if (b / width >= 0.8 && g.cy > 0.65) { kind = null; why = 'tapa de mesa'; }
+    }
+    if (kind === 'pared' && minWallLuma && f.luma < minWallLuma) { kind = null; why = 'casi negro'; } // casi negro (hueco de puerta, marco oscuro, boca de pasillo): no es una pared a pintar
     if (!kind) { rechazadas.push({ ...g, mask: clean, texture: f.texture, luma: f.luma, lines: f.lines, why }); continue; }
     for (let i = 0; i < clean.length; i++) if (clean[i]) taken[i] = 1;
     out.push({ kind, mask: clean, ...g, texture: f.texture, luma: f.luma, lines: f.lines });
@@ -1332,6 +1396,10 @@ export async function detectSurfaces(img, segment, opts = {}) {
         for (let i = 0; i < N; i++) if (m[i]) veto[i] = 1;
       }
     }
+  }
+  if (enclosed && out.length) { // cuadros, interruptores, espejos, luminarias: objetos cerrados por un lazo de aristas adentro de la pared
+    const cortado = cutEnclosedObjects(out, img, fullGrad(), { ...opts.enclosedOpts, debug: opts.debugEnclosed });
+    if (cortado.some((v) => v)) { if (veto) for (let i = 0; i < cortado.length; i++) { if (cortado[i]) veto[i] = 1; } else veto = cortado; }
   }
   if (grow) {
     // El relleno de sombras no entra en el piso que el segmentador ya encontró (una franja chica pegada al borde de abajo, rechazada): una pared no se

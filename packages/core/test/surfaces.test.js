@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { detectSurfaces, classifySurface, maskGeometry, textureRatio, distanceTransform, findVerticalCorner, splitAtCorner, ceilingWallContact, colorStats } from '../src/index.js';
+import { detectSurfaces, classifySurface, maskGeometry, textureRatio, distanceTransform, findVerticalCorner, splitAtCorner, ceilingWallContact, colorStats, cutEnclosedObjects } from '../src/index.js';
 
 const W = 240, H = 320;
 const px = (data, x, y, r, g, b) => { const i = (y * W + x) * 4; data[i] = r; data[i + 1] = g; data[i + 2] = b; data[i + 3] = 255; };
@@ -549,4 +549,42 @@ test('ceilingWallContact y colorStats', () => {
   const st = colorStats(techo, img);
   assert.equal(st.hot, 1);
   assert.equal(st.chroma, 0);
+});
+
+// --- vetos de objetos: superficie horizontal (tapa de escritorio), pared casi negra, objeto cerrado dentro de la pared ---
+function bandaInferior(v) { // arriba ruido (fondo con textura), desde 34 % hasta abajo una zona lisa de luz v que llega a TODO el borde inferior
+  const data = new Uint8ClampedArray(W * H * 4);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { const k = y < H * 0.34 ? ((x * 7 + y * 13) % 2 ? 250 : 10) : v; px(data, x, y, k, k, k); }
+  const segment = async () => { const m = new Uint8Array(W * H); for (let y = Math.ceil(H * 0.34); y < H; y++) for (let x = 0; x < W; x++) m[y * W + x] = 1; return m; };
+  return { img: { data, width: W, height: H }, segment };
+}
+
+test('tapa de escritorio: una zona lisa que llena todo el borde inferior y tiene su masa abajo no es pared (tableVeto)', async () => {
+  const { img, segment } = bandaInferior(200);
+  assert.equal((await detectSurfaces(img, segment, { tableVeto: false })).filter((s) => s.kind === 'pared').length, 1, 'sin el veto se pinta (control)');
+  assert.equal((await detectSurfaces(img, segment)).filter((s) => s.kind === 'pared').length, 0);
+});
+
+test('pared casi negra (hueco de puerta, marco oscuro): no se pinta (minWallLuma)', async () => {
+  const data = new Uint8ClampedArray(W * H * 4);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { const k = y < 40 ? ((x * 7 + y * 13) % 2 ? 250 : 10) : 8; px(data, x, y, k, k, k); } // franja con textura arriba, lo demás casi negro
+  const segment = async () => { const m = new Uint8Array(W * H); for (let y = 40; y < H; y++) for (let x = 0; x < W; x++) m[y * W + x] = 1; return m; };
+  assert.equal((await detectSurfaces({ data, width: W, height: H }, segment, { minWallLuma: 0, tableVeto: false })).filter((s) => s.kind === 'pared').length, 1, 'control');
+  assert.equal((await detectSurfaces({ data, width: W, height: H }, segment, { tableVeto: false })).filter((s) => s.kind === 'pared').length, 0);
+});
+
+test('objeto cerrado por un lazo de aristas dentro de la pared (cuadro): se saca; una mancha del mismo color no', () => {
+  const data = new Uint8ClampedArray(W * H * 4), G = new Float32Array(W * H);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) px(data, x, y, 200, 200, 200);
+  const cuadro = (x, y) => x >= 80 && x < 120 && y >= 100 && y < 140, mancha = (x, y) => x >= 160 && x < 200 && y >= 100 && y < 140;
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    if (cuadro(x, y)) { px(data, x, y, 90, 120, 160); if (!cuadro(x - 4, y) || !cuadro(x + 4, y) || !cuadro(x, y - 4) || !cuadro(x, y + 4)) G[y * W + x] = 20; } // contorno de aristas
+    else if (mancha(x, y) && (!mancha(x - 4, y) || !mancha(x + 4, y) || !mancha(x, y - 4) || !mancha(x, y + 4))) G[y * W + x] = 20; // lazo sin cambio de color
+  }
+  const w = { kind: 'pared', name: 'Pared', mask: new Uint8Array(W * H).fill(1) };
+  const cut = cutEnclosedObjects([w], { data, width: W, height: H }, G);
+  assert.equal(w.mask[120 * W + 100], 0, 'el cuadro sale');
+  assert.equal(cut[120 * W + 100], 1);
+  assert.equal(w.mask[120 * W + 180], 1, 'la mancha del color de la pared se queda');
+  assert.equal(w.mask[20 * W + 20], 1, 'la pared se queda');
 });
