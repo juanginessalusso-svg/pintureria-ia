@@ -8,3 +8,4 @@ export * from './surfaces.js';
 export * from './metrics.js';
 export * from './cutobject.js';
 export * from './deltae.js';
+export * from './whitebalance.js';
