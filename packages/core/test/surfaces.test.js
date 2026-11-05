@@ -311,6 +311,8 @@ test('esquina vertical: sin unión con el techo visible (pared contra el borde d
 test('esquina vertical: el quiebre del techo solo, sin cambio de luz, no alcanza', () => {
   const { img, mask } = wallScene({ kink: true, lum: () => 200 });
   assert.equal(findVerticalCorner(mask, img), null);
+});
+
 // ---- objetos que cuelgan o se apoyan en el contorno (foco, termotanque) ----
 import { growIntoGaps, hangingSeeds } from '../src/index.js';
 
