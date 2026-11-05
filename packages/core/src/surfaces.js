@@ -127,6 +127,47 @@ export function classifySurface(g) {
   return 'pared';
 }
 
+
+/**
+ * Estadísticas de color de una región (máscara a resolución de la foto): croma medio (0..1), "azulez" B-R media (-1..1), fracción de píxeles casi
+ * quemados (luma > 245) y luma media/p90. Sirven para distinguir cielo y vidrio (muy brillantes o azulados) de una pared o un techo pintados.
+ */
+export function colorStats(mask, img) {
+  const { data, width, height } = img;
+  let n = 0, ch = 0, bl = 0, hot = 0, ls = 0;
+  const hist = new Uint32Array(256);
+  for (let i = 0; i < mask.length; i++) {
+    if (!mask[i]) continue;
+    const r = data[i * 4], g = data[i * 4 + 1], b = data[i * 4 + 2];
+    const l = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    n++; ls += l; hist[Math.min(255, Math.round(l))]++;
+    ch += (Math.max(r, g, b) - Math.min(r, g, b)) / 255; bl += (b - r) / 255;
+    if (l > 245) hot++;
+  }
+  if (!n) return { chroma: 0, blue: 0, hot: 0, luma: 0, p90: 0 };
+  let acc = 0, p90 = 255;
+  for (let v = 0; v < 256; v++) { acc += hist[v]; if (acc >= n * 0.9) { p90 = v; break; } }
+  return { chroma: ch / n, blue: bl / n, hot: hot / n, luma: ls / n, p90 };
+}
+
+/**
+ * Fracción de las columnas del techo cuyo borde inferior apoya en una pared (hay pared justo debajo, hasta `reach` px). Un techo de verdad
+ * se corta contra la pared que tiene debajo; un cielo, la luz de una ventana o una banda suelta no tienen pared debajo (0 = ninguna).
+ */
+export function ceilingWallContact(techo, paredes, width, height, reach = Math.max(3, Math.round(height * 0.03))) {
+  let cols = 0, hit = 0;
+  for (let x = 0; x < width; x++) {
+    let yb = -1;
+    for (let y = height - 1; y >= 0; y--) if (techo[y * width + x]) { yb = y; break; }
+    if (yb < 0) continue;
+    cols++;
+    let ok = false;
+    for (let y = yb + 1; y <= Math.min(height - 1, yb + reach) && !ok; y++) for (const p of paredes) if (p[y * width + x]) { ok = true; break; }
+    if (ok) hit++;
+  }
+  return cols ? hit / cols : 0;
+}
+
 const iouAndContain = (a, b) => {
   let inter = 0, na = 0, nb = 0;
   for (let i = 0; i < a.length; i++) { if (a[i]) na++; if (b[i]) nb++; if (a[i] && b[i]) inter++; }
@@ -1126,7 +1167,7 @@ export function addShadowStrips(regions, img, G, blocked, { maxDist = Math.round
  * Devuelve [{ kind: 'pared'|'techo', name, mask, area, cx, cy, texture }], máscaras DISJUNTAS, paredes de izquierda a derecha.
  */
 export async function detectSurfaces(img, segment, opts = {}) {
-  const { maxSeeds = 9, gradMax = 7, minDist = 2.5, minArea = 0.025, maxPared = 5, maxTexture = 0.12, refineMin = 2, minLumaRatio = 0.55, grow = true, snap = true, partition = true, hang = true, lockObjects = true, thinGaps = true, frames = true, strips = true, blockRejected = true, splitMax = 2.2, splitEdge = 4.5, maxLine = 0.004, minCoverage = 0.35, relaxFactor = 1.8, corner = true, patience = 3 } = opts;
+  const { maxSeeds = 9, gradMax = 7, minDist = 2.5, minArea = 0.025, maxPared = 5, maxTexture = 0.12, refineMin = 2, minLumaRatio = 0.55, grow = true, snap = true, partition = true, hang = true, lockObjects = true, thinGaps = true, frames = true, strips = true, blockRejected = true, splitMax = 2.2, splitEdge = 4.5, maxLine = 0.004, minCoverage = 0.35, relaxFactor = 1.8, corner = true, patience = 3, sky = true, hotMax = 0.3, techoMaxTexture = 0.15, skyBlue = 0.12, techoNeedsWall = true, minTechoContact = 0.3, skyLuma = 210 } = opts;
   const { width, height } = img;
   const { luma, w, h } = downscaleLuma(img);
   const grad = gradientMap(luma, w, h);
@@ -1217,7 +1258,21 @@ export async function detectSurfaces(img, segment, opts = {}) {
     let kind = classifySurface(g);
     if (kind === 'pared' && f.texture > maxTexture) kind = null; // vidrio con paisaje, puerta con paneles, mueble…
     if (kind === 'pared' && f.line > maxLine) kind = null; // azulejo: las juntas son líneas finas y rectas que una pared no tiene
-    if (!kind) { rechazadas.push({ ...g, mask: clean, texture: f.texture, luma: f.luma, lines: f.lines }); continue; }
+    // Cielo, vidrio y luz de ventana: no son paredes aunque sean lisos y claros.
+    //  - quemado: una pared fotografiada normal casi no tiene píxeles al tope de la escala (en las 15 fotos propias, 0 %); un cielo blanco, un vidrio o la luz
+    //    de una ventana sí (n27 93 %, n20 99 %, n01 64–72 %, n17 35–68 %). Se descarta lo que tenga más de `hotMax` (una pared real con sol, n12: 25 %).
+    //  - techo azul: ningún techo se pinta de azul cielo (n26: B−R = +0,47; los techos propios, ≤ +0,011).
+    //  - techo con textura: el techo tampoco puede ser una persiana o un paisaje (la regla de `maxTexture` solo miraba paredes).
+    let st = null, why = null;
+    if (kind && (opts.debugCand || sky)) st = colorStats(clean, img);
+    if (sky && kind) {
+      if (st.hot > hotMax) why = 'quemado';
+      else if (kind === 'techo' && st.blue > skyBlue) why = 'cielo azul';
+      else if (kind === 'techo' && f.texture > techoMaxTexture) why = 'techo con textura';
+      if (why) kind = null;
+    }
+    if (opts.debugCand && st) opts.debugCand({ kind: kind ?? `veto:${why}`, area: +g.area.toFixed(3), cx: +g.cx.toFixed(2), cy: +g.cy.toFixed(2), top: +g.top.toFixed(2), tex: +f.texture.toFixed(3), ...Object.fromEntries(Object.entries(st).map(([k, v]) => [k, +v.toFixed(3)])) });
+    if (!kind) { rechazadas.push({ ...g, mask: clean, texture: f.texture, luma: f.luma, lines: f.lines, why }); continue; }
     for (let i = 0; i < clean.length; i++) if (clean[i]) taken[i] = 1;
     out.push({ kind, mask: clean, ...g, texture: f.texture, luma: f.luma, lines: f.lines });
   }
@@ -1226,6 +1281,15 @@ export async function detectSurfaces(img, segment, opts = {}) {
   const refLuma = Math.max(0, ...out.filter((s) => s.kind === 'pared').slice(0, 1).map((s) => s.luma)); // `out` ya viene del más grande al más chico
   for (let i = out.length - 1; i >= 0; i--) {
     if (out[i].kind === 'pared' && out[i].luma < refLuma * minLumaRatio) { rechazadas.push(out[i]); out.splice(i, 1); }
+  }
+  if (sky && techoNeedsWall) { // un techo CLARO (luma > skyLuma; los techos propios ≤ 187, cielo n30 231, luz n02 218) solo vale si apoya en una pared aceptada: sin pared debajo es cielo o luz de una ventana
+    const pm = out.filter((s) => s.kind === 'pared').map((s) => s.mask);
+    for (let i = out.length - 1; i >= 0; i--) {
+      if (out[i].kind !== 'techo') continue;
+      const contacto = pm.length ? ceilingWallContact(out[i].mask, pm, width, height) : 0;
+      opts.debugCand?.({ kind: 'techo-contacto', area: +out[i].area.toFixed(3), contacto: +contacto.toFixed(3) });
+      if (contacto < minTechoContact && out[i].luma > skyLuma) { rechazadas.push({ ...out[i], why: 'techo sin pared' }); out.splice(i, 1); }
+    }
   }
   let veto = null;
   if (frames && out.length) { // marco de un ventanal pegado al vidrio: se saca de la pared y no se vuelve a pintar

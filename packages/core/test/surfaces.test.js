@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { detectSurfaces, classifySurface, maskGeometry, textureRatio, distanceTransform, findVerticalCorner, splitAtCorner } from '../src/index.js';
+import { detectSurfaces, classifySurface, maskGeometry, textureRatio, distanceTransform, findVerticalCorner, splitAtCorner, ceilingWallContact, colorStats } from '../src/index.js';
 
 const W = 240, H = 320;
 const px = (data, x, y, r, g, b) => { const i = (y * W + x) * 4; data[i] = r; data[i + 1] = g; data[i + 2] = b; data[i + 3] = 255; };
@@ -478,4 +478,59 @@ test('partición: una pared pelada no gasta decodificaciones, pero un objeto ade
   assert.ok(con.n < sin.n, `con podas ${con.n}, sin podas ${sin.n}`);
   assert.equal(con.w.mask[56 * PW + 66], 0, 'el objeto se sacó de la pared');
   assert.deepEqual([...con.w.mask], [...sin.w.mask]);
+});
+
+// --- cielo, vidrio y luz de ventana (veto de techo/pared que en realidad es luz o paisaje) ---
+const roomWith = (techoRgb, paredFn) => {
+  const data = room();
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    if (y < H * 0.2) { const c = techoRgb(x, y); px(data, x, y, c[0], c[1], c[2]); }
+    else if (paredFn && !(x > 90 && x < 150 && y > H * 0.4 && y < H * 0.85)) { const c = paredFn(x, y); px(data, x, y, c[0], c[1], c[2]); }
+  }
+  return { data, width: W, height: H };
+};
+const nombres = (l) => l.map((s) => s.name);
+
+test('cielo: un "techo" azul sobre la pared no se acepta; la pared sí', async () => {
+  const l = await detectSurfaces(roomWith(() => [120, 170, 235]), async (pts) => fakeSegment(pts));
+  assert.ok(!l.some((s) => s.kind === 'techo'), nombres(l).join());
+  assert.ok(l.some((s) => s.kind === 'pared'));
+  assert.ok(l.rechazadas.some((r) => r.why === 'cielo azul'));
+  const sin = await detectSurfaces(roomWith(() => [120, 170, 235]), async (pts) => fakeSegment(pts), { sky: false });
+  assert.ok(sin.some((s) => s.kind === 'techo'), 'con sky:false se comporta como antes');
+});
+
+test('luz quemada: una "pared" casi toda en 255 (ventana, cielo blanco) no se pinta', async () => {
+  const l = await detectSurfaces(roomWith(() => [235, 235, 235], () => [255, 255, 255]), async (pts) => fakeSegment(pts));
+  assert.ok(!l.some((s) => s.kind === 'pared'), nombres(l).join());
+  assert.ok(l.rechazadas.some((r) => r.why === 'quemado'));
+});
+
+test('techo con textura (persiana, paisaje) no se acepta', async () => {
+  const l = await detectSurfaces(roomWith((x) => (Math.floor(x / 3) % 2 ? [235, 235, 235] : [110, 110, 110])), async (pts) => fakeSegment(pts));
+  assert.ok(!l.some((s) => s.kind === 'techo'), nombres(l).join());
+});
+
+test('techo claro sin pared debajo (cielo, luz) se descarta; con pared debajo se mantiene', async () => {
+  const sinPared = { data: new Uint8ClampedArray(W * H * 4), width: W, height: H };
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { if (y < H * 0.2) px(sinPared.data, x, y, 235, 235, 235); else px(sinPared.data, x, y, 30 + ((x * 37 + y * 11) % 90), 40 + ((x * 13 + y * 29) % 80), 20 + ((x * 7 + y * 3) % 100)); }
+  const l = await detectSurfaces(sinPared, async (pts) => fakeSegment(pts));
+  assert.ok(!l.some((s) => s.kind === 'techo'), nombres(l).join());
+  assert.ok(l.rechazadas.some((r) => r.why === 'techo sin pared'));
+  const con = await detectSurfaces({ data: room(), width: W, height: H }, async (pts) => fakeSegment(pts));
+  assert.ok(con.some((s) => s.kind === 'techo'));
+});
+
+test('ceilingWallContact y colorStats', () => {
+  const techo = new Uint8Array(W * H), pared = new Uint8Array(W * H), lejos = new Uint8Array(W * H);
+  for (let y = 0; y < 60; y++) for (let x = 0; x < W; x++) techo[y * W + x] = 1;
+  for (let y = 61; y < 200; y++) for (let x = 0; x < W; x++) pared[y * W + x] = 1;
+  for (let y = 150; y < 200; y++) for (let x = 0; x < W; x++) lejos[y * W + x] = 1;
+  assert.ok(ceilingWallContact(techo, [pared], W, H) > 0.95);
+  assert.equal(ceilingWallContact(techo, [lejos], W, H), 0);
+  assert.equal(ceilingWallContact(techo, [], W, H), 0);
+  const img = { data: new Uint8ClampedArray(W * H * 4).fill(255), width: W, height: H };
+  const st = colorStats(techo, img);
+  assert.equal(st.hot, 1);
+  assert.equal(st.chroma, 0);
 });
