@@ -64,7 +64,8 @@ for (const foto of fotos) {
   const { width, height } = workingSize(raw.width, raw.height);
   const img = { data: new Uint8ClampedArray(resize(raw.data, raw.width, raw.height, width, height)), width, height };
   const { width: rw, height: rh } = encoderSize(width, height);
-  await sam.embed(rgbaToRgbFloat(resize(img.data, width, height, rw, rh), rw, rh), rw, rh, width, height);
+  let embedded = false; // el encoder (lo más caro) solo corre si hay una máscara sin cachear
+  const ensureEmbed = async () => { if (embedded) return; embedded = true; await sam.embed(rgbaToRgbFloat(resize(img.data, width, height, rw, rh), rw, rh), rw, rh, width, height); };
   let decodes = 0, samMs = 0, cleanMs = 0, clicks = 0;
   const t0 = performance.now();
   let fase = 'semillas';
@@ -74,6 +75,7 @@ for (const foto of fotos) {
     let m, ms = 0, nClics = 0;
     if (key && fs.existsSync(key)) m = new Uint8Array(zlib.gunzipSync(fs.readFileSync(key)));
     else {
+      await ensureEmbed();
       sam.reset();
       let r;
       const ta = performance.now();
