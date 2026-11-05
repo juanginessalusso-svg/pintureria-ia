@@ -43,7 +43,7 @@ test('pared neutra en un ambiente con dominante (luz teñida): NO se excluye, se
   const r = whiteBalanceFor(img, [mask]);
   assert.equal(r.excluded, false);
   assert.deepEqual(r.gains, estimateWhiteBalance(img));
-  assert.ok(r.stats.dist > 12, 'la distancia sola habría excluido: el veto es el croma de la pared');
+  assert.ok(r.stats.dist > 15, 'la distancia sola habría excluido: el veto es el croma de la pared');
 });
 
 test('toda la foto con la misma dominante (luz cálida, pared incluida): NO se excluye', () => {

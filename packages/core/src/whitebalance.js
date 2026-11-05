@@ -5,7 +5,7 @@ import { rgbToLab } from './color.js';
 import { estimateWhiteBalance, unionMasks } from './recolor.js';
 
 /** Umbrales por defecto de "la pared ya tiene color": distancia (a*,b*) pared-resto >= threshold Y croma de la pared >= minChroma. Ver docs. */
-export const WB_EXCLUDE_DEFAULTS = { threshold: 12, minChroma: 15, minWallFrac: 0.03, dilate: 4 };
+export const WB_EXCLUDE_DEFAULTS = { threshold: 15, minChroma: 15, minWallFrac: 0.03, dilate: 4 };
 
 /** Dilata una máscara binaria `r` píxeles (cuadrado, separable). El borde de la máscara es impreciso: conviene excluir un poco de más. */
 export function dilateMask(m, width, height, r) {
