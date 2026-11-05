@@ -11,7 +11,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import jpeg from 'jpeg-js';
-import { decodeMask, deltaE00, estimateWhiteBalance, hexToLab, recolorWall } from '@pintureria/core';
+import { decodeMask, deltaE00, estimateWhiteBalance, hexToLab, recolorWall, whiteBalanceFor, wallVsRestChroma, unionMasks } from '@pintureria/core';
+import { workingSize } from '../../apps/web/src/sam.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const arg = (k, def) => { const i = process.argv.indexOf(k); return i < 0 ? def : (process.argv[i + 1] ?? true); };
@@ -19,6 +20,10 @@ const N_COLORES = Number(arg('--n', 60));
 const ANCHO = Number(arg('--ancho', 400));
 const EXTRA = arg('--opts', null) ? JSON.parse(arg('--opts')) : {};
 const SOLO_SINT = process.argv.includes('--sin-reales');
+const DETECTADAS = arg('--detectadas', null); // carpeta con las máscaras de auto.mjs (DUMP_MASKS): suma las paredes que detecta la app
+const POL = {}; // umbrales de la política (default: los de whitebalance.js)
+if (arg('--umbral', null)) POL.threshold = Number(arg('--umbral'));
+if (arg('--croma', null)) POL.minChroma = Number(arg('--croma'));
 const cartaPath = process.env.TERSUAVE_JSON;
 if (!cartaPath) { console.error('Falta TERSUAVE_JSON=ruta/a/colores-tersuave.json (carta pública, no se versiona)'); process.exit(2); }
 const cartaJson = JSON.parse(fs.readFileSync(cartaPath, 'utf8'));
@@ -145,6 +150,41 @@ function paredesReales() {
   return out;
 }
 
+/** Remuestreo bilineal (igual que auto.mjs) al tamaño de trabajo de la app. */
+function resizeBilineal(src, w, h, nw, nh) {
+  if (w === nw && h === nh) return src;
+  const out = new Uint8ClampedArray(nw * nh * 4);
+  for (let y = 0; y < nh; y++) {
+    const fy = Math.min(h - 1, ((y + 0.5) * h) / nh - 0.5), y0 = Math.max(0, Math.floor(fy)), y1 = Math.min(h - 1, y0 + 1), ty = Math.max(0, fy - y0);
+    for (let x = 0; x < nw; x++) {
+      const fx = Math.min(w - 1, ((x + 0.5) * w) / nw - 0.5), x0 = Math.max(0, Math.floor(fx)), x1 = Math.min(w - 1, x0 + 1), tx = Math.max(0, fx - x0);
+      for (let c = 0; c < 4; c++) {
+        const a = src[(y0 * w + x0) * 4 + c], b = src[(y0 * w + x1) * 4 + c], d = src[(y1 * w + x0) * 4 + c], e = src[(y1 * w + x1) * 4 + c];
+        out[(y * nw + x) * 4 + c] = (a * (1 - tx) + b * tx) * (1 - ty) + (d * (1 - tx) + e * tx) * ty;
+      }
+    }
+  }
+  return out;
+}
+/** Paredes que detecta la app (máscaras volcadas por auto.mjs con DUMP_MASKS), a tamaño de trabajo reducido a ~ANCHO px. `todas` = unión de todas las superficies de la foto (lo que recibe la política en la app). */
+function paredesDetectadas(dir) {
+  const out = [];
+  for (const f of fs.readdirSync(dir).filter((x) => x.endsWith('.json')).sort()) {
+    const d = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'));
+    if (!d.superficies?.length) continue;
+    const raw = jpeg.decode(fs.readFileSync(path.join(here, 'fotos', d.foto)), { useTArray: true, formatAsRGBA: true });
+    const { width, height } = workingSize(raw.width, raw.height);
+    const full = { data: resizeBilineal(raw.data, raw.width, raw.height, width, height), width, height };
+    const ms = d.superficies.map((s) => ({ ...s, mask: Float32Array.from(decodeMask(s.rle, width * height)) }));
+        for (const s of ms) {
+      if (s.tipo === 'techo') continue; // se mide solo el color de las paredes
+      const m = erode(s.mask, width, height, 2);
+      out.push({ id: `auto ${f.replace(".json", "")} · ${s.nombre}`, origen: 'detectada por la app', img: full, mask: m, todas: ms.filter((x) => x.tipo !== 'techo').map((x) => x.mask), foto: f });
+    }
+  }
+  return out;
+}
+
 /** Tipo de pared, por regla sobre las estadísticas de la pared original (L medio, b medio, ancho p5-p95 de L). */
 function clasificar(w) {
   const { img, mask } = w, Ls = []; let b = 0, n = 0;
@@ -154,6 +194,7 @@ function clasificar(w) {
   const med = Ls[Math.floor(n / 2)], spread = Ls[Math.floor(n * 0.95)] - Ls[Math.floor(n * 0.05)], bm = b / n;
   w.stats = { medL: med, spread, b: bm, n };
   if (/sola|\+ resto neutro|teñida/.test(w.id)) return 'de color (verde/azul)';
+  if (w.origen === 'detectada por la app') return 'detectada por la app';
   if (spread >= 30) return 'degradé fuerte';
   if (med < 55) return 'en sombra';
   if (bm >= 10) return 'cálida';
@@ -200,18 +241,21 @@ function medir(w, color, opts, gains) {
 const q = (arr, p) => { const s = [...arr].sort((x, y) => x - y); return s[Math.min(s.length - 1, Math.floor(p * (s.length - 1) + 0.5))]; };
 const f1 = (v) => v.toFixed(1).padStart(6);
 
-const paredes = [...paredesSinteticas(), ...(SOLO_SINT ? [] : paredesReales())];
+const paredes = [...paredesSinteticas(), ...(SOLO_SINT ? [] : paredesReales()), ...(DETECTADAS ? paredesDetectadas(DETECTADAS) : [])];
 for (const w of paredes) w.tipo = clasificar(w);
 const colores = muestra(N_COLORES);
 console.log(`Paredes: ${paredes.length} · colores de la carta: ${colores.length} (de ${carta.length}) · ancho de trabajo ${ANCHO}px`);
 for (const w of paredes) console.log(`  [${w.tipo.padEnd(22)}] ${w.id.padEnd(42)} ${w.origen.padEnd(28)} L̃=${w.stats.medL.toFixed(0)} spread(p5-p95)=${w.stats.spread.toFixed(0)} b̄=${w.stats.b.toFixed(1)}`);
 
 // Balance de blancos: 'no' = sin corrección · 'foto' = gray-world sobre toda la foto (lo que hace la app hoy) · 'sin pared' = gray-world ignorando la pared a pintar (opción `exclude`)
-const CONFIGS = [['relative', 'no'], ['relative', 'foto'], ['relative', 'sin pared'], ['pure', 'no'], ['pure', 'foto']];
+const CONFIGS = [['relative', 'no'], ['relative', 'foto'], ['relative', 'sin pared'], ['relative', 'política'], ['pure', 'no'], ['pure', 'foto']];
 const grupoColor = (c) => (c.lab.L >= 88 ? 'muy clara (L*≥88)' : c.lab.L <= 30 ? 'muy oscura (L*≤30)' : c.C >= 55 ? 'muy saturada (C*≥55)' : 'media');
 const filas = []; // una por pared x color x config
 for (const w of paredes) {
   const gains = { no: [1, 1, 1], foto: estimateWhiteBalance(w.img), 'sin pared': estimateWhiteBalance(w.img, { exclude: dilate(w.mask, w.img.width, w.img.height, 4) }) };
+  // 'política': lo que hace la app con whiteBalanceFor sobre las superficies de la foto (en las sintéticas/verdad, la pared medida)
+  const pol = whiteBalanceFor(w.img, w.todas ?? [w.mask], POL);
+  gains['política'] = pol.gains; w.pol = pol;
   w.gains = { foto: gains.foto.map((v) => +v.toFixed(2)), 'sin pared': gains['sin pared'].map((v) => +v.toFixed(2)) };
   for (const c of colores) for (const [mode, wb] of CONFIGS) {
     const r = medir(w, c, { mode, intensity: 1 }, gains[wb]);
@@ -242,7 +286,7 @@ for (const t of tipos) for (const g of ['muy clara (L*≥88)', 'media', 'muy sat
   if (sel.length) console.log(`${t.padEnd(24)} ${g.padEnd(22)}`, linea(sel));
 }
 console.log("\n== Por pared (modo 'relative'): ΔE00 mediana / p90 ==");
-for (const w of paredes) console.log(`  ${w.id.padEnd(46)} ` + ['no', 'foto', 'sin pared'].map((wb) => { const sel = filas.filter((x) => x.pared === w.id && x.mode === 'relative' && x.wb === wb); return `${wb}: ${q(sel.map((x) => x.dE), 0.5).toFixed(1)}/${q(sel.map((x) => x.dE), 0.9).toFixed(1)}`; }).join('   '));
+for (const w of paredes) console.log(`  ${w.id.padEnd(46)} ` + ['no', 'foto', 'sin pared', 'política'].map((wb) => { const sel = filas.filter((x) => x.pared === w.id && x.mode === 'relative' && x.wb === wb); return `${wb}: ${q(sel.map((x) => x.dE), 0.5).toFixed(1)}/${q(sel.map((x) => x.dE), 0.9).toFixed(1)}`; }).join('   '));
 
 // Colores problemáticos: modo 'relative' sin WB, paredes bien expuestas + cálidas (donde el modelo debería funcionar), peor mediana
 console.log("\n== Colores con peor ΔE00 en 'relative' sin balance, sobre paredes bien expuestas y cálidas (mediana entre paredes) ==");
@@ -252,5 +296,11 @@ const rank = [...porColor.values()].map((a) => ({ c: a[0], dE: q(a.map((x) => x.
 console.log('código  nombre'.padEnd(36), 'familia'.padEnd(10), 'hex      L*     ΔE    ΔL    ΔC    Δh°');
 for (const r of rank.slice(0, 20)) console.log(`${r.c.code.padStart(6)}  ${r.c.name.padEnd(26)} ${r.c.family.padEnd(10)} ${r.c.hex} ${r.c.targetL.toFixed(0).padStart(3)} ${f1(r.dE)}${f1(r.dL)}${f1(r.dC)}${f1(r.dh)}`);
 
+console.log("\n== Política: distancia (a*,b*) pared vs. resto, decisión y ΔE00 mediano (relative) con balance sobre toda la foto / sin pared / política ==");
+for (const w of paredes) {
+  const med = (wb) => q(filas.filter((x) => x.pared === w.id && x.mode === 'relative' && x.wb === wb).map((x) => x.dE), 0.5);
+  const st = w.pol.stats;
+  console.log(`  ${w.id.padEnd(46)} dist=${st ? (st.dist===Infinity?99:st.dist).toFixed(1).padStart(5) : '  n/a'} Cpared=${st ? st.wall.C.toFixed(1).padStart(5) : '  n/a'} ${w.pol.excluded ? 'EXCLUYE ' : 'incluye '} foto=${med('foto').toFixed(1).padStart(5)} sinPared=${med('sin pared').toFixed(1).padStart(5)} política=${med('política').toFixed(1).padStart(5)}  ${med('sin pared') - med('foto') > 0.5 ? '<- exclusión EMPEORA' : med('sin pared') - med('foto') < -0.5 ? '<- exclusión mejora' : ''}`);
+}
 const jsonOut = arg('--json', null);
 if (jsonOut) { fs.writeFileSync(jsonOut, JSON.stringify({ paredes: paredes.map((w) => ({ id: w.id, tipo: w.tipo, origen: w.origen, stats: w.stats })), colores: colores.map((c) => ({ code: c.code, name: c.name, family: c.family, hex: c.hex })), filas }, null, 1)); console.log(`\nResultados completos en ${jsonOut}`); }
