@@ -430,6 +430,61 @@ function makeHeap(cap) {
   };
 }
 
+/** Semillas a ambos lados de los bordes largos que hay DENTRO de las paredes (puertas, marcos, cuadros). Ver partitionBySmallest. */
+function edgeSeeds(paredes, G, width, height, { edgeThr, edgeBudget, edgeMinLen, debug }) {
+  const w = 192, h = Math.max(1, Math.round((192 * height) / width)), N = width * height;
+  const wall = new Uint8Array(N);
+  for (const r of paredes) for (let i = 0; i < N; i++) if (r.mask[i]) wall[i] = 1;
+  const low = toLow(wall, width, height, w, h), dt = distanceTransform(low, w, h);
+  const E = new Uint8Array(w * h);
+  const bx = width / w, by = height / h;
+  for (let cy = 0; cy < h; cy++) for (let cx = 0; cx < w; cx++) {
+    if (!low[cy * w + cx] || dt[cy * w + cx] < 3) continue; // interior de la pared, no su contorno
+    let mx = 0;
+    for (let y = Math.floor(cy * by); y < Math.min(height, Math.ceil((cy + 1) * by)); y++) for (let x = Math.floor(cx * bx); x < Math.min(width, Math.ceil((cx + 1) * bx)); x++) if (G[y * width + x] > mx) mx = G[y * width + x];
+    if (mx > edgeThr) E[cy * w + cx] = 1;
+  }
+  const lab = new Int32Array(w * h).fill(-1), comps = [];
+  for (let i = 0; i < E.length; i++) {
+    if (!E[i] || lab[i] >= 0) continue;
+    const id = comps.length, q = [i];
+    lab[i] = id;
+    for (let k = 0; k < q.length; k++) {
+      const j = q[k], x = j % w, y = Math.floor(j / w);
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+        const xx = x + dx, yy = y + dy;
+        if (xx < 0 || yy < 0 || xx >= w || yy >= h) continue;
+        const n = yy * w + xx;
+        if (E[n] && lab[n] < 0) { lab[n] = id; q.push(n); }
+      }
+    }
+    comps.push(q);
+  }
+  const largos = comps.filter((c) => {
+    let x0 = w, x1 = 0, y0 = h, y1 = 0;
+    for (const j of c) { const x = j % w, y = Math.floor(j / w); if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+    return Math.max(x1 - x0, y1 - y0) >= edgeMinLen;
+  }).sort((a, b) => b.length - a.length).slice(0, edgeBudget);
+  debug?.({ bordesInternos: comps.length, largos: largos.map((c) => c.length) });
+  const out = [], D = 3;
+  for (const c of largos) {
+    let x0 = w, x1 = 0, y0 = h, y1 = 0;
+    for (const j of c) { const x = j % w, y = Math.floor(j / w); if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+    const vertical = y1 - y0 >= x1 - x0;
+    // varias posiciones a lo largo del borde (SAM cambia de máscara según el punto exacto) y los dos lados del borde
+    const orden = c.slice().sort((a, b) => (vertical ? Math.floor(a / w) - Math.floor(b / w) : (a % w) - (b % w)));
+    for (const q of [0.2, 0.5, 0.8]) {
+      const rep = orden[Math.floor(q * (orden.length - 1))], rx = rep % w, ry = Math.floor(rep / w);
+      for (const [dx, dy] of vertical ? [[-D, 0], [D, 0]] : [[0, -D], [0, D]]) {
+        const x = rx + dx, y = ry + dy;
+        if (x < 0 || y < 0 || x >= w || y >= h || !low[y * w + x] || E[y * w + x]) continue;
+        out.push({ x: ((x + 0.5) / w) * width, y: ((y + 0.5) / h) * height });
+      }
+    }
+  }
+  return out.slice(0, edgeBudget * 6);
+}
+
 /**
  * Partición por "la máscara más chica gana" (idea: segmentar todo con SAM). Se reparte una grilla de semillas sobre las paredes y se pide la
  * máscara de cada una; cada píxel de pared se queda con el ÁREA de la máscara más chica que lo contiene. Un objeto (tabla, cuadro, estufa),
@@ -440,7 +495,7 @@ function makeHeap(cap) {
  * Conservador: umbral `frac` bajo y, si se llevaría más de `maxLoss` de una pared, no se toca (no es confiable). Guarda solo un mapa de
  * áreas (no las máscaras): la memoria no depende de la cantidad de semillas.
  */
-export async function partitionBySmallest(regions, segment, width, height, { grid = 5, frac = 0.3, maxLoss = 0.5, minArea = 0.025, minWall = 0.08, onlyWalls = false, debug = null } = {}) {
+export async function partitionBySmallest(regions, segment, width, height, { grid = 5, frac = 0.3, maxLoss = 0.5, minArea = 0.025, minWall = 0.08, G = null, edgeThr = 4, edgeBudget = 4, edgeMinLen = 14, debug = null } = {}) {
   const N = width * height, veto = new Uint8Array(N), extra = [];
   const paredes = regions.filter((r) => r.kind === 'pared' && r.area >= minWall);
   if (!paredes.length) return { extra, veto, seeds: 0 };
@@ -448,10 +503,16 @@ export async function partitionBySmallest(regions, segment, width, height, { gri
   for (const r of paredes) for (let i = 0; i < N; i++) if (r.mask[i]) inWall[i] = 1;
   const small = new Float32Array(N).fill(Infinity);
   let seeds = 0;
+  const pts = [];
   for (let gy = 0; gy < grid; gy++) for (let gx = 0; gx < grid; gx++) {
-    const x = Math.min(width - 1, Math.floor(((gx + 0.5) / grid) * width)), y = Math.min(height - 1, Math.floor(((gy + 0.5) / grid) * height));
-    if (onlyWalls && !inWall[y * width + x]) continue; // por defecto toda la foto: un objeto suele tener semillas buenas FUERA de la pared (la parte gris de la tabla)
+    pts.push({ x: Math.min(width - 1, Math.floor(((gx + 0.5) / grid) * width)), y: Math.min(height - 1, Math.floor(((gy + 0.5) / grid) * height)) });
+  }
+  // Semillas guiadas por bordes: una puerta, un marco o un cuadro del color de la pared son angostos y la grilla no cae encima, pero dejan bordes
+  // LARGOS dentro de la pared. Se buscan esos bordes (lejos del contorno de la pared) y se ponen semillas a ambos lados: SAM devuelve el objeto solo.
+  if (G && edgeBudget > 0) pts.push(...edgeSeeds(paredes, G, width, height, { edgeThr, edgeBudget, edgeMinLen, debug }));
+  for (const [pi, { x, y }] of pts.entries()) {
     const m = await segment([{ x, y }]);
+    if (debug && pi >= grid * grid) { let c = 0; for (let i = 0; i < N; i++) if (m[i]) c++; debug({ semillaBorde: [+(x / width).toFixed(3), +(y / height).toFixed(3)], mascara: +(c / N).toFixed(4) }); }
     seeds++;
     let a = 0;
     for (let i = 0; i < N; i++) if (m[i]) a++;
@@ -701,7 +762,7 @@ export async function detectSurfaces(img, segment, opts = {}) {
   }
   let veto = null;
   if (partition && out.length) { // "la máscara más chica gana": objetos y otros planos pegados a la pared
-    const pr = await partitionBySmallest(out, segment, width, height, { ...opts.partitionOpts, debug: opts.debugPartition });
+    const pr = await partitionBySmallest(out, segment, width, height, { G: fullGrad(), ...opts.partitionOpts, debug: opts.debugPartition });
     out.push(...pr.extra);
     veto = pr.veto;
   }
