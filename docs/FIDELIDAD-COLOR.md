@@ -168,7 +168,7 @@ el piso y el tope con datos.
 
 1. **Pasar `exclude` al estimar el balance de blancos cuando la pared a pintar ya tiene color** (impacto alto, evidencia clara: ΔE00 mediano
    11,4 → 0,1 en sintéticas y 14,6/9,2 → 2,5 en la foto real teñida). `estimateWhiteBalance(img, { exclude })` ya existe (opcional, por defecto
-   idéntico). Falta integrarlo en `Visualizer.jsx` (hoy calcula las ganancias una sola vez al cargar la foto; habría que recalcularlas por capa con la
+   idéntico). (Hecho: ver 6b, con una política de cuándo aplicarlo.) Antes faltaba integrarlo en `Visualizer.jsx` (hoy calcula las ganancias una sola vez al cargar la foto; habría que recalcularlas por capa con la
    máscara, **un poco dilatada** porque el borde de SAM es impreciso). Ojo: en paredes neutras **no** conviene aplicarlo siempre: en s3 empeora
    (3,4 → 6,6) porque lo que queda del cuadro tiene muebles de color. Hipótesis a validar con pares reales: aplicarlo solo si el croma medio
    de la pared es ≥ ~12; con las 24 paredes de acá no empeora ninguna de forma apreciable con esa condición, pero son pocas.
@@ -182,6 +182,54 @@ el piso y el tope con datos.
    (bisección del factor de croma) lo recuperaría en parte; no se implementó para no tocar el lazo caliente de `recolorWall`, que está en
    manos de otro cambio (rendimiento). Impacto bajo: ~3 colores de 60.
 6. **No ofrecer el modo `pure` como "fiel"**: ΔE00 mediano 17. Es útil para ver "cómo se vería con la luz de la pared" pero no para comparar con la carta.
+
+## 6b. Política de exclusión del balance de blancos (implementada)
+
+**Qué hace.** `whiteBalanceFor(img, masks, opts)` (`packages/core/src/whitebalance.js`) decide si al estimar la luz (gray-world) se ignoran las superficies
+a pintar. `estimateWhiteBalance` y `recolorWall` **no cambiaron** (sin máscaras da exactamente lo de antes). Con máscaras mide, sobre la pared (unión de las
+paredes detectadas) y sobre el resto de la foto (sin píxeles quemados/oscuros ni una franja de 4 px alrededor de la pared), el color medio en el plano (a*, b*):
+
+> **excluye la pared si** `distancia(a*b* pared, a*b* resto) ≥ 15` **y** `croma de la pared ≥ 15`.
+
+La distancia sola no alcanza: en s3 y n14 el "resto" del cuadro tiene dominante fuerte (muebles de color) y la pared es gris, así que se parecía a una
+pared de color (distancia 12-25) y la exclusión empeoraba (3,7 → 6,2). El veto por croma de la pared (gris: 3-6) lo evita. Si la pared ocupa toda la foto
+no hay con qué comparar: decide solo el croma y, si excluye, no queda nada para estimar la luz (ganancias 1,1,1 = sin corrección).
+
+**Datos** (`color-eval.mjs --n 12 --detectadas <máscaras de auto.mjs>`; ΔE00 mediano del color medio vs. hex de la carta, modo `relative`; 24 paredes
+del harness + las paredes detectadas por la app en las 49 fotos). Medianas por tipo de pared:
+
+| tipo de pared | sin balance | balance toda la foto (antes) | siempre sin pared | **política** |
+|---|---|---|---|---|
+| de color (verde/azul, sintéticas y r1 teñida) | 0,1 | 12,1 | 0,1 | **0,1** |
+| cálida (sintética + t4/t5/s1) | 0,4 | 6,5 | 5,7 | 5,8 |
+| bien expuesta | 0,2 | 2,5 | 2,1 | 2,5 |
+| degradé fuerte | 2,4 | 3,8 | 5,0 | 3,8 |
+| detectadas por la app | 0,5 | 4,5 | 4,8 | 4,5 |
+| **todas** | 0,6 | 4,9 | 4,4 | **4,1** |
+
+La política es mejor que "siempre" y que "nunca" excluir en el total, y no empeora ninguna pared que decide no excluir (es idéntica al comportamiento anterior ahí).
+
+**Margen.** Paredes que excluye (distancia / croma): sintéticas 17,2-21,5 / 19,7-21,5, r1 teñida de azul 24,4 / 21,9 y de verde 29,2 / 32,5, n29 naranja 40,3 / 60,5,
+n30 21,9 / 42,5. Paredes que NO excluye aunque tengan distancia alta: s3 12,5-21,9 (croma 3,3-3,5), n14 24,7 (5,5), n10 20,3 (9,9), n32 13,5 (croma 20,9: la distancia
+queda 1,5 por debajo de 15; con umbral 12 se excluía y empeoraba 6,9 → 8,0). Margen de croma: 9,9 (n10) vs 19,7 (sintética cálida), dato más ajustado de todos;
+margen de distancia: 13,5 (n32) vs 17,2 (sintética azul). Son márgenes de 1,5 a 5 unidades: **con pocas paredes**, no es una frontera robusta.
+
+**Casos donde excluir empeora** (la política los deja como estaban salvo los dos primeros): n29 (naranja) 11,8 → 12,4 y n30 mejora 9,6 → 9,0. En n29 la exclusión no
+cambia nada visible: sus píxeles saturados ya los descartaba el criterio `max-min > 120` del balance (ganancias 0,74/0,77/1,35 contra 0,74/0,78/1,35; el cielo
+azul de la foto es lo que domina la ganancia). Sin la política, excluir siempre empeora: s3 3,7 → 6,2 (6,4 en la detectada), n14 5,4 → 7,1, n01 1,4 → 2,6, n16 2,9 → 4,1,
+n17 1,5 → 2,2, o02 4,1 → 5,0, s2 derecha 4,4 → 5,8.
+
+**En la app** (`Visualizer.jsx`): el balance sigue calculándose al cargar la foto (sirve mientras se detecta); al terminar la detección se recalcula con
+`whiteBalanceFor(foto, máscaras de las paredes detectadas)` y se repinta. El checkbox "Corregir balance de blancos" queda igual. Prueba en Chromium móvil emulado (390x844,
+`eval/visualizador/tintar-foto.mjs` genera la foto r1 con la pared teñida de verde): sin política las ganancias eran 1,16/0,75/1,25 y el Verde Ilusión (702) salía
+verde fluo; con política 1,01/0,96/1,04 y sale el color de la carta. En n21 (pared blanca, distancia 6,3, croma 6,6) no excluye y el resultado es idéntico.
+Paredes marcadas a mano no pasan por la política (siguen con el balance de toda la foto).
+
+**Límites.** (1) Todo se mide contra el **hex de la carta**, no contra pintura real; sin pares "foto antes / foto con la pared pintada con código Tersuave conocido" no se
+sabe si el balance sobre toda la foto (que parcialmente intenta reproducir la luz del ambiente) o sin él se parece más a lo que ve el cliente. **El dueño debe traer fotos
+de paredes ya pintadas con un código conocido** para validar y ajustar los umbrales. (2) Las paredes "de color" del set son 4 sintéticas, 2 teñidas por el harness y 3 reales
+(n29, n30, n32); no hay paredes pintadas reales con código conocido. (3) Una pared real cálida bajo luz cálida (t4, t5) no se distingue por estos datos de una pared amarilla;
+la política no las excluye porque la distancia con el resto es ~0. (4) El borde de la máscara de SAM es impreciso: se dilata 4 px para excluir.
 
 ## 7. Cómo reproducir
 
