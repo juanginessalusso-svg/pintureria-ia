@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import jpeg from 'jpeg-js';
 import { PNG } from 'pngjs';
 import * as ort from 'onnxruntime-web/wasm';
-import { cleanMask, detectSurfaces, estimateWhiteBalance, featherMask, recolorWall } from '@pintureria/core';
+import { cleanMask, detectSurfaces, encodeMask, estimateWhiteBalance, featherMask, recolorWall } from '@pintureria/core';
 import { Sam, encoderSize, rgbaToRgbFloat, workingSize } from '../../apps/web/src/sam.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -53,6 +53,10 @@ if (cacheDir) fs.mkdirSync(cacheDir, { recursive: true });
 const traceFile = process.env.TRACE;
 if (traceFile) fs.writeFileSync(traceFile, '');
 
+// Opcional: DUMP_MASKS=dir escribe <foto>.json con las máscaras finales [{nombre, tipo, rle}] (mismo formato que verdad/*.json; lo usa medir-rect.mjs).
+const dumpDir = process.env.DUMP_MASKS;
+if (dumpDir) fs.mkdirSync(dumpDir, { recursive: true });
+
 const fotos = fs.readdirSync(path.join(here, 'fotos')).filter((f) => /\.(jpe?g|png)$/i.test(f) && (!filtro || f.includes(filtro)));
 for (const foto of fotos) {
   const bytes = fs.readFileSync(path.join(here, 'fotos', foto));
@@ -86,6 +90,7 @@ for (const foto of fotos) {
   console.log(`\n${foto}: ${lista.length} superficies · ${decodes} decodificaciones · ${Math.round(performance.now() - t0)} ms`);
   const totMs = performance.now() - t0;
   console.log(`  tiempo: SAM ${Math.round(samMs)} ms (${clicks} clics) · cleanMask ${Math.round(cleanMs)} ms · resto JS ${Math.round(totMs - samMs - cleanMs)} ms`);
+  if (dumpDir) fs.writeFileSync(path.join(dumpDir, `${foto.replace(/\.\w+$/, '')}.json`), JSON.stringify({ foto, width, height, superficies: lista.map((s) => ({ nombre: s.name, tipo: s.kind, rle: encodeMask(s.mask) })) }));
   const over = new Uint8ClampedArray(img.data);
   if (globalThis.__gaps) { for (const g of globalThis.__gaps) for (let i = 0; i < g.length; i++) if (g[i]) { over[i * 4] = 255; over[i * 4 + 1] = 0; over[i * 4 + 2] = 0; } globalThis.__gaps = null; }
   let pi = 0;
