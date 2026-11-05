@@ -570,6 +570,17 @@ test('techo con textura (persiana, paisaje) no se acepta', async () => {
   assert.ok(!l.some((s) => s.kind === 'techo'), nombres(l).join());
 });
 
+test('techo oscuro (madera, hueco): no se acepta; con techoMinLuma:0 se comporta como antes', async () => {
+  const l = await detectSurfaces(roomWith(() => [45, 35, 30]), async (pts) => fakeSegment(pts));
+  assert.ok(!l.some((s) => s.kind === 'techo'), nombres(l).join());
+  assert.ok(l.rechazadas.some((r) => r.why === 'techo oscuro'));
+  assert.ok(l.some((s) => s.kind === 'pared'), 'la pared sigue');
+  const sin = await detectSurfaces(roomWith(() => [45, 35, 30]), async (pts) => fakeSegment(pts), { techoMinLuma: 0 });
+  assert.ok(sin.some((s) => s.kind === 'techo'));
+  const claro = await detectSurfaces(roomWith(() => [150, 140, 130]), async (pts) => fakeSegment(pts));
+  assert.ok(claro.some((s) => s.kind === 'techo'), 'un techo de luma ~140 se mantiene');
+});
+
 test('techo claro sin pared debajo (cielo, luz) se descarta; con pared debajo se mantiene', async () => {
   const sinPared = { data: new Uint8ClampedArray(W * H * 4), width: W, height: H };
   for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { if (y < H * 0.2) px(sinPared.data, x, y, 235, 235, 235); else px(sinPared.data, x, y, 30 + ((x * 37 + y * 11) % 90), 40 + ((x * 13 + y * 29) % 80), 20 + ((x * 7 + y * 3) % 100)); }
