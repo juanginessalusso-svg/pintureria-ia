@@ -73,7 +73,7 @@ for (const c of cfg) {
       return { mean: [r / n, g / n, b / n], p10: pctile(Ls, 0.1), p50: pctile(Ls, 0.5), p90: pctile(Ls, 0.9) };
     };
     const st = stat(theirs), ph = stat(img.data), sw = s.swatch.split(',').map(Number);
-    const fila = { foto: c.foto.replace(/\.jpg$/, ''), sup: s.nombre, swL: rgbToLab(sw).L, orig: ph, sint: st, v: {} };
+    const fila = { swLab: rgbToLab(sw), foto: c.foto.replace(/\.jpg$/, ''), sup: s.nombre, swL: rgbToLab(sw).L, orig: ph, sint: st, v: {} };
     const mask = featherMask(Float32Array.from(f.mask), width, height, Math.max(1, Math.round(width / 500)));
     const wbCache = {};
     for (const [nombre, o] of Object.entries(VARIANTES)) {
@@ -83,7 +83,7 @@ for (const c of cfg) {
       const out = recolorWall(img, mask, hex(s.swatch), { ...ro, gains: wbCache[key] }).image;
       const mo = stat(out.data);
       let pix = 0; for (const i of idx) pix += Math.abs(labOf(out.data, i).L - labOf(theirs, i).L);
-      fila.v[nombre] = { dE: deltaE00(rgbToLab(mo.mean), rgbToLab(st.mean)), L: rgbToLab(mo.mean).L, dL10: mo.p10 - st.p10, dL50: mo.p50 - st.p50, dL90: mo.p90 - st.p90, pixL: pix / idx.length };
+      fila.v[nombre] = { lab: rgbToLab(mo.mean), dE: deltaE00(rgbToLab(mo.mean), rgbToLab(st.mean)), L: rgbToLab(mo.mean).L, dL10: mo.p10 - st.p10, dL50: mo.p50 - st.p50, dL90: mo.p90 - st.p90, pixL: pix / idx.length };
     }
     filas.push(fila);
   }
@@ -97,5 +97,15 @@ for (const r of filas) {
     ...noms.map((n) => `${r.v[n].dE.toFixed(1)}/${r.v[n].L.toFixed(0)}/${r.v[n].pixL.toFixed(1)}`.padStart(14))].join(' '));
   for (const n of noms) { sum[n].dE += r.v[n].dE; sum[n].aL50 += Math.abs(r.v[n].dL50); sum[n].pix += r.v[n].pixL; }
 }
+if (process.env.LAB) { const n0 = process.env.LAB; for (const r of filas) { const f = (l) => `${l.L.toFixed(0)},${l.a.toFixed(0)},${l.b.toFixed(0)}`; console.log(`LAB ${(r.foto + ' ' + r.sup).padEnd(28)} swatch ${f(r.swLab)} | Sinteplast ${f(rgbToLab(r.sint.mean))} | ${n0} ${f(r.v[n0].lab)} | foto ${f(rgbToLab(r.orig.mean))} p10/50/90 ${r.orig.p10.toFixed(0)}/${r.orig.p50.toFixed(0)}/${r.orig.p90.toFixed(0)} sint ${r.sint.p10.toFixed(0)}/${r.sint.p50.toFixed(0)}/${r.sint.p90.toFixed(0)} nuestro ${(r.sint.p10 + r.v[n0].dL10).toFixed(0)}/${(r.sint.p50 + r.v[n0].dL50).toFixed(0)}/${(r.sint.p90 + r.v[n0].dL90).toFixed(0)}`); } }
 console.log('(celda = ΔE00 media / L media nuestra / |ΔL| medio por píxel)');
-for (const n of noms) console.log(`${n.padEnd(20)} ΔE00 medio ${(sum[n].dE / filas.length).toFixed(2)}  |ΔL p50| ${(sum[n].aL50 / filas.length).toFixed(2)}  |ΔL| píxel ${(sum[n].pix / filas.length).toFixed(2)}`);
+// resumen: ajuste (entrenamiento) vs reservadas (HELD, por defecto 03-living-ventanal-tv y 02-living-puerta); y leave-one-out por foto
+const HELD = (process.env.HELD ?? '03-living-ventanal-tv,02-living-puerta').split(',');
+const grupos = { entren: filas.filter((r) => !HELD.includes(r.foto)), reserv: filas.filter((r) => HELD.includes(r.foto)) };
+const med = (a) => { const s = [...a].sort((x, y) => x - y); return s.length ? s[Math.floor(s.length / 2)] : NaN; };
+const avg = (a) => (a.length ? a.reduce((x, y) => x + y, 0) / a.length : NaN);
+for (const n of noms) {
+  const f = (rs) => `ΔE00 medio ${avg(rs.map((r) => r.v[n].dE)).toFixed(2)} (mediana ${med(rs.map((r) => r.v[n].dE)).toFixed(1)}) · |ΔL p10| ${avg(rs.map((r) => Math.abs(r.v[n].dL10))).toFixed(1)} |ΔL p50| ${avg(rs.map((r) => Math.abs(r.v[n].dL50))).toFixed(1)} |ΔL p90| ${avg(rs.map((r) => Math.abs(r.v[n].dL90))).toFixed(1)} · ΔL medio firmado ${avg(rs.map((r) => r.v[n].L - rgbToLab(r.sint.mean).L)).toFixed(1)}`;
+  console.log(`${n.padEnd(22)} ENTREN(n=${grupos.entren.length}) ${f(grupos.entren)}
+${''.padEnd(22)} RESERV(n=${grupos.reserv.length}) ${f(grupos.reserv)}`);
+}

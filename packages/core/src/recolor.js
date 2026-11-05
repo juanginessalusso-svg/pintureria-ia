@@ -218,7 +218,9 @@ function wallStats(img, mask, gains) {
 }
 
 /** Percentil de L de la pared usado como referencia de luz en el modo 'luz' (ver recolorWall). */
-export const LUZ_REF_PCT = 0.9;
+export const LUZ_REF_PCT = 0.8;
+/** Fuerza del balance de blancos recomendada junto al modo 'luz' (estimateWhiteBalance(img, { strength })). Ver docs/FIDELIDAD-COLOR.md. */
+export const LUZ_WB_STRENGTH = 0.5;
 
 /**
  * Pinta la pared con `targetHex`.
@@ -242,13 +244,17 @@ export function recolorWall(img, mask, targetHex, { mode = 'relative', gains = [
   //  - tope `maxL`: lo más claro de la pared no pasa de L≈98 (un blanco sobre un techo en sombra no debe quemarse).
   // En paredes bien expuestas ninguna de las dos actúa y el resultado es el de siempre.
   let ratio = 1;
+  let yRef = 1, yCap = 1;
   if (mode === 'luz') {
-    // Modo 'luz': la referencia de luz es un percentil ALTO de L de la pared (la parte bien iluminada), no la media. Física: la
-    // pintura nueva en una zona de la pared recibe la misma luz que la vieja, así que L_nuevo = L_color x (L_píxel / L_zona_iluminada).
-    // Con la media, una pared mayormente en sombra se "levanta" al L de la carta; con el percentil, la sombra se queda en sombra.
-    // Sin piso `minWallL` (el piso ES lo que levantaba la sombra); queda el tope `maxL`.
-    ratio = target.L / Math.max(pct(refPct), 1);
-    ratio = Math.min(ratio, maxL / Math.max(p98L, 1));
+    // Modo 'luz': sombreado MULTIPLICATIVO EN LUZ LINEAL. La pintura nueva en cada punto recibe la misma luz que la vieja:
+    // XYZ_nuevo = XYZ_carta x (Y_píxel / Y_ref), con Y_ref = la parte bien iluminada de la pared (percentil `refPct`, no la media).
+    //  - Con la media, una pared mayormente en sombra se "levanta" a la luminosidad de la carta; con el percentil la sombra queda en sombra.
+    //  - Escalar XYZ (y no L*) baja también el croma de a*/b* en la sombra, como pasa con una pintura real a la sombra.
+    //  - Sin piso `minWallL` (el piso era lo que levantaba la sombra). Tope `maxL`: lo más claro (p98) de la pared no pasa de L = maxL.
+    yRef = inv((pct(refPct) + 16) / 116);
+    yRef = Math.max(yRef, 1e-4);
+    // lo más claro de la pared (p98) no pasa de L = maxL: si hace falta se achica todo el cociente (no se recorta, así no se pierde la textura)
+    yCap = Math.min(1, inv((maxL + 16) / 116) / Math.max(inv((target.L + 16) / 116) * inv((p98L + 16) / 116) / yRef, 1e-6));
   } else if (mode === 'relative') {
     ratio = target.L / Math.max(meanL, minWallL, 1);
     ratio = Math.min(ratio, maxL / Math.max(p98L, 1));
@@ -265,8 +271,14 @@ export function recolorWall(img, mask, targetHex, { mode = 'relative', gains = [
     linToLab(Math.min(1, SRGB_TO_LIN[data[p]] * gr), Math.min(1, SRGB_TO_LIN[data[p + 1]] * gg),
       Math.min(1, SRGB_TO_LIN[data[p + 2]] * gb), lab);
     // 2) nuevo L y nuevos a/b
-    const L = Math.min(100, Math.max(0, lab[0] * ratio));
-    let a = target.a, b = target.b;
+    let L, a = target.a, b = target.b;
+    if (mode === 'luz') {
+      const k = (inv((lab[0] + 16) / 116) / yRef) * yCap; // cociente de luz lineal de este píxel
+      const fy = (target.L + 16) / 116, fx = fy + target.a / 500, fz = fy - target.b / 200;
+      const X = inv(fx) * k, Y = inv(fy) * k, Z = inv(fz) * k;
+      const gx = fwd(X), gy = fwd(Y), gz = fwd(Z);
+      L = Math.min(100, Math.max(0, 116 * gy - 16)); a = 500 * (gx - gy); b = 200 * (gy - gz);
+    } else L = Math.min(100, Math.max(0, lab[0] * ratio));
     // 3) volver a RGB; si el color queda fuera de gamut se reduce el croma de a poco (mantiene el tono)
     for (let k = 0; k < 6; k++) {
       labToLin(L, a, b, lin);

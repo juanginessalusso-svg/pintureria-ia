@@ -48,3 +48,11 @@ test("modo 'luz': refPct más alto -> resultado más oscuro (monótono) y los mo
   const r1 = recolorWall(img, full(), '#c0a090'), r2 = recolorWall(img, full(), '#c0a090', { mode: 'relative', refPct: 0.5 });
   assert.deepEqual(r1.image.data, r2.image.data); // refPct es inocuo fuera del modo 'luz'
 });
+
+test("modo 'luz': el croma baja en la sombra (se escala la luz lineal, no solo L*)", () => {
+  const luz = recolorWall(mixta(), full(), '#c0a090', { mode: 'luz' }).image;
+  const rel = recolorWall(mixta(), full(), '#c0a090', { mode: 'relative' }).image;
+  const C = (l) => Math.hypot(l.a, l.b);
+  assert.ok(C(labAt(luz, 5, 5)) < C(labAt(luz, 38, 5)) - 2);
+  assert.ok(C(labAt(luz, 5, 5)) < C(labAt(rel, 5, 5)));
+});
