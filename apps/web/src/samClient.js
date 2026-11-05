@@ -6,6 +6,7 @@ export class SamClient {
     this.nextId = 1;
     this.worker.onmessage = ({ data }) => {
       if (data.type === 'progress') return onProgress?.(data);
+      if (data.type === 'detect-progress') return this.onDetectProgress?.(data.n);
       const p = this.pending.get(data.id);
       if (!p) return;
       this.pending.delete(data.id);
@@ -36,5 +37,9 @@ export class SamClient {
   }
   embed(rgba, width, height) { return this.call('embed', { rgba, width, height }, [rgba]); }
   segment(points, fresh) { return this.call('segment', { points, fresh }); }
+  /** Detección automática de superficies: corre en el Worker (la interfaz no se congela). El progreso llega por `onDetectProgress(n)`. */
+  detect() { return this.call('detect'); }
+  /** Corta la detección en curso (si la hay) antes de su próxima decodificación. */
+  cancelDetect() { this.worker.postMessage({ type: 'cancel' }); }
   terminate() { this.worker.terminate(); }
 }

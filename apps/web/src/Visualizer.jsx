@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { estimateWhiteBalance, whiteBalanceFor, featherMask, recolorWall, cleanMask, pxPerMeter, wallPixels, paintStroke, maskCount, detectSurfaces, encodeMask, cutObjectFromSurface } from '@pintureria/core';
+import { estimateWhiteBalance, whiteBalanceFor, featherMask, recolorWall, cleanMask, pxPerMeter, wallPixels, paintStroke, maskCount, encodeMask, cutObjectFromSurface } from '@pintureria/core';
 import { SamClient } from './samClient.js';
 import { workingSize } from './sam.js';
 import { Calculator } from './Calculator.jsx';
@@ -232,6 +232,7 @@ export function Visualizer() {
       setAspect(width / height);
       gains.current = estimateWhiteBalance(photo.current);
       const mySeq = ++photoSeq.current;
+      sam.current?.cancelDetect(); // si la foto anterior todavía se estaba analizando, se corta
       current.current = null; surfaces.current = []; surfSeq.current = 0; result.current = null; pointsRef.current = []; autoCache.current = []; activeRef.current = null; flash.current = null; setManual(false); setCutMode(false);
       samMask.current = null; strokes.current = []; surfUndo.current = []; stroke.current = null; gesture.current = null; pointers.current.clear();
       view.current = { s: 1, tx: 0, ty: 0 }; applyView();
@@ -252,17 +253,10 @@ export function Visualizer() {
       if (mySeq !== photoSeq.current) return;
       setStatus('Buscando paredes y techo…');
       const t1 = performance.now();
-      let nSeg = 0;
       setProg({ stage: 'detect', n: 0, t0: Date.now(), tAll });
-      const found = await detectSurfaces(photo.current, async (pts) => {
-        // Se cede el hilo antes de cada decodificación: la barra se repinta y la página no parece colgada. Y si cambió la foto, se corta.
-        if (mySeq !== photoSeq.current) throw new Error('foto reemplazada');
-        setProg((q) => (q && q.stage === 'detect' ? { ...q, n: nSeg } : q));
-        await yieldToUi();
-        const r = await sam.current.segment(pts.map((q) => ({ x: q.x, y: q.y, label: 1 })), true);
-        nSeg++;
-        return cleanMask(r.mask, width, height);
-      });
+      // La detección corre en el Worker de SAM: la pantalla sigue respondiendo (antes se congelaba ~1 min). Solo llega el progreso y el resultado.
+      sam.current.onDetectProgress = (n) => { if (mySeq === photoSeq.current) setProg((q) => (q && q.stage === 'detect' ? { ...q, n } : q)); };
+      const { found } = await sam.current.detect();
       if (mySeq !== photoSeq.current) return; // mientras tanto eligió otra foto
       setProg(null);
       setTiming((t) => ({ ...t, detectMs: Math.round(performance.now() - t1) }));
@@ -274,7 +268,7 @@ export function Visualizer() {
       setStatus(`No se pudo procesar la foto: ${err.message}`);
     }
   };
-  const mySeqOf = (err) => err?.message === 'foto reemplazada';
+  const mySeqOf = (err) => err?.message === 'foto reemplazada' || err?.message === 'cancelado'; // 'cancelado' = el Worker cortó la detección de una foto anterior
 
   // Carga en la lista las superficies detectadas solas; la pared más grande queda seleccionada: elegir un color ya la pinta.
   // `keep`: colores a conservar por índice de la detección (al "Volver a lo detectado" no se pierde lo ya pintado).
