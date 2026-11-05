@@ -308,7 +308,7 @@ function boundaryShape(pts, w, h) {
  * costo de gradiente (cuenca de aguas): una arista, por tenue que sea, hace de divisoria. Devuelve una lista de máscaras
  * (la original si no hay nada que dividir).
  */
-export function splitMerged(mask, grad, w, h, width, height, { strictMax = 2.2, minFrac = 0.04, edgeCost = 1.5, minEdge = 4.5, debug = null, fullGrad = null } = {}) {
+export function splitMerged(mask, grad, w, h, width, height, { strictMax = 2.2, minFrac = 0.04, edgeCost = 1.5, minEdge = 4.5, debug = null, fullGrad = null, cornerOnly = false, cornerMaxAng = 20, cornerMinLen = 0.12 } = {}) {
   const low = toLow(mask, width, height, w, h);
   let total = 0;
   for (let i = 0; i < low.length; i++) total += low[i];
@@ -367,8 +367,12 @@ export function splitMerged(mask, grad, w, h, width, height, { strictMax = 2.2, 
   const find = (k) => (root[k] === k ? k : (root[k] = find(root[k])));
   for (const [key, e] of pairs) {
     const a = Math.floor(key / 1000), b = key % 1000, str = e.sum / e.n;
-    if (debug) debug({ a, b, strength: str, len: e.n, ...boundaryShape(e.pts, w, h) });
+    const shape = debug || cornerOnly ? boundaryShape(e.pts, w, h) : null;
+    if (debug) debug({ a, b, strength: str, len: e.n, ...shape });
     if (e.n >= 3 && str < minEdge) root[find(a)] = find(b);
+    // `cornerOnly`: una arista CORTA (menos de `cornerMinLen` del alto de la foto) y que no es casi vertical es el borde de una repisa, un cuadro o un
+    // objeto apoyado, no la unión de dos paredes: se fusiona aunque sea fuerte. Las aristas largas (techo/pared) y las verticales (esquinas) se conservan.
+    else if (cornerOnly && e.n >= 3 && shape.ang > cornerMaxAng && shape.lenY < cornerMinLen) root[find(a)] = find(b);
   }
   for (let i = 0; i < own.length; i++) if (own[i] >= 0) own[i] = find(own[i]);
   const finalIds = [...new Set(keep.map((_, k) => find(k)))];
@@ -610,6 +614,48 @@ export function lineRatio(mask, G, width, height, thr, inset = 5, { loneLine = f
   };
   const lines = [...cluster(rows, rowW), ...cluster(cols, colW)];
   return lines.length === 1 ? Math.max(0, t - lines[0]) / n : t / n;
+}
+
+/**
+ * Rescate de pared en una máscara "con textura": un SAM que une la fachada con sus ventanas (o un revoque rugoso) da una máscara rechazada por textura aunque
+ * el grueso sea pared. Se queda solo con los píxeles del color y la luz típicos de la máscara (mediana tomada entre sus píxeles más lisos), se abre para
+ * sacar ruido, y cada pedazo grande que sigue conectado es una candidata a pared. Ventanas, puertas, hiedra y sombras quedan afuera por color.
+ * Pensado para correr SOLO cuando no se detectó ninguna pared (no cambia nada en las fotos que ya funcionan).
+ */
+export function rescueTextured(mask, img, G, { smoothThr = 4, tolLuma = 16, tolChroma = 0.025, openR = Math.max(2, Math.round(img.width * 0.006)), minPix = Math.round(img.width * img.height * 0.025) } = {}) {
+  const { data, width, height } = img, N = width * height;
+  const lum = (i) => 0.2126 * data[i * 4] + 0.7152 * data[i * 4 + 1] + 0.0722 * data[i * 4 + 2];
+  const chr = (i) => { const t = data[i * 4] + data[i * 4 + 1] + data[i * 4 + 2] + 1e-3; return [data[i * 4] / t, data[i * 4 + 1] / t]; };
+  const L = [], R = [], Gc = [];
+  for (let i = 0; i < N; i += 7) if (mask[i] && G[i] < smoothThr) { L.push(lum(i)); const [r, g] = chr(i); R.push(r); Gc.push(g); }
+  if (L.length < 200) return [];
+  const med = (a) => { a.sort((x, y) => x - y); return a[a.length >> 1]; };
+  const ml = med(L), mr = med(R), mg = med(Gc);
+  const cand = new Uint8Array(N);
+  for (let i = 0; i < N; i++) {
+    if (!mask[i] || Math.abs(lum(i) - ml) > tolLuma) continue;
+    const [r, g] = chr(i);
+    if (Math.abs(r - mr) + Math.abs(g - mg) <= tolChroma) cand[i] = 1;
+  }
+  const opened = removeSmallIslands(openMask(cand, width, height, openR), width, height, minPix);
+  const out = [], seen = new Uint8Array(N), q = new Int32Array(N);
+  for (let st = 0; st < N; st++) {
+    if (!opened[st] || seen[st]) continue;
+    let head = 0, tail = 0;
+    q[tail++] = st; seen[st] = 1;
+    while (head < tail) {
+      const i = q[head++], x = i % width;
+      if (x > 0 && opened[i - 1] && !seen[i - 1]) { seen[i - 1] = 1; q[tail++] = i - 1; }
+      if (x < width - 1 && opened[i + 1] && !seen[i + 1]) { seen[i + 1] = 1; q[tail++] = i + 1; }
+      if (i >= width && opened[i - width] && !seen[i - width]) { seen[i - width] = 1; q[tail++] = i - width; }
+      if (i < N - width && opened[i + width] && !seen[i + width]) { seen[i + width] = 1; q[tail++] = i + width; }
+    }
+    if (tail < minPix) continue;
+    const m = new Uint8Array(N);
+    for (let k = 0; k < tail; k++) m[q[k]] = 1;
+    out.push(m);
+  }
+  return out;
 }
 
 /**
@@ -1274,7 +1320,7 @@ export function addShadowStrips(regions, img, G, blocked, { maxDist = Math.round
  * Devuelve [{ kind: 'pared'|'techo', name, mask, area, cx, cy, texture }], máscaras DISJUNTAS, paredes de izquierda a derecha.
  */
 export async function detectSurfaces(img, segment, opts = {}) {
-  const { maxSeeds = 9, gradMax = 7, minDist = 2.5, minArea = 0.025, maxPared = 5, maxTexture = 0.12, refineMin = 2, minLumaRatio = 0.55, grow = true, snap = true, partition = true, hang = true, lockObjects = true, thinGaps = true, enclosed = true, tableVeto = true, minWallLuma = 30, frames = true, strips = true, blockRejected = true, splitMax = 2.2, splitEdge = 4.5, maxLine = 0.004, minCoverage = 0.35, relaxFactor = 1.8, corner = true, patience = 3, sky = true, hotMax = 0.3, techoMaxTexture = 0.15, skyBlue = 0.12, techoNeedsWall = true, minTechoContact = 0.3, skyLuma = 210, loneLine = true } = opts;
+  const { maxSeeds = 9, gradMax = 7, minDist = 2.5, minArea = 0.025, maxPared = 5, maxTexture = 0.12, refineMin = 2, minLumaRatio = 0.55, grow = true, snap = true, partition = true, hang = true, lockObjects = true, thinGaps = true, enclosed = true, tableVeto = true, minWallLuma = 30, frames = true, strips = true, blockRejected = true, splitMax = 2.2, splitEdge = 4.5, maxLine = 0.004, minCoverage = 0.35, relaxFactor = 1.8, corner = true, patience = 3, sky = true, hotMax = 0.3, techoMaxTexture = 0.15, skyBlue = 0.12, techoNeedsWall = true, minTechoContact = 0.3, skyLuma = 210, loneLine = true, rescue = true, splitCornerOnly = true } = opts;
   const { width, height } = img;
   const { luma, w, h } = downscaleLuma(img);
   const grad = gradientMap(luma, w, h);
@@ -1323,7 +1369,7 @@ export async function detectSurfaces(img, segment, opts = {}) {
     for (let i = 0; i < free.length; i++) if (low[i]) free[i] = 0;
     for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (Math.hypot(x - sx, y - sy) <= bd) free[y * w + x] = 0;
     // Solo se divide lo que ya parece pared: un techo con una franja de sombra no es dos superficies.
-    const partes = classifySurface(maskGeometry(mask, width, height)) === 'techo' ? [mask] : splitMerged(mask, grad, w, h, width, height, { strictMax: splitMax, minEdge: splitEdge, debug: opts.debugSplit, fullGrad });
+    const partes = classifySurface(maskGeometry(mask, width, height)) === 'techo' ? [mask] : splitMerged(mask, grad, w, h, width, height, { strictMax: splitMax, minEdge: splitEdge, debug: opts.debugSplit, fullGrad, cornerOnly: splitCornerOnly, ...opts.splitOpts });
     let aporto = false;
     for (const parte of partes) {
       const g = maskGeometry(parte, width, height);
@@ -1388,6 +1434,25 @@ export async function detectSurfaces(img, segment, opts = {}) {
     if (!kind) { rechazadas.push({ ...g, mask: clean, texture: f.texture, luma: f.luma, lines: f.lines, why }); continue; }
     for (let i = 0; i < clean.length; i++) if (clean[i]) taken[i] = 1;
     out.push({ kind, mask: clean, ...g, texture: f.texture, luma: f.luma, lines: f.lines });
+  }
+
+  if (rescue && !out.some((s) => s.kind === 'pared')) { // ninguna pared aceptada: se prueba rescatar el color dominante de las máscaras rechazadas por textura
+    const ro = typeof rescue === 'object' ? rescue : {};
+    for (const r of [...rechazadas]) {
+      if (r.why !== 'textura' || r.area < (ro.minAreaMask ?? 0.1) || r.texture > (ro.maxTex ?? 0.6) || !r.mask) continue;
+      for (const m of rescueTextured(r.mask, img, fullGrad(), ro)) {
+        const g = maskGeometry(m, width, height);
+        if (classifySurface(g) !== 'pared') continue;
+        const lp = toLow(m, width, height, w, h);
+        let ls = 0, ln = 0;
+        for (let i = 0; i < lp.length; i++) if (lp[i]) { ls += luma[i]; ln++; }
+        const tex = textureRatio(lp, grad, w, h, gradMax * 1.5), lu = ln ? ls / ln : 0;
+        if (process.env.DEBUG_RESCUE) console.log('    [rescate]', g.area.toFixed(3), 'textura', tex.toFixed(3), 'luma', lu.toFixed(0));
+        if (lu < (ro.minLuma ?? 80) || tex > (ro.maxCompTex ?? 0.05)) continue; // oscuro (madera, hueco) o con textura propia (reflejos de vidrio): no se arriesga
+        out.push({ kind: 'pared', mask: m, ...g, texture: tex, luma: lu, rescatada: true });
+      }
+    }
+    out.sort((a, b) => b.area - a.area);
   }
 
   // Un hueco de puerta o pasillo oscuro se ve mucho más oscuro que las paredes de la habitación: no es una pared a pintar.

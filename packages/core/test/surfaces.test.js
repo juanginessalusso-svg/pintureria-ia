@@ -101,6 +101,35 @@ test('splitMerged: un degradé suave (sombra) NO divide la pared', () => {
   assert.equal(splitMerged(mask, grad, w, h, w, h, { minEdge: 4.5 }).length, 1);
 });
 
+test('splitMerged cornerOnly: una arista corta y no vertical (repisa) se fusiona; las largas o verticales se conservan', () => {
+  const { w, h, grad, mask } = twoPlanes(9);
+  assert.equal(splitMerged(mask, grad, w, h, w, h, { minEdge: 4.5, cornerOnly: true }).length, 2); // arista vertical de todo el alto
+  // arista horizontal larga (unión techo/pared): se conserva
+  const g2 = new Float32Array(w * h), m2 = new Uint8Array(w * h).fill(1);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) g2[y * w + x] = Math.abs(y - 30) <= 1 ? 9 : 0.5;
+  assert.equal(splitMerged(m2, g2, w, h, w, h, { minEdge: 4.5, cornerOnly: true }).length, 2);
+  // la misma arista horizontal pero CORTA (el canto de una repisa en una pared lisa): se fusiona
+  const g3 = new Float32Array(w * h).fill(0.5);
+  for (let y = 29; y <= 31; y++) for (let x = 20; x < 28; x++) g3[y * w + x] = 9;
+  const nucleos = (gr, o) => splitMerged(m2, gr, w, h, w, h, { minEdge: 4.5, strictMax: 2.2, ...o }).length;
+  assert.equal(nucleos(g3, { cornerOnly: true }), 1);
+});
+
+import { rescueTextured } from '../src/index.js';
+
+test('rescueTextured: de una máscara con ventanas rescata solo la pared del color dominante', () => {
+  const W = 120, H = 100, data = new Uint8ClampedArray(W * H * 4), mask = new Uint8Array(W * H).fill(1), G = new Float32Array(W * H);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const i = (y * W + x) * 4, ventana = x >= 50 && x < 70 && y >= 30 && y < 60;
+    [data[i], data[i + 1], data[i + 2], data[i + 3]] = ventana ? [40, 60, 90, 255] : [220, 120, 100, 255];
+    G[y * W + x] = ventana ? 30 : 1;
+  }
+  const out = rescueTextured(mask, { data, width: W, height: H }, G, { minPix: 500 });
+  assert.equal(out.length, 1);
+  assert.equal(out[0][(45 * W) + 60], 0, 'la ventana queda afuera');
+  assert.equal(out[0][(10 * W) + 10], 1, 'la pared queda adentro');
+});
+
 test('splitMerged: una sola zona lisa devuelve la máscara tal cual', () => {
   const w = 40, h = 40, mask = new Uint8Array(w * h).fill(1);
   const r = splitMerged(mask, new Float32Array(w * h).fill(0.3), w, h, w, h);
