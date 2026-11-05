@@ -7,3 +7,4 @@ export * from './brush.js';
 export * from './surfaces.js';
 export * from './metrics.js';
 export * from './cutobject.js';
+export * from './deltae.js';
