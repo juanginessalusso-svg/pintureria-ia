@@ -549,7 +549,11 @@ export function fillThinGaps(regions, img, { blocked = null, maxDist = Math.roun
     const opened = openMask(cand, width, height, thinR);
     let add = new Uint8Array(N), na = 0;
     for (let i = 0; i < N; i++) if (cand[i] && !opened[i]) { add[i] = 1; na++; }
+    const etapaFinos = na;
     add = removeSmallIslands(add, width, height, Math.round(N * 0.0004));
+    let etapaIslas = 0;
+    for (let i = 0; i < N; i++) if (add[i]) etapaIslas++;
+    const addAntes = debug ? add.slice() : null; // (solo para diagnóstico)
     // Por cada hueco: qué parte de su contorno toca algo oscuro (3 px afuera). Rodeado casi por completo por lo oscuro = hueco de un objeto.
     // Contra la pared de un lado y el pasillo del otro (marco de puerta), o contra tela y sombras (una sábana), no alcanza.
     {
@@ -568,7 +572,13 @@ export function fillThinGaps(regions, img, { blocked = null, maxDist = Math.roun
             const nx = x + dx, ny = y + dy;
             if (nx < 0 || ny < 0 || nx >= width || ny >= height || add[ny * width + nx]) continue;
             const fx = Math.min(width - 1, Math.max(0, x + dx * K)), fy = Math.min(height - 1, Math.max(0, y + dy * K));
-            ring++; if (dark[fy * width + fx]) ringDark++;
+            const j = fy * width + fx;
+            // Qué hay del otro lado del contorno: lo oscuro (el objeto) suma; la pared YA pintada resta (el hueco no sigue contra la pared: es un marco o un
+            // borde); pared sin pintar con color parecido (la prolongación del mismo hueco, apenas fuera de tolerancia) no cuenta; el resto resta.
+            if (dark[j]) { ring++; ringDark++; }
+            else if (r.mask[j]) ring++;
+            else if (Math.abs(lum[j] - ml) <= tolLuma * 2 && Math.abs(cr[j] - mr) + Math.abs(cg[j] - mg) <= tolChroma * 2) { /* neutro */ }
+            else ring++;
           }
         }
         if (!ring || ringDark / ring < minDarkRing) for (let k = 0; k < tail; k++) add[q[k]] = 0;
@@ -576,7 +586,7 @@ export function fillThinGaps(regions, img, { blocked = null, maxDist = Math.roun
     }
     na = 0;
     for (let i = 0; i < N; i++) if (add[i]) na++;
-    debug?.({ pared: r.name, candidatos: +(nc / N).toFixed(4), finos: +(na / N).toFixed(4), add });
+    debug?.({ pared: r.name, candidatos: +(nc / N).toFixed(4), finos: +(etapaFinos / N).toFixed(4), traslaslas: +(etapaIslas / N).toFixed(4), traselcontorno: +(na / N).toFixed(4), add: addAntes });
     if (!na || na > maxAdd * N) continue;
     for (let i = 0; i < N; i++) if (add[i]) { r.mask[i] = 1; owner[i] = 1; }
   }
