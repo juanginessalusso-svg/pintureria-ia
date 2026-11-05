@@ -1311,6 +1311,120 @@ export function addShadowStrips(regions, img, G, blocked, { maxDist = Math.round
 }
 
 /**
+ * Saca de las paredes las bandas angostas y MÁS CLARAS que la pared que las rodea: marcos de puerta y de abertura, zócalos y molduras del color
+ * de la pared (blancos sobre una pared apenas gris), que SAM agrupa con ella porque son lisos y del mismo tono. Un "top-hat" de luminancia
+ * restringido a la máscara (apertura con ventana cuadrada de `win` px: lo que sobresale de la apertura es más angosto que la ventana) marca lo
+ * que es más claro que su entorno en más de `minDelta`; se queda con las zonas alargadas (elongación >= `minElong`), angostas (grosor <= `maxWidth`
+ * px) y largas (>= `minLength` px). La pared grande con degradé de luz no sobresale (la apertura la sigue). Devuelve un mapa 0/1 de lo sacado
+ * (para vetarlo y que nada lo vuelva a pintar). Modifica las máscaras de `regions`.
+ */
+export function trimBrightBands(regions, img, { win = Math.round(img.width * 0.035), minDelta = 11, maxWidth = Math.round(img.width * 0.07), minLength = Math.round(img.width * 0.08), minElong = 3, pad = 2, debug = null } = {}) {
+  const { width, height, data } = img, N = width * height, cut = new Uint8Array(N);
+  const lum = new Float32Array(N);
+  for (let i = 0; i < N; i++) lum[i] = 0.2126 * data[i * 4] + 0.7152 * data[i * 4 + 1] + 0.0722 * data[i * 4 + 2];
+  const Y = boxBlur(lum, width, height, 1);
+  const q = new Int32Array(N);
+  // contexto: todas las superficies juntas (un marco suele ser una "pared" propia pegada a la pared grande: sin esa pared al lado no sobresale)
+  const all = new Uint8Array(N), own = new Int16Array(N).fill(-1);
+  regions.forEach((r, k) => { for (let i = 0; i < N; i++) if (r.mask[i]) { all[i] = 1; own[i] = k; } });
+  if (!regions.some((r) => r.kind === 'pared')) return cut;
+  const open = morphOpen(Y, all, width, height, win);
+  const cand = new Uint8Array(N);
+  let any = false;
+  for (let i = 0; i < N; i++) if (own[i] >= 0 && regions[own[i]].kind === 'pared' && Y[i] - open[i] > minDelta) { cand[i] = 1; any = true; }
+  if (!any) return cut;
+  const seen = new Uint8Array(N);
+  const tocadas = new Set();
+  for (let st = 0; st < N; st++) {
+    if (!cand[st] || seen[st]) continue;
+    let head = 0, tail = 0;
+    q[tail++] = st; seen[st] = 1;
+    let sx = 0, sy = 0;
+    while (head < tail) {
+      const i = q[head++], x = i % width, y = (i - x) / width;
+      sx += x; sy += y;
+      for (const n of [x > 0 ? i - 1 : -1, x < width - 1 ? i + 1 : -1, y > 0 ? i - width : -1, y < height - 1 ? i + width : -1]) {
+        if (n < 0 || seen[n] || !cand[n]) continue;
+        seen[n] = 1; q[tail++] = n;
+      }
+    }
+    if (tail < minLength * 3) continue;
+    const mx = sx / tail, my = sy / tail;
+    let cxx = 0, cyy = 0, cxy = 0, dsum = 0;
+    for (let k = 0; k < tail; k++) {
+      const i = q[k], px = i % width, x = px - mx, y = (i - px) / width - my;
+      cxx += x * x; cyy += y * y; cxy += x * y; dsum += Y[i] - open[i];
+    }
+    cxx /= tail; cyy /= tail; cxy /= tail;
+    const tr = cxx + cyy, det = Math.sqrt(Math.max(0, (cxx - cyy) ** 2 / 4 + cxy * cxy));
+    const l1 = tr / 2 + det, l2 = Math.max(1e-6, tr / 2 - det);
+    const len = 3.46 * Math.sqrt(l1), wid = 3.46 * Math.sqrt(l2), elong = Math.sqrt(l1 / l2);
+    debug?.({ area: +(tail / N).toFixed(4), cx: +(mx / width).toFixed(2), cy: +(my / height).toFixed(2), largo: Math.round(len), ancho: +wid.toFixed(1), elong: +elong.toFixed(1), delta: +(dsum / tail).toFixed(1) });
+    if (len < minLength || wid > maxWidth || elong < minElong) continue;
+    const comp = new Uint8Array(N);
+    for (let k = 0; k < tail; k++) comp[q[k]] = 1;
+    const grown = pad > 0 ? dilateMask(comp, width, height, pad) : comp;
+    for (let i = 0; i < N; i++) if (grown[i] && own[i] >= 0 && regions[own[i]].kind === 'pared') { cut[i] = 1; regions[own[i]].mask[i] = 0; tocadas.add(own[i]); }
+  }
+  for (const k of tocadas) regions[k].mask = removeSmallIslands(regions[k].mask, width, height, Math.round(N * 0.002));
+  return cut;
+}
+
+/**
+ * Una "pared" que es una tira angosta y larga (grosor máximo <= `maxThick` del ancho de la foto, largo >= `minElong` veces el grosor) no es una pared:
+ * es la cara lateral de un marco, una moldura o un zócalo que SAM tomó por separado. Se la saca y devuelve el mapa 0/1 de lo sacado.
+ * El borde de la foto no cuenta como borde de la tira (una pared cortada por el costado de la foto no es angosta).
+ */
+export function dropThinStrips(regions, width, height, { maxThick = 0.05, minElong = 10, maxArea = 0.08, debug = null } = {}) {
+  const N = width * height, cut = new Uint8Array(N);
+  for (let k = regions.length - 1; k >= 0; k--) {
+    const r = regions[k];
+    if (r.kind !== 'pared') continue;
+    let a = 0;
+    for (let i = 0; i < N; i++) if (r.mask[i]) a++;
+    if (!a) continue;
+    if (a / N > maxArea) { debug?.({ tira: r.name, area: +(a / N).toFixed(4), grande: true }); continue; }
+    const dt = distanceTransform(r.mask, width, height);
+    let rmax = 0;
+    for (let i = 0; i < N; i++) if (r.mask[i] && dt[i] > rmax) rmax = dt[i];
+    const thick = 2 * rmax, elong = a / Math.max(1, thick * thick);
+    debug?.({ tira: r.name, area: +(a / N).toFixed(4), grosor: +(thick / width).toFixed(4), elong: +elong.toFixed(1) });
+    if (thick > maxThick * width || elong < minElong) continue;
+    for (let i = 0; i < N; i++) if (r.mask[i]) cut[i] = 1;
+    regions.splice(k, 1);
+  }
+  return cut;
+}
+
+// Apertura morfológica (erosión y después dilatación) de `src` con ventana cuadrada de lado 2*win+1, mirando solo los píxeles con mask=1.
+function morphOpen(src, mask, width, height, win) {
+  const N = width * height, BIG = 1e9;
+  const pass = (inp, valid, isMin, horizontal) => {
+    const out = new Float32Array(N), ok = new Uint8Array(N);
+    const len = horizontal ? width : height, lines = horizontal ? height : width, step = horizontal ? 1 : width, lstep = horizontal ? width : 1;
+    for (let l = 0; l < lines; l++) {
+      for (let p = 0; p < len; p++) {
+        let best = isMin ? BIG : -BIG, has = 0;
+        const a = Math.max(0, p - win), b = Math.min(len - 1, p + win);
+        for (let k = a; k <= b; k++) {
+          const i = l * lstep + k * step;
+          if (!valid[i]) continue;
+          has = 1;
+          const v = inp[i];
+          if (isMin ? v < best : v > best) best = v;
+        }
+        const o = l * lstep + p * step;
+        out[o] = has ? best : 0; ok[o] = has;
+      }
+    }
+    return { out, ok };
+  };
+  const e1 = pass(src, mask, true, true), e2 = pass(e1.out, e1.ok, true, false);
+  const d1 = pass(e2.out, e2.ok, false, true), d2 = pass(d1.out, d1.ok, false, false);
+  return d2.out;
+}
+
+/**
  * Detecta las superficies de la foto.
  *  img      : {data RGBA, width, height} (foto de trabajo)
  *  opts.patience (3): en cada pasada de semillas lisas se corta tras tantas semillas seguidas que no aportan una superficie nueva (0 = nunca).
@@ -1320,7 +1434,7 @@ export function addShadowStrips(regions, img, G, blocked, { maxDist = Math.round
  * Devuelve [{ kind: 'pared'|'techo', name, mask, area, cx, cy, texture }], máscaras DISJUNTAS, paredes de izquierda a derecha.
  */
 export async function detectSurfaces(img, segment, opts = {}) {
-  const { maxSeeds = 9, gradMax = 7, minDist = 2.5, minArea = 0.025, maxPared = 5, maxTexture = 0.12, refineMin = 2, minLumaRatio = 0.55, grow = true, snap = true, partition = true, hang = true, lockObjects = true, thinGaps = true, enclosed = true, tableVeto = true, minWallLuma = 30, frames = true, strips = true, blockRejected = true, splitMax = 2.2, splitEdge = 4.5, maxLine = 0.004, minCoverage = 0.35, relaxFactor = 1.8, corner = true, patience = 3, sky = true, hotMax = 0.3, techoMaxTexture = 0.15, skyBlue = 0.12, techoNeedsWall = true, minTechoContact = 0.3, skyLuma = 210, loneLine = true, rescue = true, splitCornerOnly = true, techoMinLuma = 70 } = opts;
+  const { maxSeeds = 9, gradMax = 7, minDist = 2.5, minArea = 0.025, maxPared = 5, maxTexture = 0.12, refineMin = 2, minLumaRatio = 0.55, grow = true, snap = true, partition = true, hang = true, lockObjects = true, thinGaps = true, enclosed = true, tableVeto = true, minWallLuma = 30, frames = true, strips = true, blockRejected = true, splitMax = 2.2, splitEdge = 4.5, maxLine = 0.004, minCoverage = 0.35, relaxFactor = 1.8, corner = true, patience = 3, sky = true, hotMax = 0.3, techoMaxTexture = 0.15, skyBlue = 0.12, techoNeedsWall = true, minTechoContact = 0.3, skyLuma = 210, loneLine = true, rescue = true, splitCornerOnly = true, techoMinLuma = 70, trim = false } = opts; // trim: opt-in (AUTO_OPTS {"trim":true}); sin verificar en las 15 propias
   const { width, height } = img;
   const { luma, w, h } = downscaleLuma(img);
   const grad = gradientMap(luma, w, h);
@@ -1521,6 +1635,11 @@ export async function detectSurfaces(img, segment, opts = {}) {
   }
   if (thinGaps) fillThinGaps(out, img, { blocked: veto, ...opts.gapOpts, debug: opts.debugGaps }); // pared que se ve entre los listones de una silla
   if (strips && out.length) addShadowStrips(out, img, fullGrad(), veto, { ...opts.stripOpts, debug: opts.debugStrips }); // franja de pared en sombra junto a una puerta
+  if (trim && out.length) { // marcos, zócalos y molduras más claros que la pared: se sacan y se vetan
+    for (const cortado of [trimBrightBands(out, img, { ...opts.trimOpts, debug: opts.debugTrim }), dropThinStrips(out, width, height, { ...opts.stripsThinOpts, debug: opts.debugTrim })]) {
+      if (cortado.some((v) => v)) { if (veto) for (let i = 0; i < cortado.length; i++) { if (cortado[i]) veto[i] = 1; } else veto = cortado; }
+    }
+  }
   if (snap && out.length) {
     refineEdges(out, fullGrad(), width, height, { locked: lockObjects ? veto : null });
     for (const s of out) s.mask = removeSmallIslands(s.mask, width, height, Math.round(width * height * 0.002));

@@ -642,3 +642,35 @@ test('objeto cerrado por un lazo de aristas dentro de la pared (cuadro): se saca
   assert.equal(w.mask[120 * W + 180], 1, 'la mancha del color de la pared se queda');
   assert.equal(w.mask[20 * W + 20], 1, 'la pared se queda');
 });
+
+// ---- marcos y zócalos más claros que la pared (trimBrightBands) y tiras angostas (dropThinStrips) ----
+import { trimBrightBands, dropThinStrips } from '../src/index.js';
+
+test('trimBrightBands: el marco blanco entre dos paredes se saca y la pared con degradé no', () => {
+  // pared gris con degradé suave de 175 a 190; marco blanco (240) de 24 px en x 280..303 (largo: toda la altura)
+  const { img } = lumaEscena((x) => { const v = x >= 280 && x < 304 ? 240 : 175 + (x / FW) * 15; return [v, v, v]; });
+  const pared = { kind: 'pared', name: 'Pared', mask: mascara(() => true) };
+  const cortado = trimBrightBands([pared], img);
+  assert.equal(pared.mask[400 * FW + 290], 0, 'el marco ya no es pared');
+  assert.equal(cortado[400 * FW + 290], 1, 'y queda vetado');
+  assert.equal(pared.mask[400 * FW + 100], 1, 'la pared no se toca');
+  assert.equal(pared.mask[400 * FW + 500], 1, 'la pared con degradé tampoco');
+});
+
+test('trimBrightBands: una pared sola, lisa y con degradé, no se toca', () => {
+  const { img } = lumaEscena((x, y) => { const v = 170 + (x / FW) * 25 + (y / FH) * 10; return [v, v, v]; });
+  const pared = { kind: 'pared', name: 'Pared', mask: mascara(() => true) };
+  const cortado = trimBrightBands([pared], img);
+  assert.ok(!cortado.some((v) => v));
+  assert.equal(pared.mask[100 * FW + 100], 1);
+});
+
+test('dropThinStrips: la tira angosta y larga deja de ser pared; una pared ancha no', () => {
+  const fina = { kind: 'pared', name: 'Pared 1', mask: mascara((x) => x >= 100 && x < 125) };
+  const ancha = { kind: 'pared', name: 'Pared 2', mask: mascara((x) => x >= 300 && x < 500) };
+  const regiones = [fina, ancha];
+  const cortado = dropThinStrips(regiones, FW, FH, { maxArea: 0.5 });
+  assert.deepEqual(regiones, [ancha]);
+  assert.equal(cortado[400 * FW + 110], 1);
+  assert.equal(cortado[400 * FW + 400], 0);
+});
