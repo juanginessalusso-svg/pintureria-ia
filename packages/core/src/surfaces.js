@@ -870,6 +870,160 @@ export function fillThinGaps(regions, img, { blocked = null, maxDist = Math.roun
 }
 
 /**
+ * Saca de las paredes la franja angosta que queda ENCERRADA entre un objeto con textura (el vidrio con paisaje de un ventanal) y una arista
+ * larga: el marco de aluminio. SAM lo agrupa con la pared porque es del mismo gris liso, pero un marco siempre está entre el vidrio y la pared.
+ * Desde píxeles lisos pegados al objeto (a `seedDist` px) se inunda la pared SIN cruzar aristas (gradiente > `edgeThr`) y sin alejarse más de
+ * `maxDist` del objeto. Si la zona inundada está cerrada por una arista (casi no se escapa: `maxLeak`) y la arista es larga (`minEdge` px),
+ * es un marco: se saca de la pared. Si la pared llega al vidrio sin arista de por medio, la inundación se escapa y no se toca nada.
+ * Modifica las máscaras de `regions` y devuelve un mapa 0/1 de lo sacado (para que nada lo vuelva a pintar).
+ */
+export function cutFramesBesideObjects(regions, objects, G, width, height, { maxDist = Math.round(width * 0.05), edgeThr = 3, seedMax = 2, seedDist = [3, 14], minArea = 0.002, maxArea = 0.05, maxLeak = 0.1, minEdge = Math.round(height * 0.06), pad = 2, debug = null } = {}) {
+  const N = width * height, cut = new Uint8Array(N);
+  if (!objects.length) return cut;
+  const T = new Uint8Array(N);
+  for (const o of objects) for (let i = 0; i < N; i++) if (o[i]) T[i] = 1;
+  const notT = new Uint8Array(N);
+  for (let i = 0; i < N; i++) notT[i] = T[i] ? 0 : 1;
+  const dT = distanceTransform(notT, width, height); // px hasta el objeto
+  const q = new Int32Array(N);
+  for (const r of regions) {
+    if (r.kind !== 'pared') continue;
+    // dominio: la pared misma y lo que no es de ninguna superficie (el marco puede haber quedado afuera de la máscara de SAM, pero igual hay que
+    // marcarlo para que el relleno de sombras no lo pinte). Lo que es de otra superficie y el objeto quedan afuera.
+    const dom = new Uint8Array(N), seen = new Uint8Array(N);
+    for (let i = 0; i < N; i++) dom[i] = T[i] ? 0 : 1;
+    for (const o of regions) if (o !== r) for (let i = 0; i < N; i++) if (o.mask[i]) dom[i] = 0;
+    const inB = new Uint8Array(N);
+    let any = false;
+    for (let i = 0; i < N; i++) if (dom[i] && dT[i] <= maxDist) { inB[i] = 1; if (r.mask[i]) any = true; }
+    if (!any) continue;
+    for (let st = 0; st < N; st++) {
+      if (!inB[st] || seen[st] || G[st] >= seedMax || dT[st] < seedDist[0] || dT[st] > seedDist[1] || !r.mask[st]) continue;
+      let head = 0, tail = 0;
+      q[tail++] = st; seen[st] = 1;
+      while (head < tail) {
+        const i = q[head++], x = i % width;
+        for (const n of [x > 0 ? i - 1 : -1, x < width - 1 ? i + 1 : -1, i >= width ? i - width : -1, i < N - width ? i + width : -1]) {
+          if (n < 0 || seen[n] || !inB[n] || G[n] > edgeThr) continue;
+          seen[n] = 1; q[tail++] = n;
+        }
+      }
+      // ¿cerrada por una arista? se mira con qué se topa la zona inundada (el objeto y las otras superficies no cuentan)
+      const inC = new Uint8Array(N);
+      for (let k = 0; k < tail; k++) inC[q[k]] = 1;
+      let edge = 0, leak = 0;
+      for (let k = 0; k < tail; k++) {
+        const i = q[k], x = i % width;
+        for (const n of [x > 0 ? i - 1 : -1, x < width - 1 ? i + 1 : -1, i >= width ? i - width : -1, i < N - width ? i + width : -1]) {
+          if (n < 0 || inC[n] || !dom[n]) continue;
+          if (G[n] > edgeThr) edge++; else leak++;
+        }
+      }
+      const area = tail / N, leakFrac = leak / Math.max(1, edge + leak);
+      debug?.({ pared: r.name, area: +area.toFixed(4), arista: edge, escape: +leakFrac.toFixed(3) });
+      if (area < minArea || area > maxArea || edge < minEdge || leakFrac > maxLeak) continue;
+      // se saca la zona y `pad` px alrededor (la arista misma)
+      let front = Array.from(q.subarray(0, tail));
+      for (let d = 0; d < pad; d++) {
+        const next = [];
+        for (const i of front) {
+          const x = i % width;
+          for (const n of [x > 0 ? i - 1 : -1, x < width - 1 ? i + 1 : -1, i >= width ? i - width : -1, i < N - width ? i + width : -1]) {
+            if (n < 0 || inC[n] || !dom[n]) continue;
+            inC[n] = 1; next.push(n);
+          }
+        }
+        front = next;
+      }
+      for (let i = 0; i < N; i++) if (inC[i]) { r.mask[i] = 0; cut[i] = 1; }
+      r.mask = removeSmallIslands(r.mask, width, height, Math.round(N * 0.002));
+    }
+  }
+  return cut;
+}
+
+/**
+ * Suma a la pared la franja angosta de pared en sombra que quedó huérfana junto a una puerta o un marco (la cara lateral de una esquina, a un
+ * lado del marco de una puerta). SAM la agrupa con la puerta y, al sacar la puerta, queda sin dueño. Una puerta entera NO se puede distinguir por
+ * color ni por luz (ya se intentó: se pintó la puerta); lo que distingue a la franja es la forma y la continuidad con la pared:
+ *  - se inunda desde píxeles lisos pegados al contorno de la pared sobre lo que no es de nadie, SIN cruzar aristas ni alejarse más de `maxDist`;
+ *  - la zona tiene que ser una tira (angosta, larga y recta) pegada a la pared a lo largo de casi todo su largo y cerrada por una arista del otro
+ *    lado (`maxLeak`): una puerta o un mueble está a más distancia de la pared o se escapa;
+ *  - tiene que ser neutra como la pared (croma casi igual: `maxChroma`) y no más clara que ella (una sombra la oscurece; un marco iluminado, una
+ *    puerta blanca o un objeto brillante, no) ni demasiado oscura (un zócalo, un hueco).
+ * Devuelve la cantidad de zonas sumadas. Modifica las máscaras de `regions`.
+ */
+export function addShadowStrips(regions, img, G, blocked, { maxDist = Math.round(img.width * 0.035), edgeThr = 2.5, seedMax = 2, seedDist = [3, 14], minWidth = Math.round(img.width * 0.009), maxWidth = Math.round(img.width * 0.025), minLength = 0.17, minElong = 3, minContact = 0.8, near = 8, maxLeak = 0.1, minEdge = Math.round(img.height * 0.05), maxChroma = 0.01, lumaRange = [0.5, 0.88], pad = 2, debug = null } = {}) {
+  const { data, width, height } = img, N = width * height;
+  const lum = new Float32Array(N), cr = new Float32Array(N), cg = new Float32Array(N);
+  for (let i = 0; i < N; i++) { const R = data[i * 4], Gc = data[i * 4 + 1], B = data[i * 4 + 2], t = R + Gc + B + 1e-3; lum[i] = 0.2126 * R + 0.7152 * Gc + 0.0722 * B; cr[i] = R / t; cg[i] = Gc / t; }
+  const med = (a) => { a.sort((x, y) => x - y); return a[a.length >> 1]; };
+  const owned = new Uint8Array(N);
+  for (const r of regions) for (let i = 0; i < N; i++) if (r.mask[i]) owned[i] = 1;
+  const q = new Int32Array(N);
+  let added = 0;
+  for (const r of regions) {
+    if (r.kind !== 'pared') continue;
+    const notW = new Uint8Array(N);
+    for (let i = 0; i < N; i++) notW[i] = r.mask[i] ? 0 : 1;
+    const dW = distanceTransform(notW, width, height);
+    const dom = new Uint8Array(N), seen = new Uint8Array(N);
+    for (let i = 0; i < N; i++) dom[i] = !owned[i] && !(blocked && blocked[i]) && dW[i] <= maxDist ? 1 : 0;
+    const wl = [], wr = [], wg = [];
+    for (let i = 0; i < N; i += 11) if (r.mask[i]) { wl.push(lum[i]); wr.push(cr[i]); wg.push(cg[i]); }
+    if (wl.length < 50) continue;
+    const ml = med(wl), mr = med(wr), mg = med(wg);
+    for (let st = 0; st < N; st++) {
+      if (!dom[st] || seen[st] || G[st] >= seedMax || dW[st] < seedDist[0] || dW[st] > seedDist[1]) continue;
+      let head = 0, tail = 0;
+      q[tail++] = st; seen[st] = 1;
+      while (head < tail) {
+        const i = q[head++], x = i % width;
+        for (const n of [x > 0 ? i - 1 : -1, x < width - 1 ? i + 1 : -1, i >= width ? i - width : -1, i < N - width ? i + width : -1]) {
+          if (n < 0 || seen[n] || !dom[n] || G[n] > edgeThr) continue;
+          seen[n] = 1; q[tail++] = n;
+        }
+      }
+      if (tail < 0.0015 * N) continue;
+      const inC = new Uint8Array(N);
+      let x0 = width, x1 = 0, y0 = height, y1 = 0;
+      const sl = [], sr = [], sg = [];
+      for (let k = 0; k < tail; k++) {
+        const i = q[k], x = i % width, y = (i - x) / width;
+        inC[i] = 1;
+        if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+        if (k % 3 === 0) { sl.push(lum[i]); sr.push(cr[i]); sg.push(cg[i]); }
+      }
+      let edge = 0, leak = 0, contact = 0;
+      for (let k = 0; k < tail; k++) {
+        const i = q[k], x = i % width;
+        for (const n of [x > 0 ? i - 1 : -1, x < width - 1 ? i + 1 : -1, i >= width ? i - width : -1, i < N - width ? i + width : -1]) {
+          if (n < 0 || inC[n]) continue;
+          if (r.mask[n]) { contact++; continue; }
+          if (owned[n] || (blocked && blocked[n])) continue;
+          if (G[n] > edgeThr) edge++; else leak++;
+        }
+      }
+      const bw = x1 - x0 + 1, bh = y1 - y0 + 1, major = Math.max(bw, bh), ancho = tail / major;
+      // pegada a la pared a lo largo de la tira: en cuántas filas (o columnas, si es horizontal) algún píxel de la zona está a <= `near` px de la pared
+      // (no se pide contacto directo: entre la franja y la pared hay una arista suave, la esquina)
+      const rowsNear = new Uint8Array(major), rowsAll = new Uint8Array(major);
+      for (let k = 0; k < tail; k++) { const i = q[k], x = i % width, y = (i - x) / width, t = bh >= bw ? y - y0 : x - x0; rowsAll[t] = 1; if (dW[i] <= near) rowsNear[t] = 1; }
+      let nNear = 0, nAll = 0;
+      for (let t = 0; t < major; t++) { nAll += rowsAll[t]; nNear += rowsNear[t]; }
+      const lr = med(sl) / ml, dchr = Math.abs(med(sr) - mr) + Math.abs(med(sg) - mg), escape = leak / Math.max(1, edge + leak), contactFrac = nNear / Math.max(1, nAll);
+      const f = { pared: r.name, area: +(tail / N).toFixed(4), bbox: [x0 / width, y0 / height, x1 / width, y1 / height].map((v) => +v.toFixed(2)), ancho: +ancho.toFixed(1), largo: +(major / Math.max(width, height)).toFixed(2), alarg: +(major / ancho).toFixed(1), contacto: +contactFrac.toFixed(2), arista: edge, escape: +escape.toFixed(2), luz: +lr.toFixed(2), croma: +dchr.toFixed(3) };
+      const ok = ancho >= minWidth && ancho <= maxWidth && major >= minLength * Math.max(width, height) && major / ancho >= minElong && contactFrac >= minContact && escape <= maxLeak && edge >= minEdge && dchr <= maxChroma && lr >= lumaRange[0] && lr <= lumaRange[1];
+      debug?.({ ...f, ok });
+      if (!ok) continue;
+      for (let k = 0; k < tail; k++) { r.mask[q[k]] = 1; owned[q[k]] = 1; }
+      added++;
+    }
+  }
+  return added;
+}
+
+/**
  * Detecta las superficies de la foto.
  *  img      : {data RGBA, width, height} (foto de trabajo)
  *  segment  : async (points: [{x, y}]) => Uint8Array(width*height) 0/1, ya limpia — región que contiene TODOS esos puntos
@@ -877,7 +1031,7 @@ export function fillThinGaps(regions, img, { blocked = null, maxDist = Math.roun
  * Devuelve [{ kind: 'pared'|'techo', name, mask, area, cx, cy, texture }], máscaras DISJUNTAS, paredes de izquierda a derecha.
  */
 export async function detectSurfaces(img, segment, opts = {}) {
-  const { maxSeeds = 9, gradMax = 7, minDist = 2.5, minArea = 0.025, maxPared = 5, maxTexture = 0.12, refineMin = 2, minLumaRatio = 0.55, grow = true, snap = true, partition = true, hang = true, lockObjects = true, thinGaps = true, splitMax = 2.2, splitEdge = 4.5, maxLine = 0.004, minCoverage = 0.35, relaxFactor = 1.8, corner = true } = opts;
+  const { maxSeeds = 9, gradMax = 7, minDist = 2.5, minArea = 0.025, maxPared = 5, maxTexture = 0.12, refineMin = 2, minLumaRatio = 0.55, grow = true, snap = true, partition = true, hang = true, lockObjects = true, thinGaps = true, frames = true, strips = true, blockRejected = true, splitMax = 2.2, splitEdge = 4.5, maxLine = 0.004, minCoverage = 0.35, relaxFactor = 1.8, corner = true } = opts;
   const { width, height } = img;
   const { luma, w, h } = downscaleLuma(img);
   const grad = gradientMap(luma, w, h);
@@ -964,7 +1118,7 @@ export async function detectSurfaces(img, segment, opts = {}) {
     let kind = classifySurface(g);
     if (kind === 'pared' && f.texture > maxTexture) kind = null; // vidrio con paisaje, puerta con paneles, mueble…
     if (kind === 'pared' && f.line > maxLine) kind = null; // azulejo: las juntas son líneas finas y rectas que una pared no tiene
-    if (!kind) { rechazadas.push({ ...g, texture: f.texture, luma: f.luma, lines: f.lines }); continue; }
+    if (!kind) { rechazadas.push({ ...g, mask: clean, texture: f.texture, luma: f.luma, lines: f.lines }); continue; }
     for (let i = 0; i < clean.length; i++) if (clean[i]) taken[i] = 1;
     out.push({ kind, mask: clean, ...g, texture: f.texture, luma: f.luma, lines: f.lines });
   }
@@ -975,10 +1129,16 @@ export async function detectSurfaces(img, segment, opts = {}) {
     if (out[i].kind === 'pared' && out[i].luma < refLuma * minLumaRatio) { rechazadas.push(out[i]); out.splice(i, 1); }
   }
   let veto = null;
+  if (frames && out.length) { // marco de un ventanal pegado al vidrio: se saca de la pared y no se vuelve a pintar
+    const objetos = rechazadas.filter((r) => r.mask && r.texture > maxTexture && r.area >= 0.02).map((r) => r.mask);
+    const cortado = cutFramesBesideObjects(out, objetos, fullGrad(), width, height, { ...opts.frameOpts, debug: opts.debugFrames });
+    if (cortado.some((v) => v)) veto = cortado;
+  }
   if (partition && out.length) { // "la máscara más chica gana": objetos y otros planos pegados a la pared
     const pr = await partitionBySmallest(out, segment, width, height, { G: fullGrad(), ...opts.partitionOpts, debug: opts.debugPartition });
     out.push(...pr.extra);
-    veto = pr.veto;
+    if (veto) for (let i = 0; i < veto.length; i++) { if (pr.veto[i]) veto[i] = 1; }
+    else veto = pr.veto;
   }
   if (hang && out.length) { // objetos que cuelgan o se apoyan en el contorno: se vetan para que el relleno no los pinte
     const N = width * height, ho = opts.hangOpts ?? {};
@@ -1000,8 +1160,21 @@ export async function detectSurfaces(img, segment, opts = {}) {
       }
     }
   }
-  if (grow) growIntoGaps(out, img, { blocked: veto, ...opts.growOpts });
+  if (grow) {
+    // El relleno de sombras no entra en el piso que el segmentador ya encontró (una franja chica pegada al borde de abajo, rechazada): una pared no se
+    // estira sobre el zócalo y el piso. Solo el piso: bloquear cualquier región rechazada le sacaba a las paredes hasta 3 puntos legítimos.
+    let bloqueo = veto;
+    if (blockRejected && rechazadas.length) {
+      for (const r of rechazadas) {
+        if (!r.mask || r.area < 0.02 || r.cy < 0.85 || r.top < 0.7) continue;
+        if (bloqueo === veto) bloqueo = veto ? Uint8Array.from(veto) : new Uint8Array(width * height);
+        for (let i = 0; i < bloqueo.length; i++) if (r.mask[i]) bloqueo[i] = 1;
+      }
+    }
+    growIntoGaps(out, img, { blocked: bloqueo, ...opts.growOpts });
+  }
   if (thinGaps) fillThinGaps(out, img, { blocked: veto, ...opts.gapOpts, debug: opts.debugGaps }); // pared que se ve entre los listones de una silla
+  if (strips && out.length) addShadowStrips(out, img, fullGrad(), veto, { ...opts.stripOpts, debug: opts.debugStrips }); // franja de pared en sombra junto a una puerta
   if (snap && out.length) {
     refineEdges(out, fullGrad(), width, height, { locked: lockObjects ? veto : null });
     for (const s of out) s.mask = removeSmallIslands(s.mask, width, height, Math.round(width * height * 0.002));

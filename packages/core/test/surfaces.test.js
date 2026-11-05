@@ -355,3 +355,73 @@ test('hangingSeeds: un foco colgado entre pared y techo da una semilla; una tira
   assert.equal(hangingSeeds(surf([[20, 100, 170, 101]]), W2, H2).length, 0, 'una tira de 1 px (la unión de dos superficies) no es un objeto');
   assert.equal(hangingSeeds(surf([[40, 40, 120, 120]]), W2, H2).length, 0, 'un hueco grande no es una muesca');
 });
+
+// ---- marco de ventanal (cutFramesBesideObjects) y franja de pared en sombra (addShadowStrips) ----
+import { cutFramesBesideObjects, addShadowStrips } from '../src/index.js';
+const FW = 600, FH = 800;
+function lumaEscena(f) {
+  const data = new Uint8ClampedArray(FW * FH * 4), lum = new Float32Array(FW * FH);
+  for (let y = 0; y < FH; y++) for (let x = 0; x < FW; x++) {
+    const [r, g, b] = f(x, y), i = y * FW + x;
+    data[i * 4] = r; data[i * 4 + 1] = g; data[i * 4 + 2] = b; data[i * 4 + 3] = 255;
+    lum[i] = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  }
+  return { img: { data, width: FW, height: FH }, G: gradientMap(lum, FW, FH) };
+}
+const mascara = (f) => { const m = new Uint8Array(FW * FH); for (let y = 0; y < FH; y++) for (let x = 0; x < FW; x++) if (f(x, y)) m[y * FW + x] = 1; return m; };
+const paisaje = (x, y) => ((x * 7 + y * 13) % 5 < 2 ? [60, 120, 200] : [200, 220, 240]);
+
+test('marco de ventanal: la columna lisa entre el vidrio y una arista larga se saca de la pared', () => {
+  // vidrio con paisaje (textura) x<100; marco gris liso 100..123; pared clara x>=124 con una arista fuerte en x=124
+  const { G } = lumaEscena((x, y) => (x < 100 ? paisaje(x, y) : x < 124 ? [90, 92, 90] : [200, 202, 198]));
+  const vidrio = mascara((x) => x < 100);
+  const pared = { kind: 'pared', name: 'Pared', mask: mascara((x) => x >= 100) }; // SAM metió el marco en la pared
+  const cortado = cutFramesBesideObjects([pared], [vidrio], G, FW, FH);
+  assert.equal(pared.mask[400 * FW + 120], 0, 'el marco ya no es pared');
+  assert.equal(cortado[400 * FW + 120], 1, 'y queda marcado para que nada lo vuelva a pintar');
+  assert.equal(pared.mask[400 * FW + 200], 1, 'la pared de verdad no se toca');
+  assert.equal(pared.mask[400 * FW + 130], 1, 'ni la pared pegada al marco');
+});
+
+test('marco de ventanal: si la pared llega al vidrio sin arista de por medio no se corta nada', () => {
+  const { G } = lumaEscena((x, y) => (x < 100 ? paisaje(x, y) : [200, 202, 198]));
+  const vidrio = mascara((x) => x < 100);
+  const pared = { kind: 'pared', name: 'Pared', mask: mascara((x) => x >= 100) };
+  const antes = pared.mask.slice();
+  cutFramesBesideObjects([pared], [vidrio], G, FW, FH);
+  assert.deepEqual([...pared.mask], [...antes]);
+});
+
+// Pared clara a la derecha (x>=300); a su izquierda una franja en sombra (x 286..299), una arista y un marco claro (x 270..285); después la puerta (cremosa).
+const escenaFranja = (franja) => lumaEscena((x) => (x >= 300 ? [150, 152, 148] : x >= 286 ? franja : x >= 270 ? [200, 196, 180] : [170, 160, 130]));
+const paredFranja = () => ({ kind: 'pared', name: 'Pared', mask: mascara((x) => x >= 300) });
+
+test('franja en sombra: la tira neutra y más oscura pegada a la pared se suma; la puerta y el marco no', () => {
+  const { img, G } = escenaFranja([112, 114, 110]);
+  const w = paredFranja();
+  const n = addShadowStrips([w], img, G, null);
+  assert.equal(n, 1);
+  assert.equal(w.mask[400 * FW + 292], 1, 'la franja se suma');
+  assert.equal(w.mask[400 * FW + 276], 0, 'el marco no');
+  assert.equal(w.mask[400 * FW + 200], 0, 'la puerta no');
+});
+
+test('franja en sombra: una tira más CLARA que la pared (marco iluminado, puerta blanca) no se suma', () => {
+  const { img, G } = escenaFranja([200, 202, 198]);
+  const w = paredFranja();
+  assert.equal(addShadowStrips([w], img, G, null), 0);
+  assert.equal(w.mask[400 * FW + 292], 0);
+});
+
+test('franja en sombra: una tira de otro color (cálida, como una puerta) no se suma', () => {
+  const { img, G } = escenaFranja([125, 112, 90]);
+  const w = paredFranja();
+  assert.equal(addShadowStrips([w], img, G, null), 0);
+});
+
+test('franja en sombra: lo vetado (un objeto ya sacado de la pared) no se vuelve a sumar', () => {
+  const { img, G } = escenaFranja([112, 114, 110]);
+  const w = paredFranja();
+  const veto = mascara((x) => x >= 286 && x < 300);
+  assert.equal(addShadowStrips([w], img, G, veto), 0);
+});
