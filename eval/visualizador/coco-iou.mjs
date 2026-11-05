@@ -26,6 +26,8 @@ ort.env.wasm.numThreads = 1;
 const rd = (f) => new Uint8Array(fs.readFileSync(path.join(process.env.MODELS_DIR, f)));
 const sam = await Sam.create(ort, { encoder: rd('mobile_sam_image_encoder.onnx'), decoder: rd('sam_mask_decoder_single.onnx') });
 
+// COCO_OPTS: JSON con opciones para detectSurfaces (p. ej. '{"miRegla":true}'); COCO_MODE: auto|interior|fachada
+const COCO_OPTS = process.env.COCO_OPTS ? JSON.parse(process.env.COCO_OPTS) : {};
 const WALL = (v) => v === 171 || v === 172, WALL_ANY = (v) => v >= 170 && v <= 176, CEIL = (v) => v === 101 || v === 102;
 function score(det, gt, lab, isGt, isOkAny) {
   let inter = 0, uni = 0, d = 0, g = 0, extra = 0;
@@ -48,7 +50,7 @@ for (const e of list) {
   const t0 = performance.now();
   const { width: rw, height: rh } = encoderSize(width, height);
   await sam.embed(rgbaToRgbFloat(resize(img.data, width, height, rw, rh), rw, rh), rw, rh, width, height);
-  const { found, mode } = await runDetect({ image: img, segment: (pts) => { sam.reset(); return sam.segment(pts); } });
+  const { found, mode } = await runDetect({ image: img, segment: (pts) => { sam.reset(); return sam.segment(pts); }, opts: COCO_OPTS, mode: process.env.COCO_MODE ?? 'auto' });
   const walls = new Uint8Array(width * height), ceil = new Uint8Array(width * height);
   for (const f of found) { const t = f.kind === 'techo' ? ceil : f.kind === 'pared' ? walls : null; if (t) for (let i = 0; i < t.length; i++) if (f.mask[i]) t[i] = 1; }
   const res = { id: e.id, split: e.split, mode, ms: Math.round(performance.now() - t0), n: found.length, pared: score(walls, null, lab, WALL, WALL_ANY), techo: score(ceil, null, lab, CEIL, CEIL) };
