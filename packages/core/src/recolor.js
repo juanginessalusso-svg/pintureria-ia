@@ -196,7 +196,7 @@ function wallStats(img, mask, gains) {
     hist[Math.max(0, Math.min(100, Math.round(lab[0])))]++;
     n++;
   }
-  if (!n) return { meanL: 50, p98L: 50, n: 0 };
+  if (!n) return { meanL: 50, p98L: 50, n: 0, hist, pct: () => 50 };
   let p98 = 100, c98 = 0;
   for (let l = 0; l <= 100; l++) { c98 += hist[l]; if (c98 >= n * 0.98) { p98 = l; break; } } // el 2 % más claro de la pared
   let lo = Math.floor(n * 0.05), hi = Math.ceil(n * 0.95), acc = 0, sum = 0, cnt = 0;
@@ -204,11 +204,25 @@ function wallStats(img, mask, gains) {
     const inRange = Math.max(0, Math.min(acc + hist[l], hi) - Math.max(acc, lo));
     sum += l * inRange; cnt += inRange; acc += hist[l];
   }
-  return { meanL: cnt ? sum / cnt : 50, p98L: p98, n };
+  // percentil q (0..1) de L de la pared, con interpolación lineal dentro del casillero del histograma
+  const pct = (q) => {
+    const target = q * n;
+    let c = 0;
+    for (let l = 0; l <= 100; l++) {
+      if (c + hist[l] >= target && hist[l] > 0) return l - 0.5 + (target - c) / hist[l];
+      c += hist[l];
+    }
+    return 100;
+  };
+  return { meanL: cnt ? sum / cnt : 50, p98L: p98, n, hist, pct };
 }
+
+/** Percentil de L de la pared usado como referencia de luz en el modo 'luz' (ver recolorWall). */
+export const LUZ_REF_PCT = 0.9;
 
 /**
  * Pinta la pared con `targetHex`.
+ *  - mode 'luz'      : como 'relative' pero la referencia es el percentil `refPct` de L de la pared (en vez de la media) y sin piso.
  *  - mode 'pure'     : conserva L de cada píxel; solo reemplaza a/b por los del color elegido.
  *  - mode 'relative' : escala L por (L_color / L_media_pared): conserva las luces y sombras RELATIVAS pero
  *                      los colores oscuros se ven oscuros y los claros claros (L puro los lava).
@@ -217,18 +231,25 @@ function wallStats(img, mask, gains) {
  *  - intensity       : 0..1, mezcla entre original y resultado.
  * Devuelve una imagen nueva (no modifica la de entrada) y estadísticas.
  */
-export function recolorWall(img, mask, targetHex, { mode = 'relative', gains = [1, 1, 1], intensity = 1, minWallL = 45, maxL = 98 } = {}) {
+export function recolorWall(img, mask, targetHex, { mode = 'relative', gains = [1, 1, 1], intensity = 1, minWallL = 45, maxL = 98, refPct = LUZ_REF_PCT } = {}) {
   const { data, width, height } = img;
   if (mask.length !== width * height) throw new Error('la máscara no coincide con el tamaño de la imagen');
   const target = hexToLab(targetHex);
-  const { meanL, p98L } = wallStats(img, mask, gains);
+  const { meanL, p98L, pct } = wallStats(img, mask, gains);
   // Cociente de luminancia. Dos salvaguardas para fotos con poca luz o paredes en sombra:
   //  - piso `minWallL`: una pared en sombra (L medio muy bajo) no se trata como si ese fuera su tono real; sin piso el cociente se
   //    dispara (L 22 -> 63 = ×2,9) y amplifica el ruido y los degradados de luz;
   //  - tope `maxL`: lo más claro de la pared no pasa de L≈98 (un blanco sobre un techo en sombra no debe quemarse).
   // En paredes bien expuestas ninguna de las dos actúa y el resultado es el de siempre.
   let ratio = 1;
-  if (mode === 'relative') {
+  if (mode === 'luz') {
+    // Modo 'luz': la referencia de luz es un percentil ALTO de L de la pared (la parte bien iluminada), no la media. Física: la
+    // pintura nueva en una zona de la pared recibe la misma luz que la vieja, así que L_nuevo = L_color x (L_píxel / L_zona_iluminada).
+    // Con la media, una pared mayormente en sombra se "levanta" al L de la carta; con el percentil, la sombra se queda en sombra.
+    // Sin piso `minWallL` (el piso ES lo que levantaba la sombra); queda el tope `maxL`.
+    ratio = target.L / Math.max(pct(refPct), 1);
+    ratio = Math.min(ratio, maxL / Math.max(p98L, 1));
+  } else if (mode === 'relative') {
     ratio = target.L / Math.max(meanL, minWallL, 1);
     ratio = Math.min(ratio, maxL / Math.max(p98L, 1));
   }
