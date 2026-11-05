@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { estimateWhiteBalance, featherMask, recolorWall, cleanMask, pxPerMeter, wallPixels, paintStroke, maskCount, detectSurfaces, encodeMask, cutObjectFromSurface } from '@pintureria/core';
+import { estimateWhiteBalance, whiteBalanceFor, featherMask, recolorWall, cleanMask, pxPerMeter, wallPixels, paintStroke, maskCount, detectSurfaces, encodeMask, cutObjectFromSurface } from '@pintureria/core';
 import { SamClient } from './samClient.js';
 import { workingSize } from './sam.js';
 import { Calculator } from './Calculator.jsx';
@@ -282,6 +282,9 @@ export function Visualizer() {
     const found = autoCache.current;
     surfaces.current = found.map((f, i) => ({ id: ++surfSeq.current, name: f.name, kind: f.kind, auto: true, autoIdx: i, mask: f.mask.slice(), color: keep?.get(i) ?? null }));
     syncSurfaces();
+    // Balance de blancos con política: si la pared detectada ya tiene color (se separa del resto de la foto), no se la usa para estimar la luz.
+    const paredes = found.filter((f) => f.kind === 'pared').map((f) => f.mask);
+    if (paredes.length) { const wbp = whiteBalanceFor(photo.current, paredes); gains.current = wbp.gains; console.debug("[wb]", JSON.stringify({ excluido: wbp.excluded, gains: wbp.gains.map((g) => +g.toFixed(2)), dist: wbp.stats?.dist, croma: wbp.stats?.wall.C })); }
     const first = found.length ? surfaces.current.filter((x) => x.kind === 'pared').sort((a, b) => maskCount(b.mask) - maskCount(a.mask))[0] ?? surfaces.current[0] : null;
     if (first && !first.color && colorRef.current) { first.color = colorRef.current; colorRef.current = null; syncSurfaces(); } // ya había elegido un color mientras se analizaba
     setActiveId(first?.id ?? null);
