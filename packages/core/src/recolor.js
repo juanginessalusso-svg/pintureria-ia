@@ -46,13 +46,16 @@ function labToLin(L, a, b, out) {
  * Estima ganancias [gR,gG,gB] que neutralizan la dominante de color de la foto.
  * Ignora píxeles muy oscuros o quemados (no informan el color de la luz) y limita la
  * corrección (maxGain) para no "arreglar" de más una habitación legítimamente cálida.
+ * `exclude` (opcional, Float32Array/Uint8Array del tamaño de la imagen): píxeles a ignorar, p. ej. la pared que se va a repintar.
+ * Sin esto, una pared ya pintada de verde se lee como "luz verdosa" y el color nuevo sale con dominante verde.
  */
-export function estimateWhiteBalance(img, { maxGain = 1.35, strength = 1 } = {}) {
+export function estimateWhiteBalance(img, { maxGain = 1.35, strength = 1, exclude = null } = {}) {
   const { data } = img;
   let r = 0, g = 0, b = 0, n = 0;
   // submuestreo: con ~40k píxeles alcanza para estimar la media
   const step = Math.max(1, Math.floor((data.length / 4) / 40000));
   for (let p = 0; p < data.length; p += 4 * step) {
+    if (exclude && exclude[p >> 2] > 0.5) continue; // `exclude`: máscara de la pared a pintar; su color propio no informa la luz
     const R = data[p], G = data[p + 1], B = data[p + 2];
     const mx = Math.max(R, G, B), mn = Math.min(R, G, B);
     if (mx > 240 || mx < 25 || (mx - mn) > 120) continue; // quemado / oscuro / muy saturado
