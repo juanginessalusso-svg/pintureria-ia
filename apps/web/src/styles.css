@@ -76,6 +76,7 @@ select { font: inherit; padding: 8px; border: 1px solid var(--line); border-radi
 
 /* ---- superficies (cada una con su color) ---- */
 .surfaces { gap: 6px; }
+.card > * { min-width: 0; } /* los hijos de una grilla no se achicaban: la lista de superficies ensanchaba la página en pantallas chicas */
 .surf { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; cursor: pointer; background: #fff; }
 .surf.on { outline: 2px solid var(--brand); background: #f0f6ff; }
 .surfname { flex: 1; min-width: 0; border: 1px solid transparent; background: transparent; font-weight: 600; padding: 4px; }
