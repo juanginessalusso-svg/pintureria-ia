@@ -4,6 +4,7 @@ import { SamClient } from './samClient.js';
 import { workingSize } from './sam.js';
 import { Calculator } from './Calculator.jsx';
 import { ColorPicker } from './ColorPicker.jsx';
+import { totalFraction, timeHint, yieldToUi, EMBED_PER_INIT } from './progress.js';
 
 const tenantQ = () => {
   const t = new URLSearchParams(location.search).get('tenant');
@@ -18,6 +19,31 @@ const MAX_SURF_UNDO = 8;
 const DRAG_PX = 4; // cuánto hay que mover el dedo para que un toque pase a ser arrastre
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 const viewTransform = (v) => `translate(${v.tx}px, ${v.ty}px) scale(${v.s})`;
+
+// Pantalla de progreso por etapas (va dentro de .stage: queda a la vista aunque la foto esté fija arriba en el celular).
+function AnalysisProgress({ prog, now, model }) {
+  const t = now || Date.now();
+  const stageElapsed = Math.max(0, t - prog.t0);
+  const initMs = model.initMs || 0;
+  const frac = totalFraction({ stage: prog.stage, embedElapsed: stageElapsed, embedEstimate: initMs * EMBED_PER_INIT, n: prog.n });
+  const pctModel = model.total ? Math.round((model.loaded / model.total) * 100) : 0;
+  const hint = prog.stage === 'wait' ? '' : timeHint({ stage: prog.stage, initMs, embedElapsed: stageElapsed, detectElapsed: stageElapsed, n: prog.n });
+  const label = prog.stage === 'wait'
+    ? (model.total ? `Cargando el modelo (solo la primera vez): ${mb(model.loaded)} de ${mb(model.total)} MB` : 'Cargando el modelo (solo la primera vez)…')
+    : prog.stage === 'embed' ? 'Analizando la foto…' : `Buscando paredes y techo (paso ${prog.n + 1})…`;
+  const steps = [['wait', 'Modelo'], ['embed', 'Foto'], ['detect', 'Paredes']];
+  const idx = steps.findIndex(([k]) => k === prog.stage);
+  return (
+    <div class="analysis" role="status" aria-live="polite" data-stage={prog.stage}>
+      <div class="steps">{steps.map(([k, n], i) => <span key={k} class={i < idx ? 'done' : i === idx ? 'now' : ''}>{i < idx ? '✓ ' : ''}{n}</span>)}</div>
+      <strong>{label}</strong>
+      <progress max="100" value={prog.stage === 'wait' ? pctModel : Math.round(frac * 100)} aria-label="Avance del análisis" />
+      <span class="muted small">{prog.stage === 'wait' ? 'Si ya lo bajaste antes, esto es instantáneo.' : `Van ${fmtElapsed(t - prog.tAll)}. ${hint}`}</span>
+      <span class="muted small">Podés esperar acá: la foto se procesa en tu teléfono.</span>
+    </div>
+  );
+}
+const fmtElapsed = (ms) => { const s = Math.round(ms / 1000); return s < 60 ? `${s} s` : `${Math.floor(s / 60)} min ${String(s % 60).padStart(2, '0')} s`; };
 
 export function Visualizer() {
   const [tenant, setTenant] = useState(null);
@@ -45,6 +71,9 @@ export function Visualizer() {
   const [calib, setCalib] = useState({ tapping: false, pxPerM: null });
   const [cutMode, setCutMode] = useState(false); // "Sacar un objeto": el próximo toque recorta lo que quedó pintado y no es pared
   const [photoId, setPhotoId] = useState(0); // cambia con cada foto: reinicia la calculadora (m² a mano, sumar/restar) para que no arrastre datos de la anterior
+  const [prog, setProg] = useState(null); // progreso del análisis: { stage: 'wait'|'embed'|'detect', n, t0 (inicio de la etapa), tAll } · null = no se está analizando
+  const stageRef = useRef(null);
+  const [now, setNow] = useState(0); // reloj que se actualiza mientras se analiza (tiempo transcurrido / estimado)
   const [manual, setManual] = useState(false); // herramientas manuales (clics de SAM, pincel, borrador): opcionales, la detección es automática
 
   const calibRef = useRef({ tapping: false, pts: [], pxPerM: null, meters: 0 }); // línea de referencia (coords de la foto)
@@ -86,10 +115,19 @@ export function Visualizer() {
     getJson('branches').then(setBranches).catch(() => {});
     sam.current = new SamClient(({ loaded, total }) => setModel((m) => ({ ...m, loaded, total })));
     ready.current = sam.current.init().then((r) => {
-      setModel((m) => ({ ...m, state: 'ready', info: `${r.threads} hilo(s), init ${r.initMs} ms` }));
+      setModel((m) => ({ ...m, state: 'ready', initMs: r.initMs, info: `${r.threads} hilo(s), init ${r.initMs} ms` }));
     }).catch((e) => setModel({ state: 'error', loaded: 0, total: 0, info: e.message }));
     return () => sam.current?.terminate();
   }, []);
+
+  // Mientras se analiza, el reloj de la pantalla de progreso avanza solo (no depende de que el análisis avise).
+  useEffect(() => {
+    if (!prog) return undefined;
+    setNow(Date.now());
+    stageRef.current?.scrollIntoView?.({ block: 'start', behavior: 'smooth' }); // la foto y la barra quedan a la vista (en el celular la foto es fija arriba)
+    const id = setInterval(() => setNow(Date.now()), 500);
+    return () => clearInterval(id);
+  }, [!!prog]);
 
   // La superficie seleccionada parpadea un instante (y se queda resaltada mientras no tenga color) para ver cuál es.
   useEffect(() => {
@@ -202,37 +240,54 @@ export function Visualizer() {
       setPoints([]); setSurfList([]); setActiveId(null); setHasPhoto(true); render();
 
       setStatus(model.state === 'ready' ? 'Analizando la foto…' : 'Esperando que cargue el modelo…');
+      const tAll = Date.now();
+      setProg({ stage: model.state === 'ready' ? 'embed' : 'wait', n: 0, t0: tAll, tAll });
       await ready.current;
+      if (mySeq !== photoSeq.current) return;
       setStatus('Analizando la foto…');
+      setProg({ stage: 'embed', n: 0, t0: Date.now(), tAll });
+      await yieldToUi(); // que se pinte la etapa antes de empezar el cálculo pesado
       const r = await sam.current.embed(img.data.slice().buffer, width, height);
       setTiming((t) => ({ ...t, embedMs: r.embedMs }));
       if (mySeq !== photoSeq.current) return;
       setStatus('Buscando paredes y techo…');
       const t1 = performance.now();
+      let nSeg = 0;
+      setProg({ stage: 'detect', n: 0, t0: Date.now(), tAll });
       const found = await detectSurfaces(photo.current, async (pts) => {
+        // Se cede el hilo antes de cada decodificación: la barra se repinta y la página no parece colgada. Y si cambió la foto, se corta.
+        if (mySeq !== photoSeq.current) throw new Error('foto reemplazada');
+        setProg((q) => (q && q.stage === 'detect' ? { ...q, n: nSeg } : q));
+        await yieldToUi();
         const r = await sam.current.segment(pts.map((q) => ({ x: q.x, y: q.y, label: 1 })), true);
+        nSeg++;
         return cleanMask(r.mask, width, height);
       });
       if (mySeq !== photoSeq.current) return; // mientras tanto eligió otra foto
+      setProg(null);
       setTiming((t) => ({ ...t, detectMs: Math.round(performance.now() - t1) }));
       autoCache.current = found.map((f) => ({ name: f.name, kind: f.kind, area: f.area, mask: f.mask }));
       applyAuto();
     } catch (err) {
+      if (mySeqOf(err)) return; // la foto fue reemplazada por otra: la pantalla ya muestra el análisis nuevo
+      setProg(null);
       setStatus(`No se pudo procesar la foto: ${err.message}`);
     }
   };
+  const mySeqOf = (err) => err?.message === 'foto reemplazada';
 
   // Carga en la lista las superficies detectadas solas; la pared más grande queda seleccionada: elegir un color ya la pinta.
-  const applyAuto = () => {
+  // `keep`: colores a conservar por índice de la detección (al "Volver a lo detectado" no se pierde lo ya pintado).
+  const applyAuto = (keep = null, note = '') => {
     const found = autoCache.current;
-    surfaces.current = found.map((f) => ({ id: ++surfSeq.current, name: f.name, kind: f.kind, auto: true, mask: f.mask.slice(), color: null }));
+    surfaces.current = found.map((f, i) => ({ id: ++surfSeq.current, name: f.name, kind: f.kind, auto: true, autoIdx: i, mask: f.mask.slice(), color: keep?.get(i) ?? null }));
     syncSurfaces();
     const first = found.length ? surfaces.current.filter((x) => x.kind === 'pared').sort((a, b) => maskCount(b.mask) - maskCount(a.mask))[0] ?? surfaces.current[0] : null;
-    if (first && colorRef.current) { first.color = colorRef.current; colorRef.current = null; syncSurfaces(); } // ya había elegido un color mientras se analizaba
+    if (first && !first.color && colorRef.current) { first.color = colorRef.current; colorRef.current = null; syncSurfaces(); } // ya había elegido un color mientras se analizaba
     setActiveId(first?.id ?? null);
-    setStatus(found.length
+    setStatus(note || (found.length
       ? `Listo: detecté ${found.length} ${found.length === 1 ? 'superficie' : 'superficies'}. Elegí un color para "${first.name}"; para pintar otra, tocala en la foto o en la lista.`
-      : 'No pude detectar paredes solas. Tocá "Ajustar a mano" y marcá una pared.');
+      : 'No pude detectar paredes solas. Tocá "Ajustar a mano" y marcá una pared.'));
     repaint();
   };
 
@@ -259,8 +314,13 @@ export function Visualizer() {
       surfUndo.current.push({ id: hit.id, mask: hit.mask.slice() });
       if (surfUndo.current.length > MAX_SURF_UNDO) surfUndo.current.shift();
       hit.mask = cut.mask;
-      setCutMode(false); repaint(); bump();
-      setStatus(`Listo: saqué ese objeto de "${hit.name}". Si no era eso, tocá Deshacer.`);
+      setCutMode(false);
+      // Sin color no se ve ningún cambio: se resalta la superficie (queda con el velo azul) y se avisa que el efecto se ve al pintarla.
+      if (!hit.color) setActiveId(hit.id);
+      repaint(); bump();
+      setStatus(hit.color
+        ? `Listo: saqué ese objeto de "${hit.name}". Si no era eso, tocá Deshacer.`
+        : `Saqué ese objeto de "${hit.name}": en azul ves lo que quedó como superficie (el objeto ya no está). Todavía no tiene color, así que elegí uno para ver el resultado. Si no era eso, tocá Deshacer.`);
     } catch (err) { setStatus(`Error: ${err.message}`); }
   };
   const undoCut = () => {
@@ -531,10 +591,15 @@ export function Visualizer() {
     repaint();
   };
   const clearAll = async () => {
+    // Los colores ya aplicados a superficies detectadas solas se conservan; si hay superficies marcadas a mano con color (esas se pierden), se pide confirmación.
+    const painted = surfaces.current.filter((x) => x.color);
+    const lost = painted.filter((x) => x.autoIdx == null);
+    if (lost.length && typeof confirm === 'function' && !confirm(`Volver a lo detectado descarta ${lost.length === 1 ? 'la superficie que marcaste a mano' : `las ${lost.length} superficies que marcaste a mano`} (${lost.map((x) => x.name).join(', ')}). ¿Seguimos?`)) return;
+    const keep = new Map(painted.filter((x) => x.autoIdx != null).map((x) => [x.autoIdx, x.color]));
     current.current = null; samMask.current = null; strokes.current = []; surfUndo.current = [];
     surfaces.current = []; surfSeq.current = 0; result.current = null; pointsRef.current = [];
     setPoints([]); setSurfList([]); setActiveId(null); setWallPx(0); await sam.current.call('reset');
-    if (autoCache.current.length) applyAuto(); else render(); // vuelve a las superficies detectadas solas, sin recalcular
+    if (autoCache.current.length) applyAuto(keep, keep.size ? `Volví a lo detectado y conservé el color de ${keep.size === 1 ? '1 superficie' : `${keep.size} superficies`}.` : ''); else render(); // vuelve a las superficies detectadas solas, sin recalcular
   };
   const selectSurface = (id) => {
     setActiveId(activeId === id ? null : id);
@@ -619,13 +684,14 @@ export function Visualizer() {
       <div class={hasPhoto ? '' : 'hide'}>
         {/* En pantallas chicas la foto queda fija arriba mientras se elige el color (ver .stage en styles.css): sin esto la carta quedaba ~1000 px más abajo y no se veía el resultado. */}
         <div class="pickzone">
-        <div class="stage" style={{ '--aspect': aspect }}>
+        <div ref={stageRef} class={`stage ${prog ? 'busy' : ''}`} style={{ '--aspect': aspect }}>
         <div ref={viewportRef} class="viewport" onWheel={onWheel}>
           <canvas ref={canvasRef} class="photo" style={{ touchAction, transform: viewTransform(view.current), cursor: !manual ? (cutMode ? 'crosshair' : 'pointer') : mode === 'pan' || zoom > 1 && mode !== 'brush' && mode !== 'erase' ? 'grab' : 'crosshair' }}
             onClick={onCanvasClick} onPointerDown={onPointerDown} onPointerMove={onPointerMove}
             onPointerUp={onPointerUp} onPointerCancel={onPointerUp} onPointerLeave={onPointerLeave} />
           {manual && (mode === 'brush' || mode === 'erase') && <div ref={ringRef} class="ring" style={{ width: `${radius * 2}px`, height: `${radius * 2}px` }} />}
         </div>
+        {prog && <AnalysisProgress prog={prog} now={now} model={model} />}
         </div>
         <div class="row zoombar">
           <button onClick={() => zoomCenter(1 / 1.5)} disabled={zoom <= 1} aria-label="Alejar">−</button>
@@ -633,7 +699,7 @@ export function Visualizer() {
           <button onClick={fitView} disabled={zoom === 1}>Ajustar</button>
           <span class="muted small">Zoom {zoom.toFixed(1)}×{zoom === 1 ? ' · pellizcá o ctrl + rueda para ampliar' : ''}</span>
         </div>
-        {status && <p class="muted">{status}</p>}
+        {status && !prog && <p class="muted" role="status">{status}</p>}
 
         {!manual && surfList.length > 0 && (
           <div class="row">

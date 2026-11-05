@@ -89,4 +89,14 @@ select { font: inherit; padding: 8px; border: 1px solid var(--line); border-radi
   .stage { position: sticky; top: 0; z-index: 20; background: var(--bg); padding: 6px 0; box-shadow: 0 6px 8px -6px #0003; }
   .stage .viewport { width: min(100%, calc(46vh * var(--aspect, 1))); margin: 0 auto; }
   @supports (height: 1dvh) { .stage .viewport { width: min(100%, calc(46dvh * var(--aspect, 1))); } }
+  /* Mientras se analiza la foto se achica para que la barra de progreso (debajo, dentro de .stage) entre completa en la pantalla. */
+  .stage.busy .viewport { width: min(100%, calc(30vh * var(--aspect, 1))); }
+  @supports (height: 1dvh) { .stage.busy .viewport { width: min(100%, calc(30dvh * var(--aspect, 1))); } }
 }
+
+/* ---- progreso del análisis (dentro de .stage: queda visible con la foto fija arriba) ---- */
+.analysis { display: grid; gap: 4px; margin-top: 6px; padding: 8px 10px; background: #fff; border: 1px solid var(--line); border-radius: 10px; }
+.analysis .steps { display: flex; gap: 10px; font-size: .75rem; color: var(--muted); }
+.analysis .steps .now { color: var(--brand); font-weight: 700; }
+.analysis .steps .done { color: #067647; }
+.analysis progress { height: 10px; }
