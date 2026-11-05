@@ -211,7 +211,7 @@ export function Visualizer() {
       const t1 = performance.now();
       const found = await detectSurfaces(photo.current, async (pts) => {
         const r = await sam.current.segment(pts.map((q) => ({ x: q.x, y: q.y, label: 1 })), true);
-        return cleanMask(new Uint8Array(r.mask), width, height);
+        return cleanMask(r.mask, width, height);
       });
       if (mySeq !== photoSeq.current) return; // mientras tanto eligió otra foto
       setTiming((t) => ({ ...t, detectMs: Math.round(performance.now() - t1) }));
@@ -248,7 +248,7 @@ export function Visualizer() {
     try {
       const r = await sam.current.segment([{ x: pt.x, y: pt.y, label: 1 }], true);
       await sam.current.call('reset');
-      const m = cleanMask(new Uint8Array(r.mask), p.width, p.height);
+      const m = cleanMask(r.mask, p.width, p.height);
       const cut = cutObjectFromSurface(hit.mask, m);
       if (!cut.ok) {
         setStatus(cut.reason === 'too-big'
@@ -284,7 +284,7 @@ export function Visualizer() {
     setStatus('Detectando pared…');
     const r = await sam.current.segment(pts, fresh);
     const p = photo.current;
-    samMask.current = cleanMask(new Uint8Array(r.mask), p.width, p.height);
+    samMask.current = cleanMask(r.mask, p.width, p.height);
     current.current = compose(); // los trazos de pincel/borrador se vuelven a aplicar encima del resultado nuevo de SAM
     pointsRef.current = pts; setPoints(pts);
     setTiming((t) => ({ ...t, segMs: r.ms }));

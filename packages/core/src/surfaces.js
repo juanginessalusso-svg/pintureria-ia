@@ -30,16 +30,32 @@ export function downscaleLuma(img, maxSide = 192) {
 export function gradientMap(luma, w, h) {
   const g = new Float32Array(w * h);
   const at = (x, y) => luma[Math.min(h - 1, Math.max(0, y)) * w + Math.min(w - 1, Math.max(0, x))];
-  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+  const sobel = (x, y, i) => {
     const gx = (at(x + 1, y - 1) + 2 * at(x + 1, y) + at(x + 1, y + 1) - at(x - 1, y - 1) - 2 * at(x - 1, y) - at(x - 1, y + 1)) / 8;
     const gy = (at(x - 1, y + 1) + 2 * at(x, y + 1) + at(x + 1, y + 1) - at(x - 1, y - 1) - 2 * at(x, y - 1) - at(x + 1, y - 1)) / 8;
-    g[y * w + x] = Math.hypot(gx, gy);
+    g[i] = Math.hypot(gx, gy);
+  };
+  for (let y = 0; y < h; y++) {
+    const border = y === 0 || y === h - 1;
+    for (let x = 0; x < w; x++) {
+      const i = y * w + x;
+      if (border || x === 0 || x === w - 1) { sobel(x, y, i); continue; }
+      const a = luma[i - w - 1], b = luma[i - w], c = luma[i - w + 1], d = luma[i - 1], f = luma[i + 1], e = luma[i + w - 1], k = luma[i + w], l = luma[i + w + 1];
+      const gx = (c + 2 * f + l - a - 2 * d - e) / 8;
+      const gy = (e + 2 * k + l - a - 2 * b - c) / 8;
+      g[i] = Math.hypot(gx, gy);
+    }
   }
   const out = new Float32Array(w * h);
   for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
     let acc = 0;
-    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++)
-      acc += g[Math.min(h - 1, Math.max(0, y + dy)) * w + Math.min(w - 1, Math.max(0, x + dx))];
+    if (y === 0 || y === h - 1 || x === 0 || x === w - 1) {
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++)
+        acc += g[Math.min(h - 1, Math.max(0, y + dy)) * w + Math.min(w - 1, Math.max(0, x + dx))];
+    } else {
+      const i = y * w + x;
+      acc = 0 + g[i - w - 1] + g[i - w] + g[i - w + 1] + g[i - 1] + g[i] + g[i + 1] + g[i + w - 1] + g[i + w] + g[i + w + 1];
+    }
     out[y * w + x] = acc / 9;
   }
   return out;
@@ -157,16 +173,18 @@ export function textureRatio(lowMask, grad, w, h, gradMax) {
 
 /** Box blur separable sobre un Float32Array (radio r), borde replicado. */
 function boxBlur(src, w, h, r) {
-  const tmp = new Float32Array(src.length), out = new Float32Array(src.length), win = 2 * r + 1;
+  const tmp = new Float32Array(src.length), out = new Float32Array(src.length), win = 2 * r + 1, last = w - 1;
   for (let y = 0; y < h; y++) {
     let acc = 0; const row = y * w;
-    for (let x = -r; x <= r; x++) acc += src[row + Math.min(w - 1, Math.max(0, x))];
-    for (let x = 0; x < w; x++) { tmp[row + x] = acc / win; acc += src[row + Math.min(w - 1, x + r + 1)] - src[row + Math.max(0, x - r)]; }
+    for (let x = -r; x <= r; x++) acc += src[row + (x < 0 ? 0 : x > last ? last : x)];
+    for (let x = 0; x < w; x++) { tmp[row + x] = acc / win; acc += src[row + (x + r + 1 > last ? last : x + r + 1)] - src[row + (x - r < 0 ? 0 : x - r)]; }
   }
-  for (let x = 0; x < w; x++) {
-    let acc = 0;
-    for (let y = -r; y <= r; y++) acc += tmp[Math.min(h - 1, Math.max(0, y)) * w + x];
-    for (let y = 0; y < h; y++) { out[y * w + x] = acc / win; acc += tmp[Math.min(h - 1, y + r + 1) * w + x] - tmp[Math.max(0, y - r) * w + x]; }
+  // vertical: por filas (acumuladores por columna): misma secuencia de sumas por columna, pero recorriendo la memoria en orden
+  const acc = new Float64Array(w);
+  for (let y = -r; y <= r; y++) { const row = (y < 0 ? 0 : y > h - 1 ? h - 1 : y) * w; for (let x = 0; x < w; x++) acc[x] += tmp[row + x]; }
+  for (let y = 0; y < h; y++) {
+    const row = y * w, add = (y + r + 1 > h - 1 ? h - 1 : y + r + 1) * w, sub = (y - r < 0 ? 0 : y - r) * w;
+    for (let x = 0; x < w; x++) { out[row + x] = acc[x] / win; acc[x] += tmp[add + x] - tmp[sub + x]; }
   }
   return out;
 }
@@ -209,7 +227,8 @@ export function growIntoGaps(regions, img, { step = 1.6, maxGrow = Math.round(im
     const next = [];
     for (const i of frontier) {
       const x = i % width, k = owner[i], [mr, mg, ml] = mean[k];
-      for (const j of [x > 0 ? i - 1 : -1, x < width - 1 ? i + 1 : -1, i >= width ? i - width : -1, i < n - width ? i + width : -1]) {
+      for (let v = 0; v < 4; v++) {
+        const j = v === 0 ? (x > 0 ? i - 1 : -1) : v === 1 ? (x < width - 1 ? i + 1 : -1) : v === 2 ? (i >= width ? i - width : -1) : (i < n - width ? i + width : -1);
         if (j < 0 || owner[j] >= 0 || (blocked && blocked[j]) || Math.abs(L[j] - L[i]) > step) continue;
         if (Math.abs(chr[j] - mr) + Math.abs(chg[j] - mg) > chromaTol) continue;
         if (L[j] > ml + maxBrighter) continue; // más brillante que la pared: una lamparita, un reflejo, un objeto blanco
@@ -253,21 +272,20 @@ export function splitMerged(mask, grad, w, h, width, height, { strictMax = 2.2, 
   const remap = new Int16Array(sizes.length).fill(-1);
   keep.forEach((id, k) => { remap[id] = k; });
 
-  // Dijkstra multi-fuente (cola binaria) con costo = 1 + edgeCost·gradiente del píxel al que se entra
+  // Dijkstra multi-fuente (cola binaria) con costo = 1 + edgeCost·gradiente del píxel al que se entra.
+  // (Claves en Float64 y `dist` en Float32, como siempre: un nodo cuyo redondeo a Float32 baja ya no se expande; se conserva para no cambiar los cortes.)
   const dist = new Float32Array(w * h).fill(Infinity), own = new Int16Array(w * h).fill(-1);
-  const heap = []; // [dist, idx]
-  const push = (d, i) => { heap.push([d, i]); let c = heap.length - 1; while (c > 0) { const p = (c - 1) >> 1; if (heap[p][0] <= heap[c][0]) break; [heap[p], heap[c]] = [heap[c], heap[p]]; c = p; } };
-  const pop = () => { const top = heap[0], last = heap.pop(); if (heap.length) { heap[0] = last; let c = 0; for (;;) { const l = 2 * c + 1, r = l + 1; let m = c; if (l < heap.length && heap[l][0] < heap[m][0]) m = l; if (r < heap.length && heap[r][0] < heap[m][0]) m = r; if (m === c) break; [heap[m], heap[c]] = [heap[c], heap[m]]; c = m; } } return top; };
-  for (let i = 0; i < lab.length; i++) if (lab[i] >= 0 && remap[lab[i]] >= 0) { dist[i] = 0; own[i] = remap[lab[i]]; push(0, i); }
-  while (heap.length) {
-    const [d, i] = pop();
+  const heap = makeHeap(1 << 12, Float64Array);
+  for (let i = 0; i < lab.length; i++) if (lab[i] >= 0 && remap[lab[i]] >= 0) { dist[i] = 0; own[i] = remap[lab[i]]; heap.push(0, i); }
+  const relax1 = (i, n, d) => { if (!low[n]) return; const nd = d + 1 + edgeCost * grad[n]; if (nd < dist[n]) { dist[n] = nd; own[n] = own[i]; heap.push(nd, n); } };
+  while (heap.size) {
+    const i = heap.pop(), d = heap.lastKey;
     if (d > dist[i]) continue;
     const x = i % w;
-    for (const n of [x > 0 ? i - 1 : -1, x < w - 1 ? i + 1 : -1, i >= w ? i - w : -1, i < w * h - w ? i + w : -1]) {
-      if (n < 0 || !low[n]) continue;
-      const nd = d + 1 + edgeCost * grad[n];
-      if (nd < dist[n]) { dist[n] = nd; own[n] = own[i]; push(nd, n); }
-    }
+    if (x > 0) relax1(i, i - 1, d);
+    if (x < w - 1) relax1(i, i + 1, d);
+    if (i >= w) relax1(i, i - w, d);
+    if (i < w * h - w) relax1(i, i + w, d);
   }
   // Fuerza del borde entre núcleos vecinos: gradiente medio justo en la frontera. Un degradé de sombra no tiene borde (débil, se fusiona
   // de nuevo); una arista de esquina o un zócalo sí (fuerte, se conserva).
@@ -324,22 +342,21 @@ export function splitMerged(mask, grad, w, h, width, height, { strictMax = 2.2, 
     const R = Math.max(4, Math.round(width / 100)), near = boxBlur(bnd, width, height, R);
     const band = new Uint8Array(N);
     for (let i = 0; i < N; i++) if (lab2[i] >= 0 && near[i] > 1e-4) band[i] = 1;
-    const dist2 = new Float32Array(N).fill(Infinity), own2 = new Int16Array(N).fill(-1), heap2 = [];
-    const push2 = (d, i) => { heap2.push([d, i]); let c = heap2.length - 1; while (c > 0) { const q = (c - 1) >> 1; if (heap2[q][0] <= heap2[c][0]) break; [heap2[q], heap2[c]] = [heap2[c], heap2[q]]; c = q; } };
-    const pop2 = () => { const top = heap2[0], last = heap2.pop(); if (heap2.length) { heap2[0] = last; let c = 0; for (;;) { const l = 2 * c + 1, rr = l + 1; let m = c; if (l < heap2.length && heap2[l][0] < heap2[m][0]) m = l; if (rr < heap2.length && heap2[rr][0] < heap2[m][0]) m = rr; if (m === c) break; [heap2[m], heap2[c]] = [heap2[c], heap2[m]]; c = m; } } return top; };
-    const nb = (i) => { const x = i % width; return [x > 0 ? i - 1 : -1, x < width - 1 ? i + 1 : -1, i >= width ? i - width : -1, i < N - width ? i + width : -1]; };
+    const dist2 = new Float32Array(N).fill(Infinity), own2 = new Int16Array(N).fill(-1), heap2 = makeHeap(1 << 16, Float64Array);
     for (let i = 0; i < N; i++) {
       if (lab2[i] < 0 || band[i]) continue;
-      if (nb(i).some((n) => n >= 0 && band[n])) { dist2[i] = 0; own2[i] = lab2[i]; push2(0, i); }
+      const x = i % width;
+      if ((x > 0 && band[i - 1]) || (x < width - 1 && band[i + 1]) || (i >= width && band[i - width]) || (i < N - width && band[i + width])) { dist2[i] = 0; own2[i] = lab2[i]; heap2.push(0, i); }
     }
-    while (heap2.length) {
-      const [d, i] = pop2();
+    const relax2 = (i, n, d) => { if (!band[n]) return; const nd = d + 1 + edgeCost * G[n]; if (nd < dist2[n]) { dist2[n] = nd; own2[n] = own2[i]; heap2.push(nd, n); } };
+    while (heap2.size) {
+      const i = heap2.pop(), d = heap2.lastKey;
       if (d > dist2[i]) continue;
-      for (const n of nb(i)) {
-        if (n < 0 || !band[n]) continue;
-        const nd = d + 1 + edgeCost * G[n];
-        if (nd < dist2[n]) { dist2[n] = nd; own2[n] = own2[i]; push2(nd, n); }
-      }
+      const x = i % width;
+      if (x > 0) relax2(i, i - 1, d);
+      if (x < width - 1) relax2(i, i + 1, d);
+      if (i >= width) relax2(i, i - width, d);
+      if (i < N - width) relax2(i, i + width, d);
     }
     for (let i = 0; i < N; i++) if (band[i] && own2[i] >= 0) lab2[i] = own2[i];
   }
@@ -557,14 +574,14 @@ export function refineEdges(regions, G, width, height, { band = Math.max(4, Math
   return regions;
 }
 
-/** Cola de prioridad mínima con arreglos tipados (clave Float32, valor Int32). `pop()` devuelve el valor y deja la clave en `lastKey`. */
-function makeHeap(cap) {
-  let n = 0, keys = new Float32Array(cap), vals = new Int32Array(cap), lastKey = 0;
+/** Cola de prioridad mínima con arreglos tipados (clave Float32 por defecto, valor Int32). `pop()` devuelve el valor y deja la clave en `lastKey`. */
+function makeHeap(cap, Keys = Float32Array) {
+  let n = 0, keys = new Keys(cap), vals = new Int32Array(cap), lastKey = 0;
   return {
     get size() { return n; },
     get lastKey() { return lastKey; },
     push(key, val) {
-      if (n === keys.length) { const k2 = new Float32Array(n * 2), v2 = new Int32Array(n * 2); k2.set(keys); v2.set(vals); keys = k2; vals = v2; }
+      if (n === keys.length) { const k2 = new Keys(n * 2), v2 = new Int32Array(n * 2); k2.set(keys); v2.set(vals); keys = k2; vals = v2; }
       let c = n++;
       while (c > 0) { const p = (c - 1) >> 1; if (keys[p] <= key) break; keys[c] = keys[p]; vals[c] = vals[p]; c = p; }
       keys[c] = key; vals[c] = val;
@@ -627,18 +644,18 @@ function edgeSeeds(paredes, G, width, height, { edgeThr, edgeBudget, edgeMinLen,
   }).sort((a, b) => b.length - a.length).slice(0, edgeBudget);
   debug?.({ bordesInternos: comps.length, largos: largos.map((c) => c.length) });
   const out = [], D = 3;
-  for (const c of largos) {
+  for (const [ci, c] of largos.entries()) {
     let x0 = w, x1 = 0, y0 = h, y1 = 0;
     for (const j of c) { const x = j % w, y = Math.floor(j / w); if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
     const vertical = y1 - y0 >= x1 - x0;
     // varias posiciones a lo largo del borde (SAM cambia de máscara según el punto exacto) y los dos lados del borde
     const orden = c.slice().sort((a, b) => (vertical ? Math.floor(a / w) - Math.floor(b / w) : (a % w) - (b % w)));
-    for (const q of [0.2, 0.5, 0.8]) {
+    for (const [si, q] of [0.5, 0.2, 0.8].entries()) { // el medio primero: si ahí no aparece nada, `partitionBySmallest` puede saltear las otras posiciones
       const rep = orden[Math.floor(q * (orden.length - 1))], rx = rep % w, ry = Math.floor(rep / w);
       for (const [dx, dy] of vertical ? [[-D, 0], [D, 0]] : [[0, -D], [0, D]]) {
         const x = rx + dx, y = ry + dy;
         if (x < 0 || y < 0 || x >= w || y >= h || !low[y * w + x] || E[y * w + x]) continue;
-        out.push({ x: ((x + 0.5) / w) * width, y: ((y + 0.5) / h) * height });
+        out.push({ x: ((x + 0.5) / w) * width, y: ((y + 0.5) / h) * height, edge: ci, step: si });
       }
     }
   }
@@ -700,6 +717,48 @@ export function hangingSeeds(regions, width, height, { grid = 192, closeR = 0.02
 }
 
 /**
+ * ¿Es la semilla (x, y) un pedazo de superficie "pelada" (pared o techo)? Devuelve una función: true si, alrededor del punto (cuadrado de lado 2·rad, 5x5 muestras),
+ * todo está adentro de la MISMA superficie, sin bordes (gradiente < edgeThr) y con luz y color (luma, r/g normalizados) cercanos a la mediana de esa superficie.
+ */
+function plainTest(regiones, img, G, inWall, { edgeThr, plainLuma, plainChroma, rad }) {
+  const { data, width, height } = img;
+  const lumAt = (i) => 0.2126 * data[i * 4] + 0.7152 * data[i * 4 + 1] + 0.0722 * data[i * 4 + 2];
+  const cands = [];
+  // mediana aproximada con histograma (luma en pasos de 0,25; r y g normalizados en pasos de 1/2048): alcanza para tolerancias de decenas de niveles
+  const histMed = (h, total) => { let acc = 0; for (let b = 0; b < h.length; b++) { acc += h[b]; if (acc * 2 >= total) return b; } return 0; };
+  const add = (mask) => {
+    let area = 0, enPared = 0, ns = 0;
+    const hl = new Uint32Array(1024), hr = new Uint32Array(2048), hg = new Uint32Array(2048);
+    for (let i = 0; i < mask.length; i++) {
+      if (!mask[i]) continue;
+      area++; enPared += inWall[i];
+      if (i % 11) continue;
+      const R = data[i * 4], Gc = data[i * 4 + 1], t = R + Gc + data[i * 4 + 2] + 1e-3;
+      hl[Math.min(1023, Math.floor(lumAt(i) * 4))]++; hr[Math.min(2047, Math.floor((R / t) * 2048))]++; hg[Math.min(2047, Math.floor((Gc / t) * 2048))]++; ns++;
+    }
+    if (ns >= 50) cands.push({ mask, area, wallFrac: enPared / Math.max(1, area), ml: histMed(hl, ns) / 4, mr: histMed(hr, ns) / 2048, mg: histMed(hg, ns) / 2048 });
+  };
+  for (const r of regiones) add(r.mask ?? r);
+  const patchOk = ({ mask, ml, mr, mg }, x, y) => {
+    for (let a = -2; a <= 2; a++) for (let b = -2; b <= 2; b++) {
+      const xx = x + Math.round((a * rad) / 2), yy = y + Math.round((b * rad) / 2);
+      if (xx < 0 || yy < 0 || xx >= width || yy >= height) return false;
+      const j = yy * width + xx;
+      if (!mask[j] || G[j] >= edgeThr || Math.abs(lumAt(j) - ml) > plainLuma) return false;
+      const t = data[j * 4] + data[j * 4 + 1] + data[j * 4 + 2] + 1e-3;
+      if (Math.abs(data[j * 4] / t - mr) + Math.abs(data[j * 4 + 1] / t - mg) > plainChroma) return false;
+    }
+    return true;
+  };
+  const test = (x, y) => cands.some((c) => c.mask[y * width + x] && patchOk(c, x, y));
+  // Punto bien adentro (el parche entero) de una máscara ya conocida que casi no toca las paredes (el piso, un mueble grande): lo que devuelva SAM no puede sacarle nada a una pared.
+  const insideOther = (x, y) => cands.some((c) => c.wallFrac < 0.05 && c.mask[y * width + x] && [[-2, -2], [2, -2], [-2, 2], [2, 2], [-2, 0], [2, 0], [0, -2], [0, 2]].every(([a, b]) => { const xx = x + Math.round((a * rad) / 2), yy = y + Math.round((b * rad) / 2); return xx >= 0 && yy >= 0 && xx < width && yy < height && c.mask[yy * width + xx]; }));
+  // suma una máscara devuelta por SAM, salvo que ya haya una casi igual que contenga el mismo punto (la misma pared devuelta por otra semilla)
+  const addNew = (mask, area, x, y) => { if (!cands.some((c) => c.mask[y * width + x] && Math.abs(c.area - area) < 0.03 * area)) add(mask); };
+  return { test, insideOther, addNew };
+}
+
+/**
  * Partición por "la máscara más chica gana" (idea: segmentar todo con SAM). Se reparte una grilla de semillas sobre las paredes y se pide la
  * máscara de cada una; cada píxel de pared se queda con el ÁREA de la máscara más chica que lo contiene. Un objeto (tabla, cuadro, estufa),
  * otro plano (techo fusionado, panel) o un hueco aparecen como máscaras bastante más chicas que la pared que los rodea.
@@ -708,8 +767,12 @@ export function hangingSeeds(regions, width, height, { grid = 192, closeR = 0.02
  *  - Lo demás (chico, o sin forma de pared) se saca de la pared y queda en `veto` para que el relleno de sombras no lo vuelva a pintar.
  * Conservador: umbral `frac` bajo y, si se llevaría más de `maxLoss` de una pared, no se toca (no es confiable). Guarda solo un mapa de
  * áreas (no las máscaras): la memoria no depende de la cantidad de semillas.
+ * Cada semilla cuesta una decodificación de SAM (~0,3 s en una notebook, varias veces más en un celular), así que se podan las que casi seguro
+ * devolverían una máscara ya conocida (ver `skipPlain`, `skipNonWall`, `dedupe`, `edgeEarlyStop`; todas se pueden apagar). Con las 4 apagadas
+ * se hace exactamente la grilla completa + los bordes completos de antes.
  */
-export async function partitionBySmallest(regions, segment, width, height, { grid = 5, frac = 0.3, maxLoss = 0.5, minArea = 0.025, minWall = 0.08, G = null, edgeThr = 4, edgeBudget = 4, edgeMinLen = 14, debug = null } = {}) {
+export async function partitionBySmallest(regions, segment, width, height, { grid = 5, frac = 0.3, maxLoss = 0.5, minArea = 0.025, minWall = 0.08, G = null, edgeThr = 4, edgeBudget = 4, edgeMinLen = 14, debug = null,
+  img = null, known = [], skipOutside = false, skipPlain = true, dedupe = true, plainLuma = 24, plainChroma = 0.03, plainRadius = 0.03, edgeEarlyStop = true, skipNonWall = true } = {}) {
   const N = width * height, veto = new Uint8Array(N), extra = [];
   const paredes = regions.filter((r) => r.kind === 'pared' && r.area >= minWall);
   if (!paredes.length) return { extra, veto, seeds: 0 };
@@ -724,15 +787,45 @@ export async function partitionBySmallest(regions, segment, width, height, { gri
   // Semillas guiadas por bordes: una puerta, un marco o un cuadro del color de la pared son angostos y la grilla no cae encima, pero dejan bordes
   // LARGOS dentro de la pared. Se buscan esos bordes (lejos del contorno de la pared) y se ponen semillas a ambos lados: SAM devuelve el objeto solo.
   if (G && edgeBudget > 0) pts.push(...edgeSeeds(paredes, G, width, height, { edgeThr, edgeBudget, edgeMinLen, debug }));
-  for (const [pi, { x, y }] of pts.entries()) {
+  // Podas (cada una evita una decodificación que casi seguro devolvería una máscara que ya conocemos):
+  //  - skipOutside (APAGADA por defecto): una semilla fuera de toda pared. En o02 la semilla que encuentra la tabla de surf (4,6 % de la foto, 75 % adentro
+  //    de la máscara de la pared) cae FUERA de la pared: apagarla evitaba -55 % de decodificaciones pero pintaba 5,9 puntos de más. Queda como opción.
+  //  - skipNonWall: la semilla de la grilla cae bien adentro (el parche entero) de una máscara ya conocida que casi no toca las paredes (el piso).
+  //  - skipPlain: la semilla de la grilla cae en un pedazo de pared "pelada" (todo el parche adentro de la pared, sin bordes y del color de la pared):
+  //    SAM devolvería la pared entera, que no separa nada. (Las semillas de borde no se podan por esto: justamente buscan lo que tiene el color de la pared.)
+  //  - dedupe: la semilla cae en una máscara CHICA que ya devolvió otra semilla (un objeto ya encontrado): la nueva sería el mismo objeto.
+  //    Es la única que puede mover un borde unos píxeles (la máscara de la segunda semilla sobre el mismo objeto no es idéntica): en s2 cambia una pared en 0,1 punto.
+  //  - edgeEarlyStop: de un borde interior, si la posición central (los dos lados) no separó nada, no se prueban las otras dos.
+  const waList = paredes.map((r) => { let a = 0; for (let i = 0; i < N; i++) if (r.mask[i]) a++; return a; });
+  const maxWa = Math.max(...waList);
+  const seenSmall = new Uint8Array(N); // unión de las máscaras chicas ya devueltas
+  const plain = skipPlain && img && G ? plainTest([...regions, ...known], img, G, inWall, { edgeThr, plainLuma, plainChroma, rad: Math.max(3, Math.round(width * plainRadius)) }) : null;
+  let skipped = 0;
+  const waAt = (ip) => { for (const [k, r] of paredes.entries()) if (r.mask[ip]) return waList[k]; return maxWa; };
+  const edgeHit = new Map(), edgeRan = new Map(), edgeDead = new Set(); // por borde: ¿la posición central (primera) separó algo?
+  for (const [pi, { x, y, edge, step }] of pts.entries()) {
+    const ix = Math.min(width - 1, Math.floor(x)), iy = Math.min(height - 1, Math.floor(y)), ip = iy * width + ix, esGrilla = pi < grid * grid;
+    if (skipOutside && !inWall[ip]) { skipped++; debug?.({ saltada: [+(x / width).toFixed(2), +(y / height).toFixed(2)], motivo: 'fuera' }); continue; }
+    // Semillas de borde: si en la primera posición del borde (los dos lados) todo devolvió una máscara grande (la pared), las otras posiciones del mismo borde
+    // casi seguro también: se saltean.
+    if (edgeEarlyStop && edge !== undefined && step > 0) {
+      if (!edgeDead.has(edge) && edgeRan.get(edge) && !edgeHit.get(edge)) edgeDead.add(edge);
+      if (edgeDead.has(edge)) { skipped++; debug?.({ saltada: [+(x / width).toFixed(2), +(y / height).toFixed(2)], motivo: 'borde sin nada en el centro' }); continue; }
+    }
+    if (dedupe && seenSmall[ip]) { skipped++; debug?.({ saltada: [+(x / width).toFixed(2), +(y / height).toFixed(2)], motivo: 'objeto ya visto' }); continue; }
+    if (plain && esGrilla && (plain.test(ix, iy) || (skipNonWall && !inWall[ip] && plain.insideOther(ix, iy)))) { skipped++; debug?.({ saltada: [+(x / width).toFixed(2), +(y / height).toFixed(2)], motivo: 'pared pelada' }); continue; }
     const m = await segment([{ x, y }]);
     if (debug && pi >= grid * grid) { let c = 0; for (let i = 0; i < N; i++) if (m[i]) c++; debug({ semillaBorde: [+(x / width).toFixed(3), +(y / height).toFixed(3)], mascara: +(c / N).toFixed(4) }); }
     seeds++;
     let a = 0;
     for (let i = 0; i < N; i++) if (m[i]) a++;
+    if (edge !== undefined && step === 0) { edgeRan.set(edge, true); if (a < frac * waAt(ip)) edgeHit.set(edge, true); }
     if (a < N * 0.002) continue;
-    for (let i = 0; i < N; i++) if (m[i] && a < small[i]) small[i] = a;
+    if (a < frac * maxWa) for (let i = 0; i < N; i++) if (m[i] && a < small[i]) small[i] = a; // una máscara de ≥ frac·(la pared más grande) no puede cumplir `small < frac·pared` en ninguna: no hace falta anotarla
+    if (dedupe && a < frac * maxWa) for (let i = 0; i < N; i++) if (m[i]) seenSmall[i] = 1;
+    if (plain && a >= N * 0.05) plain.addNew(m, a, ix, iy);
   }
+  debug?.({ semillasSaltadas: skipped });
   for (const r of paredes) {
     let wa = 0;
     for (let i = 0; i < N; i++) if (r.mask[i]) wa++;
@@ -790,7 +883,7 @@ export function fillThinGaps(regions, img, { blocked = null, maxDist = Math.roun
     const sl = [], sr = [], sg = [];
     for (let i = 0; i < N; i += 7) if (r.mask[i]) { sl.push(lum[i]); sr.push(cr[i]); sg.push(cg[i]); }
     if (sl.length < 50) continue;
-    const med = (a) => { a.sort((x, y) => x - y); return a[a.length >> 1]; };
+    const med = (a) => Float64Array.from(a).sort()[a.length >> 1]; // orden numérico, sin comparador (mucho más rápido que Array.sort con función)
     const ml = med(sl), mr = med(sr), mg = med(sg);
     const notWall = new Uint8Array(N);
     for (let i = 0; i < N; i++) notWall[i] = r.mask[i] ? 0 : 1;
@@ -1026,12 +1119,14 @@ export function addShadowStrips(regions, img, G, blocked, { maxDist = Math.round
 /**
  * Detecta las superficies de la foto.
  *  img      : {data RGBA, width, height} (foto de trabajo)
+ *  opts.patience (3): en cada pasada de semillas lisas se corta tras tantas semillas seguidas que no aportan una superficie nueva (0 = nunca).
+ *  opts.partitionOpts: ver `partitionBySmallest` (podas de decodificaciones).
  *  segment  : async (points: [{x, y}]) => Uint8Array(width*height) 0/1, ya limpia — región que contiene TODOS esos puntos
  *             (todos son "esto es pared", como los toques verdes de la app)
  * Devuelve [{ kind: 'pared'|'techo', name, mask, area, cx, cy, texture }], máscaras DISJUNTAS, paredes de izquierda a derecha.
  */
 export async function detectSurfaces(img, segment, opts = {}) {
-  const { maxSeeds = 9, gradMax = 7, minDist = 2.5, minArea = 0.025, maxPared = 5, maxTexture = 0.12, refineMin = 2, minLumaRatio = 0.55, grow = true, snap = true, partition = true, hang = true, lockObjects = true, thinGaps = true, frames = true, strips = true, blockRejected = true, splitMax = 2.2, splitEdge = 4.5, maxLine = 0.004, minCoverage = 0.35, relaxFactor = 1.8, corner = true } = opts;
+  const { maxSeeds = 9, gradMax = 7, minDist = 2.5, minArea = 0.025, maxPared = 5, maxTexture = 0.12, refineMin = 2, minLumaRatio = 0.55, grow = true, snap = true, partition = true, hang = true, lockObjects = true, thinGaps = true, frames = true, strips = true, blockRejected = true, splitMax = 2.2, splitEdge = 4.5, maxLine = 0.004, minCoverage = 0.35, relaxFactor = 1.8, corner = true, patience = 3 } = opts;
   const { width, height } = img;
   const { luma, w, h } = downscaleLuma(img);
   const grad = gradientMap(luma, w, h);
@@ -1051,7 +1146,8 @@ export async function detectSurfaces(img, segment, opts = {}) {
   };
   const found = []; // {mask, g}
   const seedPass = async (texGrad) => {
-  for (let it = 0; it < maxSeeds; it++) {
+  let sinNada = 0; // semillas seguidas que no aportaron ninguna superficie nueva: las zonas lisas que quedan son cada vez más chicas, hay que cortar
+  for (let it = 0; it < maxSeeds && !(patience > 0 && sinNada >= patience); it++) {
     const d = distanceTransform(free, w, h);
     let best = -1, bd = minDist;
     for (let i = 0; i < d.length; i++) if (d[i] > bd) { bd = d[i]; best = i; }
@@ -1080,16 +1176,19 @@ export async function detectSurfaces(img, segment, opts = {}) {
     for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (Math.hypot(x - sx, y - sy) <= bd) free[y * w + x] = 0;
     // Solo se divide lo que ya parece pared: un techo con una franja de sombra no es dos superficies.
     const partes = classifySurface(maskGeometry(mask, width, height)) === 'techo' ? [mask] : splitMerged(mask, grad, w, h, width, height, { strictMax: splitMax, minEdge: splitEdge, debug: opts.debugSplit, fullGrad });
+    let aporto = false;
     for (const parte of partes) {
       const g = maskGeometry(parte, width, height);
       if (g.area < minArea) continue;
       if (found.some((f) => { const r = iouAndContain(f.mask, parte); return r.iou > 0.6 || r.inB > 0.85; })) continue;
+      aporto = true;
       const lp = toLow(parte, width, height, w, h);
       let ls = 0, ln = 0;
       for (let i = 0; i < lp.length; i++) if (lp[i]) { ls += luma[i]; ln++; }
       found.push({ mask: parte, g, texture: textureRatio(lp, grad, w, h, texGrad * 1.5), luma: ln ? ls / ln : 0, line: lineRatio(parte, fullGrad(), width, height, 10) });
       if (opts.debugLines) { const G = fullGrad(); found[found.length - 1].lines = opts.debugLines.map((t) => lineRatio(parte, G, width, height, t)); }
     }
+    sinNada = aporto ? 0 : sinNada + 1;
   }
   };
   await seedPass(gradMax);
@@ -1135,7 +1234,7 @@ export async function detectSurfaces(img, segment, opts = {}) {
     if (cortado.some((v) => v)) veto = cortado;
   }
   if (partition && out.length) { // "la máscara más chica gana": objetos y otros planos pegados a la pared
-    const pr = await partitionBySmallest(out, segment, width, height, { G: fullGrad(), ...opts.partitionOpts, debug: opts.debugPartition });
+    const pr = await partitionBySmallest(out, segment, width, height, { G: fullGrad(), img, known: found.filter((f) => f.g.area >= minArea).map((f) => f.mask), ...opts.partitionOpts, debug: opts.debugPartition });
     out.push(...pr.extra);
     if (veto) for (let i = 0; i < veto.length; i++) { if (pr.veto[i]) veto[i] = 1; }
     else veto = pr.veto;

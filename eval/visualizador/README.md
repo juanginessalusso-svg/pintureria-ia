@@ -19,3 +19,12 @@ caso: `[ original | selección | color 1 | color 2 … ]`.
 
 Hoy mide: tiempo de análisis, % de la foto cubierto por la pared y la luminancia pared → color. **Falta** (etapa F):
 máscaras anotadas a mano para calcular IoU y el error de m² contra una medida real.
+
+## Detección automática (`auto.mjs`): decodificaciones y tiempo
+
+`MODELS_DIR=./modelos node eval/visualizador/auto.mjs [filtro]` imprime por foto `N superficies · D decodificaciones · T ms`, el desglose de tiempo
+(SAM / `cleanMask` / resto de JS) y, por superficie, nombre, % de la foto y un `md5` de la máscara (dos corridas con el mismo `md5` dan exactamente lo mismo).
+
+- `AUTO_OPTS='{"patience":0,"partitionOpts":{"skipPlain":false,"dedupe":false,"skipNonWall":false,"edgeEarlyStop":false}}'` apaga las podas de decodificaciones (línea base).
+- `MASK_CACHE=dir` guarda cada máscara que devuelve SAM (gzip, por foto y punto) y la reusa: sirve para iterar sobre el JS en ~40 s en vez de ~10 min. Los ms de SAM con caché no son reales.
+- `TRACE=archivo.jsonl` deja una línea por decodificación (fase `semillas`/`particion`, puntos, área, ms).

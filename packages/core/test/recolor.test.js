@@ -157,3 +157,24 @@ test('pared bien expuesta: las salvaguardas no cambian el resultado', () => {
   const b = recolorWall(img, leftHalf(), '#1f3a5f', { mode: 'relative', minWallL: 1, maxL: 100 }).image;
   assert.deepEqual([...a.data], [...b.data]);
 });
+
+test('openMask: la ventana deslizante da lo mismo que erosionar y dilatar con la definición directa (borde replicado)', async () => {
+  const { openMask } = await import('../src/index.js');
+  const w = 41, h = 29;
+  const m = new Uint8Array(w * h);
+  for (let i = 0; i < m.length; i++) m[i] = ((i * 2654435761) >>> 9) % 5 === 0 ? 0 : 1; // máscara casi llena con agujeros sueltos
+  for (let y = 0; y < 6; y++) for (let x = 0; x < w; x++) m[y * w + x] = 0; // franja vacía contra el borde
+  const naive = (src, r, erode) => {
+    const out = new Uint8Array(src.length);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      let all = 1, any = 0;
+      for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
+        const v = src[Math.min(h - 1, Math.max(0, y + dy)) * w + Math.min(w - 1, Math.max(0, x + dx))];
+        if (v) any = 1; else all = 0;
+      }
+      out[y * w + x] = erode ? all : any;
+    }
+    return out;
+  };
+  for (const r of [1, 2, 3]) assert.deepEqual([...openMask(m, w, h, r)], [...naive(naive(m, r, true), r, false)], `r=${r}`);
+});

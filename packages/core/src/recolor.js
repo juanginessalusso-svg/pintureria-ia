@@ -102,7 +102,8 @@ export function featherMask(mask, width, height, radius = 2) {
 export function removeSmallIslands(mask, width, height, minPixels) {
   const out = new Uint8Array(mask);
   const seen = new Uint8Array(mask.length);
-  const queue = new Int32Array(mask.length);
+  if (queueScratch.length < mask.length) queueScratch = new Int32Array(mask.length); // se reutiliza entre llamadas (son ~5 MB en una foto de 1600 px)
+  const queue = queueScratch;
   for (let start = 0; start < mask.length; start++) {
     if (!mask[start] || seen[start]) continue;
     let head = 0, tail = 0;
@@ -118,23 +119,31 @@ export function removeSmallIslands(mask, width, height, minPixels) {
   }
   return out;
 }
+let queueScratch = new Int32Array(0);
 
-/** Erosión (erode=true) o dilatación de una máscara 0/1 con kernel cuadrado (2r+1), separable. Borde = se replica. */
+/**
+ * Erosión (erode=true) o dilatación de una máscara 0/1 con kernel cuadrado (2r+1), separable. Borde = se replica.
+ * Ventana deslizante en las dos pasadas; la vertical avanza por filas (con sumas por columna) para recorrer la memoria en orden.
+ */
 function morph(mask, width, height, r, erode) {
-  const win = 2 * r + 1;
-  const pass = (src, dst, len, lines, at) => {
-    const P = new Int32Array(len + 2 * r + 1);
-    for (let l = 0; l < lines; l++) {
-      for (let i = 0; i < len + 2 * r; i++) P[i + 1] = P[i] + src[at(l, Math.min(len - 1, Math.max(0, i - r)))];
-      for (let x = 0; x < len; x++) {
-        const s = P[x + win] - P[x];
-        dst[at(l, x)] = erode ? (s === win ? 1 : 0) : (s > 0 ? 1 : 0);
-      }
+  const win = 2 * r + 1, N = mask.length, tmp = new Uint8Array(N), out = new Uint8Array(N);
+  const thr = erode ? win : 1; // erosión: toda la ventana encendida; dilatación: alguna encendida
+  const last = width - 1;
+  for (let y = 0; y < height; y++) { // horizontal
+    const row = y * width;
+    let s = 0;
+    for (let k = -r; k <= r; k++) s += mask[row + (k < 0 ? 0 : k > last ? last : k)];
+    for (let x = 0; x < width; x++) {
+      tmp[row + x] = s >= thr ? 1 : 0;
+      s += mask[row + (x + r + 1 > last ? last : x + r + 1)] - mask[row + (x - r < 0 ? 0 : x - r)];
     }
-  };
-  const tmp = new Uint8Array(mask.length), out = new Uint8Array(mask.length);
-  pass(mask, tmp, width, height, (y, x) => y * width + x); // horizontal
-  pass(tmp, out, height, width, (x, y) => y * width + x); // vertical
+  }
+  const cs = new Int32Array(width); // vertical: suma de la ventana en cada columna
+  for (let k = -r; k <= r; k++) { const row = Math.min(height - 1, Math.max(0, k)) * width; for (let x = 0; x < width; x++) cs[x] += tmp[row + x]; }
+  for (let y = 0; y < height; y++) {
+    const row = y * width, add = Math.min(height - 1, y + r + 1) * width, sub = Math.max(0, y - r) * width;
+    for (let x = 0; x < width; x++) { const c = cs[x]; out[row + x] = c >= thr ? 1 : 0; cs[x] = c + tmp[add + x] - tmp[sub + x]; }
+  }
   return out;
 }
 

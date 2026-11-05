@@ -425,3 +425,57 @@ test('franja en sombra: lo vetado (un objeto ya sacado de la pared) no se vuelve
   const veto = mascara((x) => x >= 286 && x < 300);
   assert.equal(addShadowStrips([w], img, G, veto), 0);
 });
+
+// ---- aceleración: las podas y las reescrituras no cambian lo que se detecta ----
+test('gradientMap: el camino rápido del interior da lo mismo que la definición con bordes replicados', () => {
+  const w = 23, h = 17, luma = new Float32Array(w * h);
+  for (let i = 0; i < luma.length; i++) luma[i] = ((i * 2654435761) >>> 7) % 256;
+  const at = (x, y) => luma[Math.min(h - 1, Math.max(0, y)) * w + Math.min(w - 1, Math.max(0, x))];
+  const g = new Float32Array(w * h);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const gx = (at(x + 1, y - 1) + 2 * at(x + 1, y) + at(x + 1, y + 1) - at(x - 1, y - 1) - 2 * at(x - 1, y) - at(x - 1, y + 1)) / 8;
+    const gy = (at(x - 1, y + 1) + 2 * at(x, y + 1) + at(x + 1, y + 1) - at(x - 1, y - 1) - 2 * at(x, y - 1) - at(x + 1, y - 1)) / 8;
+    g[y * w + x] = Math.hypot(gx, gy);
+  }
+  const ref = new Float32Array(w * h);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    let acc = 0;
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) acc += g[Math.min(h - 1, Math.max(0, y + dy)) * w + Math.min(w - 1, Math.max(0, x + dx))];
+    ref[y * w + x] = acc / 9;
+  }
+  assert.deepEqual([...gradientMap(luma, w, h)], [...ref]);
+});
+
+test('detectSurfaces: con las podas pide menos decodificaciones y detecta lo mismo', async () => {
+  const img = { data: room(), width: W, height: H };
+  let con = 0, sin = 0;
+  const a = await detectSurfaces(img, async (pts) => { con++; return fakeSegment(pts); });
+  const b = await detectSurfaces(img, async (pts) => { sin++; return fakeSegment(pts); }, { patience: 0, partitionOpts: { skipPlain: false, skipNonWall: false, dedupe: false, edgeEarlyStop: false } });
+  assert.ok(con < sin, `con podas ${con}, sin podas ${sin}`);
+  assert.deepEqual(a.map((s) => [s.name, s.kind]), b.map((s) => [s.name, s.kind]));
+  for (let k = 0; k < a.length; k++) assert.deepEqual([...a[k].mask], [...b[k].mask]);
+});
+
+test('partición: una pared pelada no gasta decodificaciones, pero un objeto adentro se sigue encontrando', async () => {
+  // pared gris lisa de 100x100 con un objeto oscuro de 12x12 (centro en 66,56)
+  const data = new Uint8ClampedArray(PW * PH * 4);
+  for (let y = 0; y < PH; y++) for (let x = 0; x < PW; x++) {
+    const o = x >= 60 && x < 72 && y >= 50 && y < 62, v = o ? 40 : 190, i = (y * PW + x) * 4;
+    data[i] = v; data[i + 1] = v; data[i + 2] = v; data[i + 3] = 255;
+  }
+  const luma = new Float32Array(PW * PH);
+  for (let i = 0; i < luma.length; i++) luma[i] = data[i * 4];
+  const G = gradientMap(luma, PW, PH);
+  const todo = rectM(0, 0, 100, 100);
+  const corrida = async (opts) => {
+    let n = 0;
+    const w = { kind: 'pared', name: 'Pared', area: 1, luma: 190, mask: todo.slice() };
+    const r = await partitionBySmallest([w], async ([p]) => { n++; return hasPt(objeto, p) ? objeto : todo; }, PW, PH, { grid: 10, frac: 0.3, minArea: 0.05, G, img: { data, width: PW, height: PH }, edgeBudget: 0, ...opts });
+    return { n, w, r };
+  };
+  const sin = await corrida({ skipPlain: false, dedupe: false });
+  const con = await corrida({});
+  assert.ok(con.n < sin.n, `con podas ${con.n}, sin podas ${sin.n}`);
+  assert.equal(con.w.mask[56 * PW + 66], 0, 'el objeto se sacó de la pared');
+  assert.deepEqual([...con.w.mask], [...sin.w.mask]);
+});
