@@ -1551,7 +1551,7 @@ export async function detectSurfaces(img, segment, opts = {}) {
       if (b / width >= 0.8 && g.cy > 0.65) { kind = null; why = 'tapa de mesa'; }
     }
     if (kind === 'pared' && minWallLuma && f.luma < minWallLuma) { kind = null; why = 'casi negro'; } // casi negro (hueco de puerta, marco oscuro, boca de pasillo): no es una pared a pintar
-    if (!kind) { rechazadas.push({ ...g, mask: clean, texture: f.texture, luma: f.luma, lines: f.lines, why }); continue; }
+    if (!kind) { rechazadas.push({ ...g, mask: clean, texture: f.texture, luma: f.luma, lines: f.lines, line: f.line, why }); continue; }
     for (let i = 0; i < clean.length; i++) if (clean[i]) taken[i] = 1;
     out.push({ kind, mask: clean, ...g, texture: f.texture, luma: f.luma, lines: f.lines, dudoso });
   }
