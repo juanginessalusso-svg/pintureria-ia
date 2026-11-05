@@ -283,6 +283,26 @@ export function growIntoGaps(regions, img, { step = 1.6, maxGrow = Math.round(im
 }
 
 /**
+ * Forma de la frontera entre dos núcleos (lista plana x,y de píxeles de la grilla chica): ángulo respecto de la vertical (0 = vertical, 90 = horizontal),
+ * largo del eje principal y desvío típico respecto de la recta (una esquina de dos paredes es una recta larga y casi vertical; el borde de una
+ * lámpara, una repisa o un cuadro es corto, curvo u horizontal). Medidas relativas al alto de la grilla.
+ */
+function boundaryShape(pts, w, h) {
+  const n = pts.length / 2;
+  let mx = 0, my = 0;
+  for (let k = 0; k < n; k++) { mx += pts[2 * k]; my += pts[2 * k + 1]; }
+  mx /= n; my /= n;
+  let sxx = 0, syy = 0, sxy = 0;
+  for (let k = 0; k < n; k++) { const dx = pts[2 * k] - mx, dy = pts[2 * k + 1] - my; sxx += dx * dx; syy += dy * dy; sxy += dx * dy; }
+  sxx /= n; syy /= n; sxy /= n;
+  const tr = sxx + syy, det = sxx * syy - sxy * sxy, disc = Math.sqrt(Math.max(0, tr * tr / 4 - det));
+  const l1 = tr / 2 + disc, l2 = Math.max(0, tr / 2 - disc);
+  const theta = 0.5 * Math.atan2(2 * sxy, sxx - syy); // dirección del eje principal medida desde x
+  const fromVertical = Math.abs(90 - Math.abs((theta * 180) / Math.PI));
+  return { ang: +fromVertical.toFixed(1), lenY: +((Math.sqrt(l1) * 3.46) / h).toFixed(3), resid: +Math.sqrt(l2).toFixed(2), cx: +(mx / w).toFixed(2), cy: +(my / h).toFixed(2) };
+}
+
+/**
  * Divide una máscara que fusionó varias superficies (pared + pared + techo del mismo color, con aristas muy suaves).
  * Busca "núcleos" muy lisos dentro de la máscara; si hay más de uno, cada píxel va al núcleo al que llega con menor
  * costo de gradiente (cuenca de aguas): una arista, por tenue que sea, hace de divisoria. Devuelve una lista de máscaras
@@ -337,8 +357,9 @@ export function splitMerged(mask, grad, w, h, width, height, { strictMax = 2.2, 
     for (const n of [x < w - 1 ? i + 1 : -1, i < w * h - w ? i + w : -1]) {
       if (n < 0 || own[n] < 0 || own[n] === own[i]) continue;
       const key = Math.min(own[i], own[n]) * 1000 + Math.max(own[i], own[n]);
-      const e = pairs.get(key) ?? { sum: 0, n: 0 };
+      const e = pairs.get(key) ?? { sum: 0, n: 0, pts: [] };
       e.sum += Math.max(grad[i], grad[n]); e.n++;
+      e.pts.push(i % w, Math.floor(i / w));
       pairs.set(key, e);
     }
   }
@@ -346,7 +367,7 @@ export function splitMerged(mask, grad, w, h, width, height, { strictMax = 2.2, 
   const find = (k) => (root[k] === k ? k : (root[k] = find(root[k])));
   for (const [key, e] of pairs) {
     const a = Math.floor(key / 1000), b = key % 1000, str = e.sum / e.n;
-    if (debug) debug({ a, b, strength: str, len: e.n });
+    if (debug) debug({ a, b, strength: str, len: e.n, ...boundaryShape(e.pts, w, h) });
     if (e.n >= 3 && str < minEdge) root[find(a)] = find(b);
   }
   for (let i = 0; i < own.length; i++) if (own[i] >= 0) own[i] = find(own[i]);
@@ -563,14 +584,32 @@ export function splitAtCorner(mask, width, height, { x0, tilt, ym }) {
  * Fracción del interior de una región (a ≥ 5 px del borde) con gradiente fuerte a resolución completa: las juntas de un azulejo
  * son líneas finas y rectas que una pared no tiene. Una pared lisa da ≈ 0; un paño de azulejo da bastante más.
  */
-export function lineRatio(mask, G, width, height, thr, inset = 5) {
+export function lineRatio(mask, G, width, height, thr, inset = 5, { loneLine = false, minFrac = 0.25 } = {}) {
   let n = 0, t = 0;
+  const rows = new Int32Array(height), rowW = new Int32Array(height), cols = new Int32Array(width), colW = new Int32Array(width);
   for (let y = inset; y < height - inset; y++) for (let x = inset; x < width - inset; x++) {
     const i = y * width + x;
     if (!mask[i] || !mask[i - inset] || !mask[i + inset] || !mask[i - inset * width] || !mask[i + inset * width]) continue;
-    n++; if (G[i] > thr) t++;
+    n++; rowW[y]++; colW[x]++;
+    if (G[i] > thr) { t++; rows[y]++; cols[x]++; }
   }
-  return n ? t / n : 0;
+  if (!n) return 0;
+  if (!loneLine || t / n === 0) return t / n;
+  // Una arista larga y recta SOLA dentro de la máscara (el borde de un zócalo o de un marco que SAM dejó adentro) no es un enlosado: el
+  // azulejo tiene una grilla de juntas (al menos dos líneas). Se agrupan las filas/columnas casi enteras de borde; si hay una sola
+  // agrupación, se descuenta; con dos o más se devuelve la proporción completa.
+  const cluster = (cnt, wid) => {
+    const out = [];
+    for (let i = 0; i < cnt.length; i++) {
+      if (!(wid[i] > 20 && cnt[i] > minFrac * wid[i])) continue;
+      let j = i, sum = 0;
+      while (j < cnt.length && wid[j] > 20 && cnt[j] > minFrac * wid[j]) { sum += cnt[j]; j++; }
+      out.push(sum); i = j;
+    }
+    return out;
+  };
+  const lines = [...cluster(rows, rowW), ...cluster(cols, colW)];
+  return lines.length === 1 ? Math.max(0, t - lines[0]) / n : t / n;
 }
 
 /**
@@ -1235,7 +1274,7 @@ export function addShadowStrips(regions, img, G, blocked, { maxDist = Math.round
  * Devuelve [{ kind: 'pared'|'techo', name, mask, area, cx, cy, texture }], máscaras DISJUNTAS, paredes de izquierda a derecha.
  */
 export async function detectSurfaces(img, segment, opts = {}) {
-  const { maxSeeds = 9, gradMax = 7, minDist = 2.5, minArea = 0.025, maxPared = 5, maxTexture = 0.12, refineMin = 2, minLumaRatio = 0.55, grow = true, snap = true, partition = true, hang = true, lockObjects = true, thinGaps = true, enclosed = true, tableVeto = true, minWallLuma = 30, frames = true, strips = true, blockRejected = true, splitMax = 2.2, splitEdge = 4.5, maxLine = 0.004, minCoverage = 0.35, relaxFactor = 1.8, corner = true, patience = 3, sky = true, hotMax = 0.3, techoMaxTexture = 0.15, skyBlue = 0.12, techoNeedsWall = true, minTechoContact = 0.3, skyLuma = 210 } = opts;
+  const { maxSeeds = 9, gradMax = 7, minDist = 2.5, minArea = 0.025, maxPared = 5, maxTexture = 0.12, refineMin = 2, minLumaRatio = 0.55, grow = true, snap = true, partition = true, hang = true, lockObjects = true, thinGaps = true, enclosed = true, tableVeto = true, minWallLuma = 30, frames = true, strips = true, blockRejected = true, splitMax = 2.2, splitEdge = 4.5, maxLine = 0.004, minCoverage = 0.35, relaxFactor = 1.8, corner = true, patience = 3, sky = true, hotMax = 0.3, techoMaxTexture = 0.15, skyBlue = 0.12, techoNeedsWall = true, minTechoContact = 0.3, skyLuma = 210, loneLine = true } = opts;
   const { width, height } = img;
   const { luma, w, h } = downscaleLuma(img);
   const grad = gradientMap(luma, w, h);
@@ -1294,7 +1333,7 @@ export async function detectSurfaces(img, segment, opts = {}) {
       const lp = toLow(parte, width, height, w, h);
       let ls = 0, ln = 0;
       for (let i = 0; i < lp.length; i++) if (lp[i]) { ls += luma[i]; ln++; }
-      found.push({ mask: parte, g, texture: textureRatio(lp, grad, w, h, texGrad * 1.5), luma: ln ? ls / ln : 0, line: lineRatio(parte, fullGrad(), width, height, 10) });
+      found.push({ mask: parte, g, texture: textureRatio(lp, grad, w, h, texGrad * 1.5), luma: ln ? ls / ln : 0, line: lineRatio(parte, fullGrad(), width, height, 10, 5, { loneLine }) });
       if (opts.debugLines) { const G = fullGrad(); found[found.length - 1].lines = opts.debugLines.map((t) => lineRatio(parte, G, width, height, t)); }
     }
     sinNada = aporto ? 0 : sinNada + 1;
@@ -1323,15 +1362,15 @@ export async function detectSurfaces(img, segment, opts = {}) {
     for (let i = 0; i < m.length; i++) if (f.mask[i] && !taken[i]) m[i] = 1;
     const clean = removeSmallIslands(m, width, height, Math.round(width * height * 0.002));
     const g = maskGeometry(clean, width, height);
-    let kind = classifySurface(g);
-    if (kind === 'pared' && f.texture > maxTexture) kind = null; // vidrio con paisaje, puerta con paneles, mueble…
-    if (kind === 'pared' && f.line > maxLine) kind = null; // azulejo: las juntas son líneas finas y rectas que una pared no tiene
+    let kind = classifySurface(g), why = kind ? null : 'forma';
+    if (kind === 'pared' && f.texture > maxTexture) { kind = null; why = 'textura'; } // vidrio con paisaje, puerta con paneles, mueble…
+    if (kind === 'pared' && f.line > maxLine) { kind = null; why = 'líneas'; } // azulejo: las juntas son líneas finas y rectas que una pared no tiene
     // Cielo, vidrio y luz de ventana: no son paredes aunque sean lisos y claros.
     //  - quemado: una pared fotografiada normal casi no tiene píxeles al tope de la escala (en las 15 fotos propias, 0 %); un cielo blanco, un vidrio o la luz
     //    de una ventana sí (n27 93 %, n20 99 %, n01 64–72 %, n17 35–68 %). Se descarta lo que tenga más de `hotMax` (una pared real con sol, n12: 25 %).
     //  - techo azul: ningún techo se pinta de azul cielo (n26: B−R = +0,47; los techos propios, ≤ +0,011).
     //  - techo con textura: el techo tampoco puede ser una persiana o un paisaje (la regla de `maxTexture` solo miraba paredes).
-    let st = null, why = null;
+    let st = null;
     if (kind && (opts.debugCand || sky)) st = colorStats(clean, img);
     if (sky && kind) {
       if (st.hot > hotMax) why = 'quemado';
@@ -1354,7 +1393,7 @@ export async function detectSurfaces(img, segment, opts = {}) {
   // Un hueco de puerta o pasillo oscuro se ve mucho más oscuro que las paredes de la habitación: no es una pared a pintar.
   const refLuma = Math.max(0, ...out.filter((s) => s.kind === 'pared').slice(0, 1).map((s) => s.luma)); // `out` ya viene del más grande al más chico
   for (let i = out.length - 1; i >= 0; i--) {
-    if (out[i].kind === 'pared' && out[i].luma < refLuma * minLumaRatio) { rechazadas.push(out[i]); out.splice(i, 1); }
+    if (out[i].kind === 'pared' && out[i].luma < refLuma * minLumaRatio) { rechazadas.push({ ...out[i], why: 'luma' }); out.splice(i, 1); }
   }
   if (sky && techoNeedsWall) { // un techo CLARO (luma > skyLuma; los techos propios ≤ 187, cielo n30 231, luz n02 218) solo vale si apoya en una pared aceptada: sin pared debajo es cielo o luz de una ventana
     const pm = out.filter((s) => s.kind === 'pared').map((s) => s.mask);

@@ -120,6 +120,20 @@ test('lineRatio: una pared lisa ≈ 0; un paño con juntas (líneas rectas finas
   assert.ok(lineRatio(mask, juntas, w, h, 10) > 0.05);
 });
 
+test('lineRatio con loneLine: una sola arista larga (zócalo adentro de la máscara) se tolera; una grilla de juntas no', () => {
+  const w = 100, h = 100, mask = new Uint8Array(w * h).fill(1);
+  const una = new Float32Array(w * h);
+  for (let x = 0; x < w; x++) una[80 * w + x] = 40; // solo el borde del zócalo
+  assert.ok(lineRatio(mask, una, w, h, 10) > 0.004);
+  assert.equal(lineRatio(mask, una, w, h, 10, 5, { loneLine: true }), 0);
+  const juntas = new Float32Array(w * h);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (x % 25 === 12 || y % 25 === 12) juntas[y * w + x] = 40;
+  assert.equal(lineRatio(mask, juntas, w, h, 10, 5, { loneLine: true }), lineRatio(mask, juntas, w, h, 10));
+  const dos = new Float32Array(w * h);
+  for (let x = 0; x < w; x++) { dos[30 * w + x] = 40; dos[70 * w + x] = 40; }
+  assert.equal(lineRatio(mask, dos, w, h, 10, 5, { loneLine: true }), lineRatio(mask, dos, w, h, 10)); // dos líneas = enlosado
+});
+
 test('classifySurface: una banda ancha en la mitad de arriba es la pared sobre los azulejos', () => {
   const g = { area: 0.22, cx: 0.5, cy: 0.27, top: 0.17, bottom: 0.38, left: 0, right: 1, touchesTop: false, touchesBottom: false };
   assert.equal(classifySurface(g), 'pared');
