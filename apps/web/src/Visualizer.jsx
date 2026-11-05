@@ -25,6 +25,7 @@ export function Visualizer() {
   const [model, setModel] = useState({ state: 'loading', loaded: 0, total: 0, info: '' });
   const [status, setStatus] = useState('');
   const [hasPhoto, setHasPhoto] = useState(false);
+  const [aspect, setAspect] = useState(1); // ancho/alto de la foto: la foto fija en pantallas chicas se limita en alto sin deformarse
   const [points, setPoints] = useState([]);
   const [surfList, setSurfList] = useState([]); // superficies confirmadas (para la lista): {id, name, color}
   const [activeId, setActiveId] = useState(null); // superficie seleccionada en la lista: el próximo color es para ella
@@ -190,6 +191,7 @@ export function Visualizer() {
       bmp.close?.();
       const img = ctx.getImageData(0, 0, width, height);
       photo.current = { data: img.data, width, height };
+      setAspect(width / height);
       gains.current = estimateWhiteBalance(photo.current);
       const mySeq = ++photoSeq.current;
       current.current = null; surfaces.current = []; surfSeq.current = 0; result.current = null; pointsRef.current = []; autoCache.current = []; activeRef.current = null; flash.current = null; setManual(false); setCutMode(false);
@@ -615,11 +617,15 @@ export function Visualizer() {
       </div>
 
       <div class={hasPhoto ? '' : 'hide'}>
+        {/* En pantallas chicas la foto queda fija arriba mientras se elige el color (ver .stage en styles.css): sin esto la carta quedaba ~1000 px más abajo y no se veía el resultado. */}
+        <div class="pickzone">
+        <div class="stage" style={{ '--aspect': aspect }}>
         <div ref={viewportRef} class="viewport" onWheel={onWheel}>
           <canvas ref={canvasRef} class="photo" style={{ touchAction, transform: viewTransform(view.current), cursor: !manual ? (cutMode ? 'crosshair' : 'pointer') : mode === 'pan' || zoom > 1 && mode !== 'brush' && mode !== 'erase' ? 'grab' : 'crosshair' }}
             onClick={onCanvasClick} onPointerDown={onPointerDown} onPointerMove={onPointerMove}
             onPointerUp={onPointerUp} onPointerCancel={onPointerUp} onPointerLeave={onPointerLeave} />
           {manual && (mode === 'brush' || mode === 'erase') && <div ref={ringRef} class="ring" style={{ width: `${radius * 2}px`, height: `${radius * 2}px` }} />}
+        </div>
         </div>
         <div class="row zoombar">
           <button onClick={() => zoomCenter(1 / 1.5)} disabled={zoom <= 1} aria-label="Alejar">−</button>
@@ -680,6 +686,7 @@ export function Visualizer() {
 
         <h3>{activeSurface ? `Color para "${activeSurface.name}"` : 'Elegí un color'}</h3>
         <ColorPicker colors={colors} selected={activeSurface ? activeSurface.color : color} onPick={pick} />
+        </div>
 
         <div class="card grid">
           <label>Luminancia

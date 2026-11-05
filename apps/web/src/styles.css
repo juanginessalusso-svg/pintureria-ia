@@ -81,3 +81,12 @@ select { font: inherit; padding: 8px; border: 1px solid var(--line); border-radi
 .surf.on { outline: 2px solid var(--brand); background: #f0f6ff; }
 .surfname { flex: 1; min-width: 0; border: 1px solid transparent; background: transparent; font-weight: 600; padding: 4px; }
 .surf.on .surfname { border-color: var(--line); background: #fff; }
+
+/* Foto fija mientras se elige el color (solo pantallas chicas): la foto se limita al 46 % del alto de la pantalla y conserva su proporción
+   (el ancho se calcula con la proporción de la foto, así el visor y el canvas miden lo mismo y el zoom/pan sigue funcionando). La zona termina
+   en la carta de colores: la calculadora de más abajo no queda tapada. */
+@media (max-width: 760px) {
+  .stage { position: sticky; top: 0; z-index: 20; background: var(--bg); padding: 6px 0; box-shadow: 0 6px 8px -6px #0003; }
+  .stage .viewport { width: min(100%, calc(46vh * var(--aspect, 1))); margin: 0 auto; }
+  @supports (height: 1dvh) { .stage .viewport { width: min(100%, calc(46dvh * var(--aspect, 1))); } }
+}

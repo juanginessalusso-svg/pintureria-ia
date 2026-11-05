@@ -49,3 +49,14 @@ Refactor pedido: la decisión de "Sacar un objeto" (sin solape / vacía / ≥ 85
 - **Dedos reales**: los gestos son eventos sintéticos perfectos (sin temblor, sin palma apoyada, sin retardo de 300 ms ni toques fantasma). El pellizco y el pincel con dos dedos reales pueden comportarse distinto; el menú contextual de pulsación larga sobre "Mantené para ver el antes" no existe en el emulador.
 - **Rendimiento y memoria en un celular real**: el análisis (~40 s) se midió en una máquina compartida. La memoria no se pudo concluir: el heap de JS quedó plano (3 MB) en 6 cambios de foto, pero las fotos viven en `ArrayBuffer`/WASM fuera de ese contador. Sin medición de RAM total ni de la tasa de cierre del navegador en un teléfono de gama baja.
 - Orientación horizontal, teclado virtual sobre los campos de la calculadora, WhatsApp real, "Compartir con la imagen" (`navigator.share`).
+
+
+## Corrección posterior: la carta de colores ya no queda fuera de vista (2026-11-05)
+
+**Problema (media, UX):** en el celular la carta de colores quedaba ~1000 px debajo de la foto: al elegir un color no se veía el resultado sin hacer scroll, lo que contradice "foto → elegir color → listo".
+
+**Arreglo** (`Visualizer.jsx` + `styles.css`, solo pantallas ≤ 760 px): la foto queda **fija arriba** (`position: sticky`) con un alto máximo de 46 % de la pantalla, mientras la lista de superficies y la carta de colores se desplazan debajo. La zona fija termina en la carta de colores (`.pickzone`): la calculadora de más abajo no queda tapada. El ancho del visor se calcula con la proporción de la foto (`--aspect`) para que el visor y el canvas midan lo mismo (el zoom/pan depende de eso).
+
+**Verificado en Chromium emulado:** iPhone 13 (390×664) con r4 (vertical): al bajar a la carta la foto sigue a la vista (alto 305 px de 664), elegir "Arena" pinta la pared en la foto fija, sin scroll horizontal, y al final de la página (calculadora) la foto ya salió de pantalla. Pixel 5 (393 px) con o01 (horizontal): visor = canvas (361×271), zoom hasta 3,4×, el toque con zoom selecciona la superficie correcta. Sin errores de consola.
+
+**No probado:** iOS Safari real (el `sticky` y `dvh` se comportan distinto en Safari con la barra de direcciones que se esconde), dedos reales, teclado virtual abierto al buscar un color (el visor fijo reduce el espacio visible), orientación horizontal del celular. La foto vertical queda angosta (229 px de 390): es el costo de dejarla fija; si molesta, el 46 % se ajusta en `styles.css`.
