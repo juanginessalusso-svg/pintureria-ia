@@ -43,6 +43,7 @@ export function Visualizer() {
   const [wallPx, setWallPx] = useState(0); // píxeles de pared marcados (confirmados + selección en curso)
   const [calib, setCalib] = useState({ tapping: false, pxPerM: null });
   const [cutMode, setCutMode] = useState(false); // "Sacar un objeto": el próximo toque recorta lo que quedó pintado y no es pared
+  const [photoId, setPhotoId] = useState(0); // cambia con cada foto: reinicia la calculadora (m² a mano, sumar/restar) para que no arrastre datos de la anterior
   const [manual, setManual] = useState(false); // herramientas manuales (clics de SAM, pincel, borrador): opcionales, la detección es automática
 
   const calibRef = useRef({ tapping: false, pts: [], pxPerM: null, meters: 0 }); // línea de referencia (coords de la foto)
@@ -195,6 +196,7 @@ export function Visualizer() {
       samMask.current = null; strokes.current = []; surfUndo.current = []; stroke.current = null; gesture.current = null; pointers.current.clear();
       view.current = { s: 1, tx: 0, ty: 0 }; applyView();
       calibRef.current = { tapping: false, pts: [], pxPerM: null, meters: 0 }; setCalib({ tapping: false, pxPerM: null }); setWallPx(0);
+      colorRef.current = null; setColor(null); setPhotoId(mySeq); // el color de la foto anterior no se arrastra (habilitaba Descargar sin nada pintado)
       setPoints([]); setSurfList([]); setActiveId(null); setHasPhoto(true); render();
 
       setStatus(model.state === 'ready' ? 'Analizando la foto…' : 'Esperando que cargue el modelo…');
@@ -698,7 +700,7 @@ export function Visualizer() {
           {ANOTAR && <div class="row"><button onClick={downloadAnnotation} disabled={!surfList.length}>🧪 Descargar anotación (JSON)</button></div>}
         </div>
 
-        <Calculator wallPx={wallPx} calib={calib} products={products} branches={branches} tenant={tenant} color={color} getImageBlob={getImageBlob}
+        <Calculator key={photoId} wallPx={wallPx} calib={calib} products={products} branches={branches} tenant={tenant} color={color} getImageBlob={getImageBlob}
           surfaceColors={surfList.filter((s) => s.color).map((s) => ({ surface: s.name, name: s.color.name, code: s.color.code }))}
           onStartCalib={startCalib} onResetCalib={resetCalib} />
 
