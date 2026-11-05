@@ -121,7 +121,7 @@ export function classifySurface(g, { techoAlto = false } = {}) {
   if (g.cy < 0.3 && g.top < 0.04 && h < 0.45) return 'techo';
   // techoAlto (opt-in): un techo visto en perspectiva puede bajar hasta la mitad de la foto, pero es un trapecio ancho arriba: su centroide cae en el 40 % superior de su caja
   // (un rectángulo, como una pared sobre una mesada, lo tiene en el 50 %).
-  if (techoAlto && g.area >= 0.08 && g.cy < 0.3 && g.top < 0.04 && h < 0.62 && (g.cy - g.top) / h < 0.42) return 'techo';
+  if (techoAlto && g.area >= 0.15 && g.cy < 0.3 && g.top < 0.04 && h < 0.62 && (g.cy - g.top) / h < 0.42) return 'techo';
   if (g.cy > 0.7 && h < 0.4) return null; // piso
   if (g.cy > 0.62 && g.top > 0.35) return null; // algo bajo y chico: mueble, piso
   if (g.area / Math.max(0.01, g.bottom - g.top) < 0.06) return null; // tira angosta (ancho medio < 6 % de la foto): un marco o una puerta cortados por el encuadre

@@ -81,3 +81,19 @@ test('modo fachada: usa el detector de fachadas y avisa cuál usó', async () =>
   assert.equal(r.mode, 'fachada');
   assert.equal(r.found.filter((f) => f.kind === 'pared').length, 1);
 });
+
+test('runDetect: mergeTecho conserva el techo del interior cuando no hay pared y se cae a fachada (apagado: queda solo el techo)', async () => {
+  const data = room();
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { // techo medio (luma 150) y "pared" con ruido de alto contraste: no es una zona lisa
+    const i = (y * W + x) * 4;
+    const v = y < H * 0.2 ? 150 : (x * 7 + y * 13) % 2 ? 250 : 10;
+    data[i] = data[i + 1] = data[i + 2] = v;
+  }
+  const image = { data, width: W, height: H };
+  const apagado = await runDetect({ image, segment: fakeSegment });
+  assert.deepEqual(apagado.found.map((f) => f.kind), ['techo']);
+  assert.equal(apagado.mode, 'interior');
+  const prendido = await runDetect({ image, segment: fakeSegment, mergeTecho: true });
+  assert.equal(prendido.mode, 'fachada');
+  assert.ok(prendido.found.some((f) => f.kind === 'techo'), prendido.found.map((f) => f.kind).join());
+});

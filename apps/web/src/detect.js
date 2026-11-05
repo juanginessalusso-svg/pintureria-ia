@@ -20,7 +20,7 @@ export class DetectCancelled extends Error {
  * Devuelve { found: [{ name, kind, area, mask }], decodes, mode: 'interior'|'fachada' }
  *   kind 'ladrillo' = superficie rugosa: la app NO le pone color por defecto.
  */
-export async function runDetect({ image, segment, onProgress = () => {}, isCancelled = () => false, opts = {}, mode = 'auto' }) {
+export async function runDetect({ image, segment, onProgress = () => {}, isCancelled = () => false, opts = {}, mode = 'auto', mergeTecho = false }) {
   const { width, height } = image;
   let n = 0;
   const seg = async (pts) => {
@@ -32,7 +32,22 @@ export async function runDetect({ image, segment, onProgress = () => {}, isCance
   };
   let found = [], used = mode === 'fachada' ? 'fachada' : 'interior';
   if (mode !== 'fachada') found = await detectSurfaces(image, seg, opts);
-  if (mode === 'fachada' || (mode === 'auto' && !found.length)) { found = await detectFacade(image, seg); used = 'fachada'; }
+  // mergeTecho (opt-in): si el interior halló techo pero ninguna pared, la caída a fachada no tira ese techo (el detector de fachadas no sabe de techo):
+  // se conserva el techo del interior en lo que la fachada no ocupó.
+  const techoInterior = mergeTecho && mode === 'auto' && !found.some((f) => f.kind === 'pared') ? found.filter((f) => f.kind === 'techo') : [];
+  if (mode === 'fachada' || (mode === 'auto' && (!found.length || (mergeTecho && !found.some((f) => f.kind === 'pared'))))) {
+    found = await detectFacade(image, seg); used = 'fachada';
+    if (techoInterior.length && !found.some((f) => f.kind === 'techo')) {
+      const ocupado = new Uint8Array(width * height);
+      for (const f of found) for (let i = 0; i < ocupado.length; i++) if (f.mask[i]) ocupado[i] = 1;
+      for (const t of techoInterior) {
+        const m = new Uint8Array(width * height);
+        let a = 0;
+        for (let i = 0; i < m.length; i++) if (t.mask[i] && !ocupado[i]) { m[i] = 1; a++; }
+        if (a / (width * height) >= 0.025) found.push({ ...t, mask: m, area: a / (width * height) });
+      }
+    }
+  }
   if (isCancelled()) throw new DetectCancelled();
   return { found: found.map(({ name, kind, area, mask }) => ({ name, kind, area, mask })), decodes: n, mode: used };
 }

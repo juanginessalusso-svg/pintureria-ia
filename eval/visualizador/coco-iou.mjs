@@ -50,7 +50,7 @@ for (const e of list) {
   const t0 = performance.now();
   const { width: rw, height: rh } = encoderSize(width, height);
   await sam.embed(rgbaToRgbFloat(resize(img.data, width, height, rw, rh), rw, rh), rw, rh, width, height);
-  const { found, mode } = await runDetect({ image: img, segment: (pts) => { sam.reset(); return sam.segment(pts); }, opts: COCO_OPTS, mode: process.env.COCO_MODE ?? 'auto' });
+  const { found, mode } = await runDetect({ image: img, segment: (pts) => { sam.reset(); return sam.segment(pts); }, opts: COCO_OPTS, mode: process.env.COCO_MODE ?? 'auto', mergeTecho: !!COCO_OPTS.mergeTecho });
   const walls = new Uint8Array(width * height), ceil = new Uint8Array(width * height);
   for (const f of found) { const t = f.kind === 'techo' ? ceil : f.kind === 'pared' ? walls : null; if (t) for (let i = 0; i < t.length; i++) if (f.mask[i]) t[i] = 1; }
   const res = { id: e.id, split: e.split, mode, ms: Math.round(performance.now() - t0), n: found.length, pared: score(walls, null, lab, WALL, WALL_ANY), techo: score(ceil, null, lab, CEIL, CEIL) };
