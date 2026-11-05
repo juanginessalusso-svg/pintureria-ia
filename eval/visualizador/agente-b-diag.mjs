@@ -5,7 +5,7 @@ import jpeg from 'jpeg-js';
 import { PNG } from 'pngjs';
 import * as ort from 'onnxruntime-web/wasm';
 import { Sam, encoderSize, rgbaToRgbFloat, workingSize } from '../../apps/web/src/sam.js';
-import { detectSurfaces } from '@pintureria/core';
+import { detectSurfaces, rescueTextured, gradientMap } from '@pintureria/core';
 import { cleanMask } from '@pintureria/core';
 
 const dir = process.env.COCO_DIR, outFile = process.env.DIAG_OUT;
@@ -32,6 +32,16 @@ for (const e of list) {
   let gt = 0; for (let i = 0; i < lab.length; i++) if (WALL(lab[i])) gt++;
   const info = (r, acc) => { let inW = 0, n = 0, lb = 0; for (let i = 0; i < lab.length; i++) if (r.mask[i]) { n++; if (WALL(lab[i])) inW++; if (lab[i] === 255) lb++; } return { acc, kind: r.kind ?? null, why: r.why ?? null, area: +(n / lab.length).toFixed(3), wallFrac: +(inW / Math.max(1, n)).toFixed(2), wallOfGt: +(inW / Math.max(1, gt)).toFixed(2), tex: +(r.texture ?? 0).toFixed(3), luma: Math.round(r.luma ?? 0), line: r.lines ?? null, cy: +(r.cy ?? 0).toFixed(2), line: +(r.line ?? 0).toFixed(4), geo: [r.left, r.top, r.right, r.bottom].map((v) => +(v ?? 0).toFixed(2)) }; };
   const regs = [...lista.map((r) => info(r, true)), ...lista.rechazadas.map((r) => info(r, false))];
+  if (process.env.RESCUE_TRY) {
+    const lum = new Float32Array(width * height); for (let i = 0; i < lum.length; i++) lum[i] = 0.2126 * img.data[i * 4] + 0.7152 * img.data[i * 4 + 1] + 0.0722 * img.data[i * 4 + 2];
+    const G = gradientMap(lum, width, height);
+    const grid = [{ n: 'base' }, { n: 'sm10', smoothThr: 10 }, { n: 'sm10t30', smoothThr: 10, tolLuma: 30, tolChroma: 0.04 }, { n: 'sm16t40', smoothThr: 16, tolLuma: 40, tolChroma: 0.05 }];
+    for (const r of lista.rechazadas) {
+      if (!['textura', 'líneas'].includes(r.why) || r.area < 0.1) continue;
+      const out = grid.map(({ n, ...o }) => { const ms = rescueTextured(r.mask, img, G, o); const u = new Uint8Array(lab.length); for (const m of ms) for (let i = 0; i < u.length; i++) if (m[i]) u[i] = 1; const q = info({ mask: u }, true); return `${n}:${ms.length}c a${q.area} par${q.wallFrac} gt${q.wallOfGt}`; });
+      console.log('   TRY', r.why, 'a', +r.area.toFixed(2), out.join(' | '));
+    }
+  }
   const res = { id: e.id, gtWall: +(gt / lab.length).toFixed(3), regs };
   fs.appendFileSync(outFile, JSON.stringify(res) + '\n');
   console.log(e.id, 'gt', res.gtWall, '\n' + regs.map((r) => `   ${r.acc ? 'OK ' : 'rej'} ${String(r.kind ?? r.why).padEnd(14)} area ${r.area} pared% ${r.wallFrac} cubreGT ${r.wallOfGt} tex ${r.tex} luma ${r.luma} line ${r.line} geo ${r.geo}`).join('\n'));

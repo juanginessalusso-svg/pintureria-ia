@@ -1562,7 +1562,7 @@ export async function detectSurfaces(img, segment, opts = {}) {
     const ro = typeof rescue === 'object' ? rescue : {};
     for (const r of [...rechazadas]) {
       if (!(r.why === 'textura' || (rescateExtra && r.why === 'líneas')) || r.area < (ro.minAreaMask ?? 0.1) || r.texture > (ro.maxTex ?? 0.6) || !r.mask) continue;
-      for (const m of rescueTextured(r.mask, img, fullGrad(), ro)) {
+      for (const m of rescueTextured(r.mask, img, fullGrad(), paredRescate ? { smoothThr: 10, tolLuma: 30, tolChroma: 0.04, ...(typeof paredRescate === 'object' ? paredRescate.rescate : null), ...ro } : ro)) { // paredRescate: tolerancias más anchas (una pared con sombra suave o luz degradada no es de un solo tono)
         const g = maskGeometry(m, width, height);
         if (classifySurface(g) !== 'pared') continue;
         const lp = toLow(m, width, height, w, h);
