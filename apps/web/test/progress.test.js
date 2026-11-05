@@ -28,8 +28,8 @@ test('timeHint: sólo cotas basadas en el ritmo medido en este teléfono', () =>
   assert.match(timeHint({ stage: 'embed', initMs: 10000, embedElapsed: 5000 }), /faltan unos 30 s/);
   assert.match(timeHint({ stage: 'embed', initMs: 10000, embedElapsed: 29000 }), /casi lista/);
   assert.match(timeHint({ stage: 'detect', n: 1 }), /Calculando/);
-  // 10 decodificaciones en 30 s = 3 s c/u -> como mucho (60-10)*3 = 150 s = 2,5 min
-  assert.match(timeHint({ stage: 'detect', n: 10, detectElapsed: 30000 }), /como mucho 2,5 min/);
+  // 10 decodificaciones en 30 s = 3 s c/u -> como mucho (40-10)*3 = 90 s = 1,5 min
+  assert.match(timeHint({ stage: 'detect', n: 10, detectElapsed: 30000 }), /como mucho 1,5 min/);
   assert.match(timeHint({ stage: 'detect', n: DETECT_TYPICAL, detectElapsed: 30000 }), /Falta poco/);
   assert.equal(timeHint({ stage: 'wait' }), '');
 });

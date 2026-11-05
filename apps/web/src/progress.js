@@ -1,12 +1,12 @@
 // Progreso honesto del análisis de la foto (puro, sin DOM: se prueba con node --test).
 //
-// No se sabe de antemano cuántas decodificaciones va a hacer la detección (10 a ~60 según la foto), así que:
+// No se sabe de antemano cuántas decodificaciones va a hacer la detección (10 a ~25 en las fotos medidas con el pipeline actual), así que:
 //  - la barra nunca llega al 100 % antes de terminar (tope 95 %) y no promete un total que no existe;
 //  - el tiempo que se muestra es una COTA SUPERIOR razonable ("como mucho"), calculada con el ritmo que ya se
 //    midió en ESTE teléfono (lo que tardó la sesión y la última decodificación), nunca con números de otra máquina.
 
-export const DETECT_TYPICAL = 40; // decodificaciones "típicas" para escalar la barra
-export const DETECT_MAX = 60; // techo observado (foto de 56); sólo sirve para la cota de tiempo
+export const DETECT_TYPICAL = 25; // decodificaciones "típicas" para escalar la barra (medido con el pipeline actual: 10, 23 y 25 en t6, s1 y s2)
+export const DETECT_MAX = 40; // techo para la cota de tiempo: más alto que lo medido (25) con margen; si una foto pasa de esto, la cota se queda en 0 y el texto dice "Falta poco" sin mentir con la barra al 95 %
 export const EMBED_SHARE = 0.2; // parte de la barra que ocupa el análisis del encoder (en fotos pesadas es chico)
 // El encoder tarda ~2,7 a 3 veces lo que tardó crear la sesión (medido en 1x, 4x y 6x): sirve para estimar la 1.ª etapa en este teléfono.
 export const EMBED_PER_INIT = 3;
@@ -48,7 +48,7 @@ export function timeHint({ stage, initMs = 0, embedElapsed = 0, detectElapsed = 
     if (!initMs) return 'Puede tardar un par de minutos en equipos lentos.';
     const est = initMs * EMBED_PER_INIT;
     const left = Math.max(0, est - embedElapsed);
-    return `${left > 5000 ? `Esta parte: faltan ${fmtDuration(left)}.` : 'Esta parte está casi lista.'} Después viene buscar las paredes (tarda entre 1 y 3 veces más).`;
+    return `${left > 5000 ? `Esta parte: faltan ${fmtDuration(left)}.` : 'Esta parte está casi lista.'} Después viene buscar las paredes (tarda entre 1 y 2,5 veces más).`;
   }
   if (stage === 'detect') {
     if (n < 3) return 'Calculando cuánto falta…';
