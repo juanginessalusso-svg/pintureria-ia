@@ -28,8 +28,8 @@
    },
    {
     "nombre": "Pared derecha",
-    "pct": 9.1,
-    "md5": "40e916d8"
+    "pct": 9,
+    "md5": "8fd4d6ac"
    }
   ],
   "decodificaciones": 31
@@ -138,23 +138,23 @@
   "superficies": [
    {
     "nombre": "Pared izquierda",
-    "pct": 24,
-    "md5": "bbbe24b0"
+    "pct": 23.9,
+    "md5": "f49e790e"
    },
    {
     "nombre": "Pared del medio",
     "pct": 10.4,
-    "md5": "f4558938"
+    "md5": "e0388605"
    },
    {
     "nombre": "Pared derecha",
     "pct": 35.2,
-    "md5": "43a64d43"
+    "md5": "a6c2e2dd"
    },
    {
     "nombre": "Techo",
     "pct": 4.4,
-    "md5": "21c4b34a"
+    "md5": "259e9cb2"
    }
   ],
   "decodificaciones": 26
@@ -204,7 +204,7 @@
    {
     "nombre": "Techo",
     "pct": 31.3,
-    "md5": "bd5504e9"
+    "md5": "2ac12d1a"
    }
   ],
   "decodificaciones": 31
@@ -213,8 +213,8 @@
   "superficies": [
    {
     "nombre": "Pared",
-    "pct": 48.8,
-    "md5": "698b40f5"
+    "pct": 48.6,
+    "md5": "681ddbc1"
    }
   ],
   "decodificaciones": 23
@@ -229,7 +229,7 @@
    {
     "nombre": "Pared derecha",
     "pct": 51.9,
-    "md5": "fa8b5401"
+    "md5": "8343e5ee"
    },
    {
     "nombre": "Techo",
@@ -268,5 +268,359 @@
    }
   ],
   "decodificaciones": 8
+ },
+ "n01-dormitorio-limpio.jpg": {
+  "superficies": [
+   {
+    "nombre": "Pared",
+    "pct": 43.5,
+    "md5": "0c46e4c2"
+   }
+  ],
+  "decodificaciones": 16
+ },
+ "n02-dormitorio-vert.jpg": {
+  "superficies": [
+   {
+    "nombre": "Pared izquierda",
+    "pct": 9.5,
+    "md5": "ef26f84b"
+   },
+   {
+    "nombre": "Pared derecha",
+    "pct": 30.7,
+    "md5": "a1bd91e8"
+   }
+  ],
+  "decodificaciones": 15
+ },
+ "n03-cama-celular.jpg": {
+  "superficies": [
+   {
+    "nombre": "Techo",
+    "pct": 2.7,
+    "md5": "45987c5e"
+   }
+  ],
+  "decodificaciones": 11
+ },
+ "n04-cuarto-nino.jpg": {
+  "superficies": [
+   {
+    "nombre": "Pared",
+    "pct": 22.5,
+    "md5": "6205720e"
+   },
+   {
+    "nombre": "Techo",
+    "pct": 19.1,
+    "md5": "27aff02a"
+   }
+  ],
+  "decodificaciones": 28
+ },
+ "n05-bano-lavabo.jpg": {
+  "superficies": [],
+  "decodificaciones": 8
+ },
+ "n06-bano-pared.jpg": {
+  "superficies": [],
+  "decodificaciones": 3
+ },
+ "n07-bano-antiguo.jpg": {
+  "superficies": [],
+  "decodificaciones": 12
+ },
+ "n08-bano-familiar.jpg": {
+  "superficies": [
+   {
+    "nombre": "Techo",
+    "pct": 21.8,
+    "md5": "616aa3d3"
+   }
+  ],
+  "decodificaciones": 17
+ },
+ "n09-pasillo.jpg": {
+  "superficies": [
+   {
+    "nombre": "Pared",
+    "pct": 21,
+    "md5": "44aca66c"
+   },
+   {
+    "nombre": "Techo",
+    "pct": 14.8,
+    "md5": "df442e8a"
+   }
+  ],
+  "decodificaciones": 28
+ },
+ "n10-pasillo-escalera.jpg": {
+  "superficies": [
+   {
+    "nombre": "Pared",
+    "pct": 3,
+    "md5": "288a52b4"
+   }
+  ],
+  "decodificaciones": 9
+ },
+ "n11-pasillo-edificio.jpg": {
+  "superficies": [
+   {
+    "nombre": "Pared izquierda",
+    "pct": 9.5,
+    "md5": "9efc08b6"
+   },
+   {
+    "nombre": "Pared del medio",
+    "pct": 38,
+    "md5": "861d4fb3"
+   },
+   {
+    "nombre": "Pared derecha",
+    "pct": 7.9,
+    "md5": "ebcb75b7"
+   }
+  ],
+  "decodificaciones": 25
+ },
+ "n12-obra-reforma.jpg": {
+  "superficies": [
+   {
+    "nombre": "Pared",
+    "pct": 20.5,
+    "md5": "43985f5a"
+   },
+   {
+    "nombre": "Techo",
+    "pct": 16.8,
+    "md5": "fbac77a7"
+   }
+  ],
+  "decodificaciones": 29
+ },
+ "n13-cuarto-abandonado.jpg": {
+  "superficies": [
+   {
+    "nombre": "Pared",
+    "pct": 19.1,
+    "md5": "8f9fb996"
+   },
+   {
+    "nombre": "Techo",
+    "pct": 17.3,
+    "md5": "dbf0babe"
+   }
+  ],
+  "decodificaciones": 32
+ },
+ "n14-living-refaccion.jpg": {
+  "superficies": [
+   {
+    "nombre": "Pared izquierda",
+    "pct": 5.2,
+    "md5": "70686714"
+   },
+   {
+    "nombre": "Pared del medio",
+    "pct": 6.2,
+    "md5": "e60ef42c"
+   },
+   {
+    "nombre": "Pared derecha",
+    "pct": 51.4,
+    "md5": "667bbe55"
+   }
+  ],
+  "decodificaciones": 23
+ },
+ "n15-oficina-casa.jpg": {
+  "superficies": [],
+  "decodificaciones": 9
+ },
+ "n16-oficina-casa2.jpg": {
+  "superficies": [
+   {
+    "nombre": "Pared izquierda",
+    "pct": 14.7,
+    "md5": "76cd5faa"
+   },
+   {
+    "nombre": "Pared del medio",
+    "pct": 5.9,
+    "md5": "b70c88d7"
+   },
+   {
+    "nombre": "Pared derecha",
+    "pct": 6.8,
+    "md5": "ec9c4c46"
+   }
+  ],
+  "decodificaciones": 26
+ },
+ "n17-oficina-casa3.jpg": {
+  "superficies": [
+   {
+    "nombre": "Pared",
+    "pct": 7.7,
+    "md5": "df7e71fd"
+   }
+  ],
+  "decodificaciones": 18
+ },
+ "n18-living.jpg": {
+  "superficies": [
+   {
+    "nombre": "Techo",
+    "pct": 5.7,
+    "md5": "d00ab97b"
+   }
+  ],
+  "decodificaciones": 11
+ },
+ "n19-interior-casa.jpg": {
+  "superficies": [],
+  "decodificaciones": 7
+ },
+ "n20-interior-casa2.jpg": {
+  "superficies": [
+   {
+    "nombre": "Pared",
+    "pct": 6.6,
+    "md5": "bc4743cb"
+   }
+  ],
+  "decodificaciones": 12
+ },
+ "n21-cuarto-blanco.jpg": {
+  "superficies": [
+   {
+    "nombre": "Pared izquierda",
+    "pct": 6.8,
+    "md5": "774b8b92"
+   },
+   {
+    "nombre": "Pared del medio",
+    "pct": 3.3,
+    "md5": "ee53cc95"
+   },
+   {
+    "nombre": "Pared derecha",
+    "pct": 15.8,
+    "md5": "9239a5b3"
+   },
+   {
+    "nombre": "Techo",
+    "pct": 9.8,
+    "md5": "ef05c18e"
+   }
+  ],
+  "decodificaciones": 36
+ },
+ "n22-comedor.jpg": {
+  "superficies": [],
+  "decodificaciones": 9
+ },
+ "n23-cocina-vert.jpg": {
+  "superficies": [
+   {
+    "nombre": "Techo",
+    "pct": 30.6,
+    "md5": "2986af02"
+   }
+  ],
+  "decodificaciones": 15
+ },
+ "n24-piso-madera.jpg": {
+  "superficies": [
+   {
+    "nombre": "Pared",
+    "pct": 8.8,
+    "md5": "ef3dc7b7"
+   }
+  ],
+  "decodificaciones": 7
+ },
+ "n25-fachada-vert.jpg": {
+  "superficies": [],
+  "decodificaciones": 8
+ },
+ "n26-edificio-vert.jpg": {
+  "superficies": [],
+  "decodificaciones": 3
+ },
+ "n27-pared-exterior.jpg": {
+  "superficies": [],
+  "decodificaciones": 8
+ },
+ "n28-casa-exterior.jpg": {
+  "superficies": [],
+  "decodificaciones": 8
+ },
+ "n29-exterior-color.jpg": {
+  "superficies": [
+   {
+    "nombre": "Pared",
+    "pct": 39.6,
+    "md5": "8ef573b1"
+   }
+  ],
+  "decodificaciones": 22
+ },
+ "n30-edificio-viejo.jpg": {
+  "superficies": [
+   {
+    "nombre": "Pared",
+    "pct": 6.2,
+    "md5": "052515c0"
+   }
+  ],
+  "decodificaciones": 10
+ },
+ "n31-casa-ladrillo.jpg": {
+  "superficies": [],
+  "decodificaciones": 3
+ },
+ "n32-piso-madera-casa.jpg": {
+  "superficies": [
+   {
+    "nombre": "Pared izquierda",
+    "pct": 30.9,
+    "md5": "8db8960a"
+   },
+   {
+    "nombre": "Pared derecha",
+    "pct": 9.9,
+    "md5": "eabe5035"
+   },
+   {
+    "nombre": "Techo",
+    "pct": 13.4,
+    "md5": "061031ef"
+   }
+  ],
+  "decodificaciones": 20
+ },
+ "n33-interior-comedor.jpg": {
+  "superficies": [
+   {
+    "nombre": "Techo",
+    "pct": 6,
+    "md5": "25d96859"
+   }
+  ],
+  "decodificaciones": 32
+ },
+ "n34-casa.jpg": {
+  "superficies": [
+   {
+    "nombre": "Techo",
+    "pct": 17.3,
+    "md5": "5a7f5346"
+   }
+  ],
+  "decodificaciones": 13
  }
 }
