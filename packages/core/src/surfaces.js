@@ -176,7 +176,7 @@ function boxBlur(src, w, h, r) {
  * mientras la luminancia cambie poco de un píxel al vecino (una sombra cambia de a poco; un zócalo, un marco o el piso, de golpe).
  * `maxGrow` limita cuánto puede avanzar (en píxeles) para que no se escape por una unión pared/techo de bajo contraste.
  */
-export function growIntoGaps(regions, img, { step = 1.6, maxGrow = Math.round(img.width * 0.07), chromaTol = 0.018, maxBrighter = 12, blocked = null } = {}) {
+export function growIntoGaps(regions, img, { step = 1.6, maxGrow = Math.round(img.width * 0.07), chromaTol = 0.018, maxBrighter = 12, localChroma = 0.012, blocked = null } = {}) {
   const { data, width, height } = img;
   const n = width * height;
   const lum = new Float32Array(n), R = new Float32Array(n), G = new Float32Array(n), B = new Float32Array(n);
@@ -197,9 +197,13 @@ export function growIntoGaps(regions, img, { step = 1.6, maxGrow = Math.round(im
     return [c ? sr / c : 0, c ? sg / c : 0, c ? sl / c : 255];
   });
   let frontier = [];
+  // "Origen" de cada píxel que crece: el píxel de contorno de donde arrancó su cadena de avance. Se compara contra él además de contra
+  // la media de la región, porque un objeto pegado al contorno (la tapa crema de un termotanque, una bombilla) cambia de a poco en
+  // cada paso pero termina lejos del origen, y contra la media de toda la pared eso no se nota.
+  const oR = new Float32Array(n), oG = new Float32Array(n);
   for (let i = 0; i < n; i++) if (owner[i] >= 0) {
     const x = i % width;
-    if ((x > 0 && owner[i - 1] < 0) || (x < width - 1 && owner[i + 1] < 0) || (i >= width && owner[i - width] < 0) || (i < n - width && owner[i + width] < 0)) frontier.push(i);
+    if ((x > 0 && owner[i - 1] < 0) || (x < width - 1 && owner[i + 1] < 0) || (i >= width && owner[i - width] < 0) || (i < n - width && owner[i + width] < 0)) { frontier.push(i); oR[i] = chr[i]; oG[i] = chg[i]; }
   }
   for (let depth = 0; depth < maxGrow && frontier.length; depth++) {
     const next = [];
@@ -209,7 +213,8 @@ export function growIntoGaps(regions, img, { step = 1.6, maxGrow = Math.round(im
         if (j < 0 || owner[j] >= 0 || (blocked && blocked[j]) || Math.abs(L[j] - L[i]) > step) continue;
         if (Math.abs(chr[j] - mr) + Math.abs(chg[j] - mg) > chromaTol) continue;
         if (L[j] > ml + maxBrighter) continue; // más brillante que la pared: una lamparita, un reflejo, un objeto blanco
-        owner[j] = k; regions[k].mask[j] = 1; next.push(j);
+        if (localChroma && Math.abs(chr[j] - oR[i]) + Math.abs(chg[j] - oG[i]) > localChroma) continue; // se corrió de color respecto de donde arrancó
+        owner[j] = k; regions[k].mask[j] = 1; next.push(j); oR[j] = oR[i]; oG[j] = oG[i];
       }
     }
     frontier = next;
@@ -516,7 +521,7 @@ export function lineRatio(mask, G, width, height, thr, inset = 5) {
  * (o al "afuera") a la que llega con menor costo de gradiente (cuenca de aguas con marcadores): donde hay un borde real el contorno se
  * asienta sobre él; donde no hay borde (sombra suave) se queda donde estaba. Modifica las máscaras de `regions` y las devuelve.
  */
-export function refineEdges(regions, G, width, height, { band = Math.max(4, Math.round(width / 100)), edgeCost = 1.5 } = {}) {
+export function refineEdges(regions, G, width, height, { band = Math.max(4, Math.round(width / 100)), edgeCost = 1.5, locked = null } = {}) {
   const N = width * height, OUT = regions.length;
   const lab = new Int16Array(N).fill(OUT);
   regions.forEach((r, k) => { for (let i = 0; i < N; i++) if (r.mask[i]) lab[i] = k; });
@@ -527,7 +532,9 @@ export function refineEdges(regions, G, width, height, { band = Math.max(4, Math
   }
   const near = boxBlur(bnd, width, height, band);
   const inBand = new Uint8Array(N);
-  for (let i = 0; i < N; i++) if (near[i] > 1e-4) inBand[i] = 1;
+  // `locked`: objetos ya identificados (veto). Un objeto más angosto que la banda (un foco, un cable, una lámpara) no tendría ningún píxel
+  // interior fuera de la banda y la pared se lo comería entero; sus píxeles quedan fijos y hacen de semilla.
+  for (let i = 0; i < N; i++) if (near[i] > 1e-4 && !(locked && locked[i])) inBand[i] = 1;
   const dist = new Float32Array(N).fill(Infinity), own = new Int16Array(N).fill(-1);
   const heap = makeHeap(1 << 16);
   for (let i = 0; i < N; i++) {
@@ -636,6 +643,60 @@ function edgeSeeds(paredes, G, width, height, { edgeThr, edgeBudget, edgeMinLen,
     }
   }
   return out.slice(0, edgeBudget * 6);
+}
+
+/**
+ * Objetos que CUELGAN o se APOYAN contra el borde de las superficies (un foco o una lámpara en la unión pared/techo, una cortina, un
+ * cuadro, un enchufe): SAM los deja afuera de la pared, pero el relleno de sombras (`growIntoGaps`) los vuelve a pintar por abajo
+ * porque se parecen a la pared en luz y color. No tienen bordes internos de pared que `edgeSeeds` pueda ver: están en el CONTORNO.
+ * Se detectan como lo que "rellena" una clausura morfológica de la unión de superficies: píxeles sin dueño rodeados de superficie
+ * (muescas y huecos angostos del contorno). Devuelve semillas (una por muesca, las más grandes primero) con el área de la muesca.
+ */
+export function hangingSeeds(regions, width, height, { grid = 192, closeR = 0.026, minCells = 10, minThick = 2, maxFrac = 0.03, budget = 4, maxSeeds = 3, debug = null } = {}) {
+  const w = grid, h = Math.max(1, Math.round((grid * height) / width)), N = width * height;
+  const U = new Uint8Array(N);
+  for (const r of regions) for (let i = 0; i < N; i++) if (r.mask[i]) U[i] = 1;
+  const low = toLow(U, width, height, w, h), R = closeR * w;
+  const notU = new Uint8Array(w * h);
+  for (let i = 0; i < notU.length; i++) notU[i] = low[i] ? 0 : 1;
+  const dil = distanceTransform(notU, w, h); // distancia a la superficie
+  const D = new Uint8Array(w * h);
+  for (let i = 0; i < D.length; i++) D[i] = !low[i] && dil[i] > R ? 0 : 1; // dilatada
+  const ero = D.includes(0) ? distanceTransform(D, w, h) : new Float32Array(w * h).fill(Infinity); // distancia a lo que quedó afuera de la dilatada (sin nada afuera, todo queda cerrado)
+  const notch = new Uint8Array(w * h);
+  for (let i = 0; i < notch.length; i++) if (!low[i] && ero[i] > R) notch[i] = 1;
+  for (let x = 0; x < w; x++) { notch[x] = 0; notch[(h - 1) * w + x] = 0; }
+  for (let y = 0; y < h; y++) { notch[y * w] = 0; notch[y * w + w - 1] = 0; } // el borde de la foto no es un objeto: el cierre ahí es un artefacto
+  const seen = new Uint8Array(w * h), out = [];
+  for (let st = 0; st < notch.length; st++) {
+    if (!notch[st] || seen[st]) continue;
+    const q = [st]; seen[st] = 1;
+    for (let k = 0; k < q.length; k++) {
+      const i = q[k], x = i % w;
+      if (x > 0 && notch[i - 1] && !seen[i - 1]) { seen[i - 1] = 1; q.push(i - 1); }
+      if (x < w - 1 && notch[i + 1] && !seen[i + 1]) { seen[i + 1] = 1; q.push(i + 1); }
+      if (i >= w && notch[i - w] && !seen[i - w]) { seen[i - w] = 1; q.push(i - w); }
+      if (i < w * h - w && notch[i + w] && !seen[i + w]) { seen[i + w] = 1; q.push(i + w); }
+    }
+    if (q.length < minCells || q.length > maxFrac * w * h) continue;
+    const comp = new Uint8Array(w * h);
+    for (const i of q) comp[i] = 1;
+    const dt = distanceTransform(comp, w, h);
+    let best = q[0];
+    for (const i of q) if (dt[i] > dt[best]) best = i;
+    if (dt[best] < minThick) continue; // una tira fina (la unión pared/techo, una sombra) no es un objeto
+    // semillas: los "máximos" de grosor de la muesca (el plato, el portalámparas y la bombilla de un foco son tres), separados entre sí
+    const pt = (i) => ({ x: (((i % w) + 0.5) / w) * width, y: ((Math.floor(i / w) + 0.5) / h) * height });
+    const picks = [best];
+    for (const i of q.slice().sort((a, b) => dt[b] - dt[a])) {
+      if (picks.length >= maxSeeds || dt[i] < Math.max(1.5, dt[best] * 0.4)) break;
+      if (picks.every((j) => Math.hypot((i % w) - (j % w), Math.floor(i / w) - Math.floor(j / w)) >= 5)) picks.push(i);
+    }
+    out.push({ ...pt(best), cells: q.length, thick: dt[best], more: picks.slice(1).map(pt), comp, w, h });
+  }
+  out.sort((a, b) => b.cells - a.cells);
+  debug?.({ muescas: out.map((o) => [+(o.x / width).toFixed(3), +(o.y / height).toFixed(3), o.cells, +o.thick.toFixed(1)]) });
+  return out.slice(0, budget);
 }
 
 /**
@@ -816,7 +877,7 @@ export function fillThinGaps(regions, img, { blocked = null, maxDist = Math.roun
  * Devuelve [{ kind: 'pared'|'techo', name, mask, area, cx, cy, texture }], máscaras DISJUNTAS, paredes de izquierda a derecha.
  */
 export async function detectSurfaces(img, segment, opts = {}) {
-  const { maxSeeds = 9, gradMax = 7, minDist = 2.5, minArea = 0.025, maxPared = 5, maxTexture = 0.12, refineMin = 2, minLumaRatio = 0.55, grow = true, snap = true, partition = true, thinGaps = true, splitMax = 2.2, splitEdge = 4.5, maxLine = 0.004, minCoverage = 0.35, relaxFactor = 1.8, corner = true } = opts;
+  const { maxSeeds = 9, gradMax = 7, minDist = 2.5, minArea = 0.025, maxPared = 5, maxTexture = 0.12, refineMin = 2, minLumaRatio = 0.55, grow = true, snap = true, partition = true, hang = true, lockObjects = true, thinGaps = true, splitMax = 2.2, splitEdge = 4.5, maxLine = 0.004, minCoverage = 0.35, relaxFactor = 1.8, corner = true } = opts;
   const { width, height } = img;
   const { luma, w, h } = downscaleLuma(img);
   const grad = gradientMap(luma, w, h);
@@ -919,10 +980,30 @@ export async function detectSurfaces(img, segment, opts = {}) {
     out.push(...pr.extra);
     veto = pr.veto;
   }
-  if (grow) growIntoGaps(out, img, { blocked: veto });
+  if (hang && out.length) { // objetos que cuelgan o se apoyan en el contorno: se vetan para que el relleno no los pinte
+    const N = width * height, ho = opts.hangOpts ?? {};
+    let left = ho.decodes ?? 4;
+    for (const sd of hangingSeeds(out, width, height, { ...ho, debug: opts.debugHang })) {
+      veto = veto ?? new Uint8Array(N);
+      for (const pt of [sd, ...sd.more]) {
+        if (left <= 0) break;
+        if (veto[Math.min(height - 1, Math.floor(pt.y)) * width + Math.min(width - 1, Math.floor(pt.x))]) continue; // ya cubierto por la máscara de otra semilla: no hace falta decodificar
+        left--;
+        const m = await segment([{ x: pt.x, y: pt.y }]);
+        let a = 0;
+        for (let i = 0; i < N; i++) if (m[i]) a++;
+        const muesca = sd.cells / (sd.w * sd.h);
+        const ok = a > 0 && a <= (ho.maxGrowth ?? 8) * muesca * N && a < N * (ho.maxFrac ?? 0.05);
+        opts.debugHang?.({ semilla: [+(pt.x / width).toFixed(3), +(pt.y / height).toFixed(3)], muesca: +muesca.toFixed(4), mascara: +(a / N).toFixed(4), ok });
+        if (!ok) break; // SAM devolvió la pared o el techo entero (la semilla no cayó sobre un objeto): las otras semillas de la muesca tampoco sirven
+        for (let i = 0; i < N; i++) if (m[i]) veto[i] = 1;
+      }
+    }
+  }
+  if (grow) growIntoGaps(out, img, { blocked: veto, ...opts.growOpts });
   if (thinGaps) fillThinGaps(out, img, { blocked: veto, ...opts.gapOpts, debug: opts.debugGaps }); // pared que se ve entre los listones de una silla
   if (snap && out.length) {
-    refineEdges(out, fullGrad(), width, height);
+    refineEdges(out, fullGrad(), width, height, { locked: lockObjects ? veto : null });
     for (const s of out) s.mask = removeSmallIslands(s.mask, width, height, Math.round(width * height * 0.002));
   }
   for (const s of out) Object.assign(s, maskGeometry(s.mask, width, height));

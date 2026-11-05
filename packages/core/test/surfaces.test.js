@@ -311,4 +311,45 @@ test('esquina vertical: sin unión con el techo visible (pared contra el borde d
 test('esquina vertical: el quiebre del techo solo, sin cambio de luz, no alcanza', () => {
   const { img, mask } = wallScene({ kink: true, lum: () => 200 });
   assert.equal(findVerticalCorner(mask, img), null);
+// ---- objetos que cuelgan o se apoyan en el contorno (foco, termotanque) ----
+import { growIntoGaps, hangingSeeds } from '../src/index.js';
+
+test('relleno de sombras: no se desliza de a poco hacia un objeto de otro color (tapa crema de un termotanque)', () => {
+  const w = 120, h = 20, data = new Uint8ClampedArray(w * h * 4);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const t = Math.max(0, x - 20); // desde x=20 el color vira de a poco hacia el crema, con luminancia casi constante
+    const i = (y * w + x) * 4;
+    data[i] = 150 + t * 0.5; data[i + 1] = 150 - t * 0.1; data[i + 2] = 150 - t * 0.4; data[i + 3] = 255;
+  }
+  const extent = (opts) => {
+    const mask = new Uint8Array(w * h);
+    for (let y = 0; y < h; y++) for (let x = 0; x < 20; x++) mask[y * w + x] = 1;
+    growIntoGaps([{ mask }], { data, width: w, height: h }, { maxGrow: 100, ...opts });
+    let e = 0;
+    for (let x = 0; x < w; x++) if (mask[10 * w + x]) e = x + 1;
+    return e;
+  };
+  const sinLocal = extent({ localChroma: 0 }), conLocal = extent({});
+  assert.ok(conLocal < sinLocal, `con el tope local llegó a ${conLocal}, sin él ${sinLocal}`);
+  assert.ok(conLocal < 40, `se coló ${conLocal - 20} px dentro del objeto`);
+});
+
+test('refineEdges: un objeto más angosto que la banda no se lo come la pared si está fijado (locked)', () => {
+  const w = 100, h = 40, G = new Float32Array(w * h).fill(0.3);
+  const base = new Uint8Array(w * h).fill(1), locked = new Uint8Array(w * h);
+  for (let y = 0; y < h; y++) for (let x = 47; x < 54; x++) { base[y * w + x] = 0; locked[y * w + x] = 1; } // objeto de 7 px; banda de 10
+  const [libre] = refineEdges([{ mask: base.slice() }], G, w, h, { band: 10 });
+  assert.equal(libre.mask[20 * w + 50], 1, 'sin fijar, la banda se lo come (el caso que se corrige)');
+  const [fijo] = refineEdges([{ mask: base.slice() }], G, w, h, { band: 10, locked });
+  assert.equal(fijo.mask[20 * w + 50], 0, 'fijado, el objeto queda afuera de la pared');
+});
+
+test('hangingSeeds: un foco colgado entre pared y techo da una semilla; una tira fina o un hueco enorme, ninguna', () => {
+  const W2 = 192, H2 = 192;
+  const surf = (hueco) => { const m = new Uint8Array(W2 * H2).fill(1); for (const [x0, y0, x1, y1] of hueco) for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) m[y * W2 + x] = 0; return [{ mask: m }]; };
+  const foco = hangingSeeds(surf([[90, 60, 96, 74]]), W2, H2);
+  assert.equal(foco.length, 1);
+  assert.ok(foco[0].x >= 90 && foco[0].x < 96 && foco[0].y >= 60 && foco[0].y < 74, 'la semilla cae sobre el objeto');
+  assert.equal(hangingSeeds(surf([[20, 100, 170, 101]]), W2, H2).length, 0, 'una tira de 1 px (la unión de dos superficies) no es un objeto');
+  assert.equal(hangingSeeds(surf([[40, 40, 120, 120]]), W2, H2).length, 0, 'un hueco grande no es una muesca');
 });
