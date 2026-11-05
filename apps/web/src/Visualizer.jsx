@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { estimateWhiteBalance, featherMask, recolorWall, cleanMask, pxPerMeter, wallPixels, paintStroke, maskCount, detectSurfaces, encodeMask } from '@pintureria/core';
+import { estimateWhiteBalance, featherMask, recolorWall, cleanMask, pxPerMeter, wallPixels, paintStroke, maskCount, detectSurfaces, encodeMask, cutObjectFromSurface } from '@pintureria/core';
 import { SamClient } from './samClient.js';
 import { workingSize } from './sam.js';
 import { Calculator } from './Calculator.jsx';
@@ -245,13 +245,16 @@ export function Visualizer() {
       const r = await sam.current.segment([{ x: pt.x, y: pt.y, label: 1 }], true);
       await sam.current.call('reset');
       const m = cleanMask(new Uint8Array(r.mask), p.width, p.height);
-      let tot = 0, inter = 0, mn = 0;
-      for (let k = 0; k < m.length; k++) { if (hit.mask[k]) tot++; if (m[k]) { mn++; if (hit.mask[k]) inter++; } }
-      if (!mn || !inter) { setStatus('No pude separar ese objeto. Probá en "Ajustar a mano" con el borrador.'); return; }
-      if (inter / tot >= 0.85 || mn / tot > 0.6) { setStatus(`No pude separarlo de "${hit.name}": la selección salió demasiado grande. Probá en "Ajustar a mano" con el borrador.`); return; }
+      const cut = cutObjectFromSurface(hit.mask, m);
+      if (!cut.ok) {
+        setStatus(cut.reason === 'too-big'
+          ? `No pude separarlo de "${hit.name}": la selección salió demasiado grande. Probá en "Ajustar a mano" con el borrador.`
+          : 'No pude separar ese objeto. Probá en "Ajustar a mano" con el borrador.');
+        return;
+      }
       surfUndo.current.push({ id: hit.id, mask: hit.mask.slice() });
       if (surfUndo.current.length > MAX_SURF_UNDO) surfUndo.current.shift();
-      for (let k = 0; k < m.length; k++) if (m[k]) hit.mask[k] = 0;
+      hit.mask = cut.mask;
       setCutMode(false); repaint(); bump();
       setStatus(`Listo: saqué ese objeto de "${hit.name}". Si no era eso, tocá Deshacer.`);
     } catch (err) { setStatus(`Error: ${err.message}`); }
