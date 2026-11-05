@@ -253,3 +253,14 @@ TERSUAVE_JSON=... node eval/visualizador/color-eval.mjs --opts '{"minWallL":30,"
 
 Las tablas de este documento salen de la corrida por defecto (60 colores, ancho 400 px). El script imprime: la lista de paredes con su tipo,
 las ganancias de balance de blancos por pared, la tabla por tipo/modo/balance, por grupo de color, por pared y los colores problemáticos.
+
+## Modo `luz` (experimental, opt-in) — comparación contra el render de Sinteplast
+
+`recolorWall(..., { mode: 'luz' })`: el sombreado es multiplicativo en luz lineal, `XYZ_nuevo = XYZ_carta × (Y_píxel / Y_ref)`, con
+`Y_ref` = percentil `refPct` (0,8 por defecto, `LUZ_REF_PCT`) de la luminosidad de la pared, sin piso `minWallL`. Se recomienda usarlo con
+balance de blancos parcial (`estimateWhiteBalance(img, { strength: LUZ_WB_STRENGTH })`, 0,5). **No es el default.**
+Medición: `eval/visualizador/luz-eval.mjs` (16 superficies de 7 fotos, ΔE00 del color medio dentro de nuestra máscara erosionada contra el
+render de Sinteplast, que es una referencia y no la verdad). ΔE00 medio: motor actual con balance 8,5; sin balance 7,6; `luz` (q 0,8,
+balance 0,5) 6,0 en las 16; leave-one-out por foto 5,9 (q elegido 0,85 en las 7 rondas). Reservadas (03-living-ventanal-tv y 02-living-puerta,
+fuera del ajuste): 11,6 → 9,7. En 02-living-puerta empeora (2,7 → 5,4). Con 7 fotos de un solo departamento (y una casa distinta) la evidencia
+alcanza para ofrecer el modo, no para cambiar el default.
