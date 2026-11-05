@@ -26,7 +26,12 @@ export class SamClient {
   }
 
   init() {
-    const threads = Number(new URLSearchParams(location.search).get('threads')) || 0;
+    // ?threads=N fuerza la cantidad. Sin el parámetro: 1 hilo, salvo que el servidor haya activado el aislamiento de origen
+    // (CROSS_ORIGIN_ISOLATION=1, ver docs/RENDIMIENTO-MOVIL.md): ahí se usa la mitad de los núcleos (máx. 4).
+    // Sin aislamiento onnxruntime-web ignora el pedido y usa 1 hilo (con un aviso en consola), así que nunca falla.
+    const forced = Number(new URLSearchParams(location.search).get('threads')) || 0;
+    const auto = globalThis.crossOriginIsolated ? Math.min(4, Math.max(1, Math.floor((navigator.hardwareConcurrency || 2) / 2))) : 0;
+    const threads = forced || auto;
     return this.call('init', { encoderUrl: '/models/mobile_sam_image_encoder.onnx', decoderUrl: '/models/sam_mask_decoder_single.onnx', threads });
   }
   embed(rgba, width, height) { return this.call('embed', { rgba, width, height }, [rgba]); }

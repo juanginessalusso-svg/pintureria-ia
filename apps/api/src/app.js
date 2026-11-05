@@ -16,7 +16,18 @@ const CSP = [
   "frame-ancestors 'none'",
 ].join('; ');
 
-export function createApp({ db, webDir, modelsDir, uploadsDir, allowTenantParam = false, secureCookies = false } = {}) {
+/**
+ * Aislamiento de origen (COOP + COEP): habilita SharedArrayBuffer => WASM multihilo en onnxruntime-web (?threads=N).
+ * Valores: 'require-corp' (el más compatible, también iOS Safari) o 'credentialless' (Chromium/Firefox; permite imágenes
+ * de otros orígenes sin cabecera CORP, p. ej. un logo en https://otro-sitio). Falso = desactivado (por defecto).
+ */
+export function crossOriginIsolationMode(value) {
+  if (value === '1' || value === 'true' || value === 'require-corp') return 'require-corp';
+  if (value === 'credentialless') return 'credentialless';
+  return false;
+}
+
+export function createApp({ db, webDir, modelsDir, uploadsDir, allowTenantParam = false, secureCookies = false, crossOriginIsolation = false } = {}) {
   const app = express();
   app.disable('x-powered-by');
   // Nginx va adelante: confiamos en 1 proxy para leer la IP real del cliente.
@@ -27,6 +38,10 @@ export function createApp({ db, webDir, modelsDir, uploadsDir, allowTenantParam 
     res.setHeader('X-Frame-Options', 'DENY');
     res.setHeader('Referrer-Policy', 'same-origin');
     res.setHeader('Content-Security-Policy', CSP);
+    if (crossOriginIsolation) { // en TODAS las respuestas: el HTML, el worker y el .wasm necesitan COEP (y el HTML COOP)
+      res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+      res.setHeader('Cross-Origin-Embedder-Policy', crossOriginIsolation);
+    }
     next();
   });
   // La importación de un catálogo en CSV puede pesar más que un pedido normal: límite propio, ANTES del general.

@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import fs from 'node:fs';
-import { createApp } from './app.js';
+import { createApp, crossOriginIsolationMode } from './app.js';
 import { openDb } from './db.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -18,6 +18,8 @@ const app = createApp({
   uploadsDir: path.join(dataDir, 'uploads'),
   allowTenantParam: process.env.ALLOW_TENANT_PARAM === '1',
   secureCookies: process.env.NODE_ENV === 'production',
+  // Opcional (apagado por defecto): CROSS_ORIGIN_ISOLATION=1 | credentialless. Ver docs/RENDIMIENTO-MOVIL.md.
+  crossOriginIsolation: crossOriginIsolationMode(process.env.CROSS_ORIGIN_ISOLATION),
 });
 
 const server = app.listen(port, () => console.log(`api escuchando en :${port} (datos: ${dataDir})`));

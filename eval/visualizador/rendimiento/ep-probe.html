@@ -1,0 +1,40 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Sonda de proveedores de ejecución ONNX (webgpu / webgl / wasm)</title>
+<pre id="out">corriendo…</pre>
+<script type="module">
+// Uso: ver docs/RENDIMIENTO-MOVIL.md. Se sirve con sonda-servidor.mjs; ?ep=webgpu|webgl|wasm&threads=N
+import * as ort from '/ort/ort.all.min.mjs';
+const q = new URLSearchParams(location.search);
+const ep = q.get('ep') || 'wasm';
+const out = document.getElementById('out');
+out.textContent = '';
+ort.env.wasm.wasmPaths = '/ort/';
+ort.env.wasm.numThreads = Number(q.get('threads') || 1);
+const res = { ep, ua: navigator.userAgent, isolated: crossOriginIsolated, hasGpu: !!navigator.gpu };
+try {
+  const t0 = performance.now();
+  const bytes = new Uint8Array(await (await fetch('/models/mobile_sam_image_encoder.onnx')).arrayBuffer());
+  res.fetchMs = Math.round(performance.now() - t0);
+  const t1 = performance.now();
+  const s = await ort.InferenceSession.create(bytes, { executionProviders: [ep], graphOptimizationLevel: 'all' });
+  res.createMs = Math.round(performance.now() - t1);
+  const W = Number(q.get('w') || 1024), H = Number(q.get('h') || 1024); // ?w=512&h=384 prueba un tamaño de entrada menor
+  const x = new Float32Array(W * H * 3).map((_, i) => ((i * 2654435761) % 255));
+  const t = new ort.Tensor('float32', x, [H, W, 3]);
+  res.input = [H, W];
+  const runs = [];
+  let first;
+  for (let i = 0; i < 4; i++) {
+    const t2 = performance.now();
+    const o = await s.run({ input_image: t });
+    runs.push(Math.round(performance.now() - t2));
+    first = o.image_embeddings;
+  }
+  res.runMs = runs;
+  res.outDims = first.dims;
+  res.sample = Array.from(first.data.slice(0, 4)).map((v) => +v.toFixed(4));
+} catch (e) { res.error = String(e?.message ?? e).slice(0, 400); }
+window.__res = res;
+out.textContent = JSON.stringify(res, null, 1);
+</script>

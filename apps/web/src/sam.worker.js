@@ -3,8 +3,8 @@ import * as ort from 'onnxruntime-web/wasm';
 import { Sam, encoderSize, rgbaToRgbFloat } from './sam.js';
 
 // El .wasm lo empaqueta Vite junto al worker (ruta con hash), no hace falta configurar wasmPaths.
-// 1 hilo por defecto: el modo multihilo (requiere COOP/COEP) se colgaba al crear la sesión en las pruebas
-// (Chromium del navegador integrado, 4 núcleos). Se puede probar con ?threads=N. Pendiente de investigar en la etapa F.
+// 1 hilo por defecto. El multihilo (?threads=N) necesita SharedArrayBuffer => página con aislamiento de origen
+// (COOP+COEP; en el servidor: CROSS_ORIGIN_ISOLATION=1). Ver docs/RENDIMIENTO-MOVIL.md.
 ort.env.wasm.numThreads = 1;
 
 let sam = null;
@@ -82,13 +82,18 @@ const handlers = {
   reset() { sam?.reset(); return {}; },
 };
 
-self.onmessage = async ({ data }) => {
-  const { id, type, ...payload } = data;
-  try {
-    const out = (await handlers[type](payload)) ?? {};
-    const { transfer, result, ...rest } = out;
-    postMessage({ id, ok: true, ...(result ?? rest) }, transfer ?? []);
-  } catch (e) {
-    postMessage({ id, ok: false, error: String(e?.message ?? e) });
-  }
-};
+// ONNX Runtime Web arranca sus hilos (pthreads) como Workers con ESTE MISMO script (name "em-pthread"). Si acá pisáramos
+// self.onmessage, el mensaje de carga de cada hilo llegaría a nuestro manejador, que lo rechaza: el hilo nunca arranca y
+// la creación de la sesión queda colgada para siempre. Esa era la causa del cuelgue de ?threads=N.
+if (!self.name?.startsWith('em-pthread')) {
+  self.onmessage = async ({ data }) => {
+    const { id, type, ...payload } = data;
+    try {
+      const out = (await handlers[type](payload)) ?? {};
+      const { transfer, result, ...rest } = out;
+      postMessage({ id, ok: true, ...(result ?? rest) }, transfer ?? []);
+    } catch (e) {
+      postMessage({ id, ok: false, error: String(e?.message ?? e) });
+    }
+  };
+}
