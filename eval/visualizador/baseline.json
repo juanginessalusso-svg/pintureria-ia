@@ -1,0 +1,272 @@
+{
+ "o01-cuarto-ventana.jpg": {
+  "superficies": [
+   {
+    "nombre": "Pared izquierda",
+    "pct": 33.7,
+    "md5": "fd3e1577"
+   },
+   {
+    "nombre": "Pared derecha",
+    "pct": 38.8,
+    "md5": "531107aa"
+   },
+   {
+    "nombre": "Techo",
+    "pct": 15.9,
+    "md5": "28bbc1c9"
+   }
+  ],
+  "decodificaciones": 24
+ },
+ "o02-oficina-casa.jpg": {
+  "superficies": [
+   {
+    "nombre": "Pared izquierda",
+    "pct": 18.1,
+    "md5": "fd595ec0"
+   },
+   {
+    "nombre": "Pared derecha",
+    "pct": 9.1,
+    "md5": "40e916d8"
+   }
+  ],
+  "decodificaciones": 31
+ },
+ "r1-living-estante.jpg": {
+  "superficies": [
+   {
+    "nombre": "Pared izquierda",
+    "pct": 54.3,
+    "md5": "6d7af4e0"
+   },
+   {
+    "nombre": "Pared derecha",
+    "pct": 4.8,
+    "md5": "6cbd6a4f"
+   },
+   {
+    "nombre": "Techo",
+    "pct": 10.4,
+    "md5": "9d4af621"
+   }
+  ],
+  "decodificaciones": 20
+ },
+ "r2-ventanal-tv.jpg": {
+  "superficies": [
+   {
+    "nombre": "Pared izquierda",
+    "pct": 9,
+    "md5": "eb19985c"
+   },
+   {
+    "nombre": "Pared derecha",
+    "pct": 37.1,
+    "md5": "1bd3db03"
+   },
+   {
+    "nombre": "Techo",
+    "pct": 16.9,
+    "md5": "80f7e2a0"
+   }
+  ],
+  "decodificaciones": 21
+ },
+ "r3-puerta.jpg": {
+  "superficies": [
+   {
+    "nombre": "Pared",
+    "pct": 57.9,
+    "md5": "bf79b6c1"
+   },
+   {
+    "nombre": "Techo",
+    "pct": 8.6,
+    "md5": "e61a92eb"
+   }
+  ],
+  "decodificaciones": 26
+ },
+ "r4-pasillo.jpg": {
+  "superficies": [
+   {
+    "nombre": "Pared izquierda",
+    "pct": 23,
+    "md5": "c0b58fa0"
+   },
+   {
+    "nombre": "Pared del medio",
+    "pct": 13.2,
+    "md5": "8ce0080a"
+   },
+   {
+    "nombre": "Pared derecha",
+    "pct": 37.8,
+    "md5": "aa02a4a7"
+   },
+   {
+    "nombre": "Techo",
+    "pct": 9,
+    "md5": "fb9ef1ca"
+   }
+  ],
+  "decodificaciones": 31
+ },
+ "s1.jpg": {
+  "superficies": [
+   {
+    "nombre": "Pared izquierda",
+    "pct": 21.5,
+    "md5": "d0b0864a"
+   },
+   {
+    "nombre": "Pared derecha",
+    "pct": 1.2,
+    "md5": "b39850b1"
+   },
+   {
+    "nombre": "Techo",
+    "pct": 29.2,
+    "md5": "87dda7c1"
+   }
+  ],
+  "decodificaciones": 23
+ },
+ "s2.jpg": {
+  "superficies": [
+   {
+    "nombre": "Pared izquierda",
+    "pct": 24,
+    "md5": "bbbe24b0"
+   },
+   {
+    "nombre": "Pared del medio",
+    "pct": 10.4,
+    "md5": "f4558938"
+   },
+   {
+    "nombre": "Pared derecha",
+    "pct": 35.2,
+    "md5": "43a64d43"
+   },
+   {
+    "nombre": "Techo",
+    "pct": 4.4,
+    "md5": "21c4b34a"
+   }
+  ],
+  "decodificaciones": 26
+ },
+ "s3.jpg": {
+  "superficies": [
+   {
+    "nombre": "Pared izquierda",
+    "pct": 44.9,
+    "md5": "f8c7819c"
+   },
+   {
+    "nombre": "Pared derecha",
+    "pct": 25,
+    "md5": "3235a0d5"
+   }
+  ],
+  "decodificaciones": 18
+ },
+ "t1.jpg": {
+  "superficies": [
+   {
+    "nombre": "Pared",
+    "pct": 22.6,
+    "md5": "ff4ee3db"
+   },
+   {
+    "nombre": "Techo",
+    "pct": 15.9,
+    "md5": "caadfadf"
+   }
+  ],
+  "decodificaciones": 26
+ },
+ "t2.jpg": {
+  "superficies": [
+   {
+    "nombre": "Pared izquierda",
+    "pct": 10.7,
+    "md5": "3f39fc85"
+   },
+   {
+    "nombre": "Pared derecha",
+    "pct": 9.3,
+    "md5": "14bbbedd"
+   },
+   {
+    "nombre": "Techo",
+    "pct": 31.3,
+    "md5": "bd5504e9"
+   }
+  ],
+  "decodificaciones": 31
+ },
+ "t3.jpg": {
+  "superficies": [
+   {
+    "nombre": "Pared",
+    "pct": 48.8,
+    "md5": "698b40f5"
+   }
+  ],
+  "decodificaciones": 23
+ },
+ "t4.jpg": {
+  "superficies": [
+   {
+    "nombre": "Pared izquierda",
+    "pct": 18.8,
+    "md5": "e1116085"
+   },
+   {
+    "nombre": "Pared derecha",
+    "pct": 51.9,
+    "md5": "fa8b5401"
+   },
+   {
+    "nombre": "Techo",
+    "pct": 25,
+    "md5": "be6d427c"
+   }
+  ],
+  "decodificaciones": 10
+ },
+ "t5.jpg": {
+  "superficies": [
+   {
+    "nombre": "Pared izquierda",
+    "pct": 31.5,
+    "md5": "df2e435e"
+   },
+   {
+    "nombre": "Pared derecha",
+    "pct": 39.7,
+    "md5": "c1ebf9e3"
+   },
+   {
+    "nombre": "Techo",
+    "pct": 26.8,
+    "md5": "0dbf0093"
+   }
+  ],
+  "decodificaciones": 12
+ },
+ "t6.jpg": {
+  "superficies": [
+   {
+    "nombre": "Techo",
+    "pct": 37.7,
+    "md5": "be291eff"
+   }
+  ],
+  "decodificaciones": 8
+ }
+}
