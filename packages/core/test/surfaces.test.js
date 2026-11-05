@@ -702,3 +702,26 @@ test('dropThinStrips: la tira angosta y larga deja de ser pared; una pared ancha
   assert.equal(cortado[400 * FW + 110], 1);
   assert.equal(cortado[400 * FW + 400], 0);
 });
+
+// paredRescate (agente B): la máscara grande de SAM une la pared lisa con un objeto muy texturado y se rechaza por textura; con otra pared chica
+// ya aceptada, el rescate por color no corría. Con la opción, sí: recupera la parte lisa de la máscara.
+test('paredRescate: rescata la pared de una máscara rechazada por textura aunque haya otra pared aceptada', async () => {
+  const data = new Uint8ClampedArray(W * H * 4);
+  const inA = (x, y) => x < 40 && y >= 40, inObj = (x, y) => x >= 150 && y >= 40, inTop = (x, y) => y < 40;
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    if (inTop(x, y)) px(data, x, y, 230, 230, 230);
+    else if (inA(x, y)) px(data, x, y, 200, 190, 170);
+    else if (inObj(x, y)) { const v = (x + y) % 6 < 3 ? 40 : 190; px(data, x, y, v, v, v); } // objeto rugoso
+    else px(data, x, y, 150, 150, 160); // pared grande lisa
+  }
+  const region = (x, y) => (inTop(x, y) ? 0 : inA(x, y) ? 1 : 2);
+  const seg = async (pts) => { const r = region(pts[0].x, pts[0].y), m = new Uint8Array(W * H); for (let j = 0; j < H; j++) for (let i = 0; i < W; i++) if (region(i, j) === r) m[j * W + i] = 1; return m; };
+  const img = { data, width: W, height: H };
+  const area = (l) => l.filter((s) => s.kind === 'pared').reduce((a, s) => a + s.area, 0);
+  const sin = await detectSurfaces(img, seg), con = await detectSurfaces(img, seg, { paredRescate: true });
+  assert.ok(area(con) >= area(sin), 'la opción nunca quita pared');
+  // la parte lisa de la pared grande (x 40..150) aparece solo con la opción
+  const lisa = (l) => l.some((s) => s.kind === 'pared' && s.mask[200 * W + 100]);
+  assert.equal(lisa(con), true);
+  assert.equal(con.some((s) => s.kind === 'pared' && s.mask[200 * W + 200]), false, 'el objeto rugoso no es pared');
+});

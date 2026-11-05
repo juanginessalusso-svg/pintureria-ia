@@ -1439,7 +1439,7 @@ function morphOpen(src, mask, width, height, win) {
  * Devuelve [{ kind: 'pared'|'techo', name, mask, area, cx, cy, texture }], máscaras DISJUNTAS, paredes de izquierda a derecha.
  */
 export async function detectSurfaces(img, segment, opts = {}) {
-  const { maxSeeds = 9, gradMax = 7, minDist = 2.5, minArea = 0.025, maxPared = 5, maxTexture = 0.12, refineMin = 2, minLumaRatio = 0.55, grow = true, snap = true, partition = true, hang = true, lockObjects = true, thinGaps = true, enclosed = true, tableVeto = true, minWallLuma = 30, frames = true, strips = true, blockRejected = true, splitMax = 2.2, splitEdge = 4.5, maxLine = 0.004, minCoverage = 0.35, relaxFactor = 1.8, corner = true, patience = 3, sky = true, hotMax = 0.3, techoMaxTexture = 0.15, skyBlue = 0.12, techoNeedsWall = true, minTechoContact = 0.3, skyLuma = 210, loneLine = true, rescue = true, splitCornerOnly = true, techoMinLuma = 70, trim = false, techoRelax = false, techoAlto = false } = opts; // techoRelax: {minLuma, maxTexture} (opt-in): techo oscuro/con textura que apoya en una pared aceptada; techoAlto: techo que baja hasta ~60 % de la foto (opt-in) // trim: opt-in (AUTO_OPTS {"trim":true}); sin verificar en las 15 propias
+  const { maxSeeds = 9, gradMax = 7, minDist = 2.5, minArea = 0.025, maxPared = 5, maxTexture = 0.12, refineMin = 2, minLumaRatio = 0.55, grow = true, snap = true, partition = true, hang = true, lockObjects = true, thinGaps = true, enclosed = true, tableVeto = true, minWallLuma = 30, frames = true, strips = true, blockRejected = true, splitMax = 2.2, splitEdge = 4.5, maxLine = 0.004, minCoverage = 0.35, relaxFactor = 1.8, corner = true, patience = 3, sky = true, hotMax = 0.3, techoMaxTexture = 0.15, skyBlue = 0.12, techoNeedsWall = true, minTechoContact = 0.3, skyLuma = 210, loneLine = true, rescue = true, splitCornerOnly = true, techoMinLuma = 70, trim = false, techoRelax = false, techoAlto = false, paredRescate = false } = opts; // techoRelax: {minLuma, maxTexture} (opt-in): techo oscuro/con textura que apoya en una pared aceptada; techoAlto: techo que baja hasta ~60 % de la foto (opt-in) // paredRescate: opt-in (agente B): rescate de color también con paredes aceptadas si cubren poco, y en máscaras rechazadas por líneas // trim: opt-in (AUTO_OPTS {"trim":true}); sin verificar en las 15 propias
   const { width, height } = img;
   const { luma, w, h } = downscaleLuma(img);
   const grad = gradientMap(luma, w, h);
@@ -1556,10 +1556,12 @@ export async function detectSurfaces(img, segment, opts = {}) {
     out.push({ kind, mask: clean, ...g, texture: f.texture, luma: f.luma, lines: f.lines, dudoso });
   }
 
-  if (rescue && !out.some((s) => s.kind === 'pared')) { // ninguna pared aceptada: se prueba rescatar el color dominante de las máscaras rechazadas por textura
+  const paredCubierta = out.filter((s) => s.kind === 'pared').reduce((a, s) => a + s.area, 0);
+  const rescateExtra = rescue && paredRescate && paredCubierta < (paredRescate.cobertura ?? 0.2); // pared aceptada pero chica: la máscara grande rechazada suele ser pared + objetos
+  if (rescue && (paredCubierta === 0 || rescateExtra)) { // ninguna pared aceptada (o muy poca): se prueba rescatar el color dominante de las máscaras rechazadas por textura (o por líneas con paredRescate)
     const ro = typeof rescue === 'object' ? rescue : {};
     for (const r of [...rechazadas]) {
-      if (r.why !== 'textura' || r.area < (ro.minAreaMask ?? 0.1) || r.texture > (ro.maxTex ?? 0.6) || !r.mask) continue;
+      if (!(r.why === 'textura' || (rescateExtra && r.why === 'líneas')) || r.area < (ro.minAreaMask ?? 0.1) || r.texture > (ro.maxTex ?? 0.6) || !r.mask) continue;
       for (const m of rescueTextured(r.mask, img, fullGrad(), ro)) {
         const g = maskGeometry(m, width, height);
         if (classifySurface(g) !== 'pared') continue;
