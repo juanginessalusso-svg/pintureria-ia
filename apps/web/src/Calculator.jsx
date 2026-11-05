@@ -86,7 +86,7 @@ export function Calculator({ wallPx, calib, products, branches = [], tenant, col
           </button>
           {calib.pxPerM && <button onClick={onResetCalib}>Quitar escala</button>}
         </div>
-        {!wallPx && <p class="muted small">Primero marcá la pared en la foto.</p>}
+        {!wallPx && <p class="muted small">Primero elegí un color para una superficie: la escala se mide sobre la pared que pintaste.</p>}
         {calib.pxPerM && <p class="ok small">Escala lista ({Math.round(calib.pxPerM)} px por metro).</p>}
       </div>
 
