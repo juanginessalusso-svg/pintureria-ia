@@ -406,9 +406,11 @@ export function splitMerged(mask, grad, w, h, width, height, { strictMax = 2.2, 
       if ((r >= 0 && r !== lab2[i]) || (d >= 0 && d !== lab2[i])) bnd[i] = 1;
     }
     const R = Math.max(4, Math.round(width / 100)), near = boxBlur(bnd, width, height, R);
+    // dist2 en Float64 (como las claves del heap): con Float32 el redondeo hacía que un nodo se pudiera reinsertar una y otra vez y el heap crecía sin límite
+    // (foto interior-ig070: >25 millones de entradas, el análisis no terminaba nunca). Solo afecta esta pasada de refinado, no los cortes de la grilla chica.
     const band = new Uint8Array(N);
     for (let i = 0; i < N; i++) if (lab2[i] >= 0 && near[i] > 1e-4) band[i] = 1;
-    const dist2 = new Float32Array(N).fill(Infinity), own2 = new Int16Array(N).fill(-1), heap2 = makeHeap(1 << 16, Float64Array);
+    const dist2 = new Float64Array(N).fill(Infinity), own2 = new Int16Array(N).fill(-1), heap2 = makeHeap(1 << 16, Float64Array);
     for (let i = 0; i < N; i++) {
       if (lab2[i] < 0 || band[i]) continue;
       const x = i % width;
