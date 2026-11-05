@@ -13,12 +13,13 @@ import * as ort from 'onnxruntime-web/wasm';
 import { Sam, encoderSize, rgbaToRgbFloat, workingSize } from '../../apps/web/src/sam.js';
 import { runDetect } from '../../apps/web/src/detect.js';
 
-const here = path.dirname(fileURLToPath(import.meta.url)), dir = path.join(here, 'fotos', 'coco');
+const here = path.dirname(fileURLToPath(import.meta.url)), dir = process.env.COCO_DIR ?? path.join(here, 'fotos', 'coco'); // COCO_DIR: carpeta con las fotos (en un worktree no existe fotos/)
 const split = process.argv[2] ?? 'dev', MAX = Number(process.argv[3] ?? 1e9);
-const outFile = path.join(here, 'salidas', 'coco-iou.jsonl');
+const outFile = process.env.COCO_OUT ?? path.join(here, 'salidas', 'coco-iou.jsonl'); // COCO_OUT: dónde escribir los resultados (cada agente el suyo)
+const onlyIds = process.env.COCO_IDS ? new Set(JSON.parse(fs.readFileSync(process.env.COCO_IDS, 'utf8'))) : null; // COCO_IDS: JSON con la lista de ids a correr
 fs.mkdirSync(path.dirname(outFile), { recursive: true });
 const done = new Set(fs.existsSync(outFile) ? fs.readFileSync(outFile, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l).id) : []);
-const list = JSON.parse(fs.readFileSync(path.join(dir, 'index.json'), 'utf8')).filter((x) => (split === 'todas' || x.split === split) && !done.has(x.id)).slice(0, MAX);
+const list = JSON.parse(fs.readFileSync(path.join(dir, 'index.json'), 'utf8')).filter((x) => (split === 'todas' || x.split === split) && !done.has(x.id) && (!onlyIds || onlyIds.has(x.id))).slice(0, MAX);
 
 function resize(s, w, h, nw, nh) { if (w === nw && h === nh) return s; const o = new Uint8ClampedArray(nw * nh * 4); for (let y = 0; y < nh; y++) { const fy = Math.min(h - 1, ((y + .5) * h) / nh - .5), y0 = Math.max(0, Math.floor(fy)), y1 = Math.min(h - 1, y0 + 1), ty = Math.max(0, fy - y0); for (let x = 0; x < nw; x++) { const fx = Math.min(w - 1, ((x + .5) * w) / nw - .5), x0 = Math.max(0, Math.floor(fx)), x1 = Math.min(w - 1, x0 + 1), tx = Math.max(0, fx - x0); for (let c = 0; c < 4; c++) { const a = s[(y0 * w + x0) * 4 + c], b = s[(y0 * w + x1) * 4 + c], d = s[(y1 * w + x0) * 4 + c], e = s[(y1 * w + x1) * 4 + c]; o[(y * nw + x) * 4 + c] = (a * (1 - tx) + b * tx) * (1 - ty) + (d * (1 - tx) + e * tx) * ty; } } } return o; }
 ort.env.wasm.numThreads = 1;
