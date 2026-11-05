@@ -500,7 +500,7 @@ export async function partitionBySmallest(regions, segment, width, height, { gri
  * color y la luz de esa pared, (2) está cerca de ella (`maxDist`) y (3) pertenece a una tira fina (no sobrevive a una apertura de radio
  * `thinR`): un objeto grande del color de la pared (un refrigerador blanco, una tabla) NO es fino y queda afuera. Con tope por pared.
  */
-export function fillThinGaps(regions, img, { blocked = null, maxDist = Math.round(img.width * 0.2), thinR = Math.max(6, Math.round(img.width * 0.03)), tolLuma = 22, tolChroma = 0.03, maxAdd = 0.03, darkDelta = 45, minDarkRing = 0.75, sandwich = Math.round(img.width * 0.06), debug = null } = {}) {
+export function fillThinGaps(regions, img, { blocked = null, maxDist = Math.round(img.width * 0.2), thinR = Math.max(6, Math.round(img.width * 0.03)), tolLuma = 22, tolChroma = 0.03, maxAdd = 0.03, darkDelta = 45, minDarkRing = 0.75, minDarkAll = 0.4, sandwich = Math.round(img.width * 0.06), debug = null } = {}) {
   const { data, width, height } = img;
   const N = width * height;
   const owner = new Uint8Array(N);
@@ -560,7 +560,7 @@ export function fillThinGaps(regions, img, { blocked = null, maxDist = Math.roun
       const seen = new Uint8Array(N), q = new Int32Array(N), K = 3;
       for (let st = 0; st < N; st++) {
         if (!add[st] || seen[st]) continue;
-        let head = 0, tail = 0, ring = 0, ringDark = 0;
+        let head = 0, tail = 0, ring = 0, ringDark = 0, ringAll = 0;
         q[tail++] = st; seen[st] = 1;
         while (head < tail) {
           const i = q[head++], x = i % width, y = (i - x) / width;
@@ -575,13 +575,14 @@ export function fillThinGaps(regions, img, { blocked = null, maxDist = Math.roun
             const j = fy * width + fx;
             // Qué hay del otro lado del contorno: lo oscuro (el objeto) suma; la pared YA pintada resta (el hueco no sigue contra la pared: es un marco o un
             // borde); pared sin pintar con color parecido (la prolongación del mismo hueco, apenas fuera de tolerancia) no cuenta; el resto resta.
+            ringAll++;
             if (dark[j]) { ring++; ringDark++; }
             else if (r.mask[j]) ring++;
             else if (Math.abs(lum[j] - ml) <= tolLuma * 2 && Math.abs(cr[j] - mr) + Math.abs(cg[j] - mg) <= tolChroma * 2) { /* neutro */ }
             else ring++;
           }
         }
-        if (!ring || ringDark / ring < minDarkRing) for (let k = 0; k < tail; k++) add[q[k]] = 0;
+        if (!ring || ringDark / ring < minDarkRing || ringDark / ringAll < minDarkAll) for (let k = 0; k < tail; k++) add[q[k]] = 0;
       }
     }
     na = 0;
@@ -705,7 +706,7 @@ export async function detectSurfaces(img, segment, opts = {}) {
     veto = pr.veto;
   }
   if (grow) growIntoGaps(out, img, { blocked: veto });
-  if (thinGaps) fillThinGaps(out, img, { blocked: veto, debug: opts.debugGaps }); // pared que se ve entre los listones de una silla
+  if (thinGaps) fillThinGaps(out, img, { blocked: veto, ...opts.gapOpts, debug: opts.debugGaps }); // pared que se ve entre los listones de una silla
   if (snap && out.length) {
     refineEdges(out, fullGrad(), width, height);
     for (const s of out) s.mask = removeSmallIslands(s.mask, width, height, Math.round(width * height * 0.002));
