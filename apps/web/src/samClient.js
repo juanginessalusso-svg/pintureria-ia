@@ -36,7 +36,7 @@ export class SamClient {
     return this.call('init', { encoderUrl: '/models/mobile_sam_image_encoder.onnx', decoderUrl: '/models/sam_mask_decoder_single.onnx', threads }).then(async (r) => {
       // ?modelo=1 (opt-in, experimental): segmentador semántico propio como guía de SAM. Si el archivo no está en /models, se sigue sin él.
       if (new URLSearchParams(location.search).get('modelo') === '1') {
-        try { await this.call('loadSeg', { url: '/models/interior-seg-int8.onnx', size: 256 }); this.useSeg = true; } catch (e) { console.warn('[modelo] no se pudo cargar el segmentador:', e?.message); }
+        try { await this.call('loadSeg', { url: '/models/interior-seg.onnx', size: 320 }); this.useSeg = true; } catch (e) { console.warn('[modelo] no se pudo cargar el segmentador:', e?.message); }
       }
       return r;
     });
