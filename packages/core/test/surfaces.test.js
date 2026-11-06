@@ -766,3 +766,14 @@ test('lineGrid: una pared con dos molduras horizontales se acepta con la opción
   assert.ok(pared(con) > 0.3 && pared(sin) < 0.1, `con lineGrid ${pared(con).toFixed(2)}, sin ${pared(sin).toFixed(2)}`);
   assert.ok(pared(sin) < pared(con), 'sin la opción el veto por líneas la saca');
 });
+
+import { lineGridGuarda } from '../src/index.js';
+
+test('lineGridGuarda: lo oscuro, lo chico y lo que cuelga arriba conservan el veto por líneas', () => {
+  const ok = { luma: 120 }, g = { area: 0.2, cy: 0.45 };
+  assert.equal(lineGridGuarda(ok, g), false);
+  assert.equal(lineGridGuarda({ luma: 30 }, g), true); // hueco oscuro
+  assert.equal(lineGridGuarda(ok, { area: 0.05, cy: 0.45 }), true); // chico
+  assert.equal(lineGridGuarda(ok, { area: 0.2, cy: 0.15 }), true); // cielorraso
+  assert.equal(lineGridGuarda(ok, { area: 0.06, cy: 0.45 }, { minArea: 0.05 }), false); // se puede aflojar
+});
