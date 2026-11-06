@@ -612,7 +612,7 @@ test('classifySurface con techoAlto: trapecio que baja hasta la mitad es techo; 
 test('techo claro sin pared debajo (cielo, luz) se descarta; con pared debajo se mantiene', async () => {
   const sinPared = { data: new Uint8ClampedArray(W * H * 4), width: W, height: H };
   for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { if (y < H * 0.2) px(sinPared.data, x, y, 235, 235, 235); else px(sinPared.data, x, y, 30 + ((x * 37 + y * 11) % 90), 40 + ((x * 13 + y * 29) % 80), 20 + ((x * 7 + y * 3) % 100)); }
-  const l = await detectSurfaces(sinPared, async (pts) => fakeSegment(pts));
+  const l = await detectSurfaces(sinPared, async (pts) => fakeSegment(pts), { lineGrid: false }); // el fondo es ruido puro: sin grilla de juntas; aísla la regla del techo
   assert.ok(!l.some((s) => s.kind === 'techo'), nombres(l).join());
   assert.ok(l.rechazadas.some((r) => r.why === 'techo sin pared'));
   const con = await detectSurfaces({ data: room(), width: W, height: H }, async (pts) => fakeSegment(pts));
@@ -762,7 +762,7 @@ test('lineGrid: una pared con dos molduras horizontales se acepta con la opción
   const img = { data, width: W, height: H };
   const pared = (l) => l.filter((s) => s.kind === 'pared').reduce((a, s) => a + s.area, 0);
   const base = { splitMax: 99, partition: false, hang: false }; // sin dividir la máscara en las molduras ni repartir semillas
-  const sin = await detectSurfaces(img, seg, base), con = await detectSurfaces(img, seg, { ...base, lineGrid: true });
+  const sin = await detectSurfaces(img, seg, { ...base, lineGrid: false }), con = await detectSurfaces(img, seg, { ...base, lineGrid: true });
   assert.ok(pared(con) > 0.3 && pared(sin) < 0.1, `con lineGrid ${pared(con).toFixed(2)}, sin ${pared(sin).toFixed(2)}`);
   assert.ok(pared(sin) < pared(con), 'sin la opción el veto por líneas la saca');
 });
