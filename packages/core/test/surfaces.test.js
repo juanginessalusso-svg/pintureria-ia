@@ -725,3 +725,55 @@ test('paredRescate: rescata la pared de una máscara rechazada por textura aunqu
   assert.equal(lisa(con), true);
   assert.equal(con.some((s) => s.kind === 'pared' && s.mask[200 * W + 200]), false, 'el objeto rugoso no es pared');
 });
+
+// lineGrid: el veto por líneas (azulejo) solo corresponde a una grilla de juntas (líneas en las dos orientaciones). Una pared con una moldura o un
+// riel de silla (dos líneas horizontales) no es azulejo.
+import { hayGrilla } from '../src/index.js';
+
+test('hayGrilla: horizontales solas no son grilla; horizontales y verticales sí; muchísimas líneas también', () => {
+  assert.equal(hayGrilla({ rows: 2, cols: 0 }), false);
+  assert.equal(hayGrilla({ rows: 1, cols: 1 }), false);
+  assert.equal(hayGrilla({ rows: 3, cols: 2 }), true);
+  assert.equal(hayGrilla({ rows: 9, cols: 0 }), true);
+  assert.equal(hayGrilla(undefined), false);
+});
+
+test('lineRatio devuelve en stats la cantidad de líneas largas por orientación', () => {
+  const w = 100, h = 100, mask = new Uint8Array(w * h).fill(1), G = new Float32Array(w * h);
+  for (let x = 0; x < w; x++) { G[30 * w + x] = 40; G[70 * w + x] = 40; }
+  const st = {};
+  lineRatio(mask, G, w, h, 10, 5, { stats: st });
+  assert.deepEqual(st, { rows: 2, cols: 0 });
+  for (let y = 0; y < h; y++) G[y * w + 50] = 40;
+  const st2 = {};
+  lineRatio(mask, G, w, h, 10, 5, { stats: st2 });
+  assert.deepEqual(st2, { rows: 2, cols: 1 });
+});
+
+test('lineGrid: una pared con dos molduras horizontales se acepta con la opción y se rechaza sin ella', async () => {
+  const data = new Uint8ClampedArray(W * H * 4);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    if (y < 40) px(data, x, y, 235, 235, 235);
+    else if (y >= 150 && y < 154) px(data, x, y, 60, 60, 60); // moldura 1
+    else if (y >= 280 && y < 284) px(data, x, y, 60, 60, 60); // moldura 2
+    else px(data, x, y, 160, 150, 140);
+  }
+  const seg = async (pts) => { const top = pts[0].y < 40, m = new Uint8Array(W * H); for (let j = 0; j < H; j++) for (let i = 0; i < W; i++) if ((j < 40) === top) m[j * W + i] = 1; return m; };
+  const img = { data, width: W, height: H };
+  const pared = (l) => l.filter((s) => s.kind === 'pared').reduce((a, s) => a + s.area, 0);
+  const base = { splitMax: 99, partition: false, hang: false }; // sin dividir la máscara en las molduras ni repartir semillas
+  const sin = await detectSurfaces(img, seg, base), con = await detectSurfaces(img, seg, { ...base, lineGrid: true });
+  assert.ok(pared(con) > 0.3 && pared(sin) < 0.1, `con lineGrid ${pared(con).toFixed(2)}, sin ${pared(sin).toFixed(2)}`);
+  assert.ok(pared(sin) < pared(con), 'sin la opción el veto por líneas la saca');
+});
+
+import { lineGridGuarda } from '../src/index.js';
+
+test('lineGridGuarda: lo oscuro, lo chico y lo que cuelga arriba conservan el veto por líneas', () => {
+  const ok = { luma: 120 }, g = { area: 0.2, cy: 0.45 };
+  assert.equal(lineGridGuarda(ok, g), false);
+  assert.equal(lineGridGuarda({ luma: 30 }, g), true); // hueco oscuro
+  assert.equal(lineGridGuarda(ok, { area: 0.05, cy: 0.45 }), true); // chico
+  assert.equal(lineGridGuarda(ok, { area: 0.2, cy: 0.15 }), true); // cielorraso
+  assert.equal(lineGridGuarda(ok, { area: 0.06, cy: 0.45 }, { minArea: 0.05 }), false); // se puede aflojar
+});

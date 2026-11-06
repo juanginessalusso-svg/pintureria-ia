@@ -593,7 +593,18 @@ export function splitAtCorner(mask, width, height, { x0, tilt, ym }) {
  * Fracción del interior de una región (a ≥ 5 px del borde) con gradiente fuerte a resolución completa: las juntas de un azulejo
  * son líneas finas y rectas que una pared no tiene. Una pared lisa da ≈ 0; un paño de azulejo da bastante más.
  */
-export function lineRatio(mask, G, width, height, thr, inset = 5, { loneLine = false, minFrac = 0.25 } = {}) {
+/** Con lineGrid, el veto por líneas se mantiene (sin grilla igual) para lo oscuro, lo chico y lo que cuelga arriba (cielorraso): ahí no hay evidencia de pared. */
+export function lineGridGuarda(f, g, { minLuma = 45, minArea = 0.08, minCy = 0.2 } = {}) {
+  return f.luma < minLuma || g.area < minArea || g.cy < minCy;
+}
+
+/** ¿Las líneas largas de una máscara forman una grilla de juntas (azulejo, enlosado)? stats = {rows, cols} de lineRatio. */
+export function hayGrilla(stats, { min = 2, total = 8 } = {}) {
+  const r = stats?.rows ?? 0, c = stats?.cols ?? 0;
+  return Math.min(r, c) >= min || r + c >= total;
+}
+
+export function lineRatio(mask, G, width, height, thr, inset = 5, { loneLine = false, minFrac = 0.25, stats = null } = {}) {
   let n = 0, t = 0;
   const rows = new Int32Array(height), rowW = new Int32Array(height), cols = new Int32Array(width), colW = new Int32Array(width);
   for (let y = inset; y < height - inset; y++) for (let x = inset; x < width - inset; x++) {
@@ -603,6 +614,10 @@ export function lineRatio(mask, G, width, height, thr, inset = 5, { loneLine = f
     if (G[i] > thr) { t++; rows[y]++; cols[x]++; }
   }
   if (!n) return 0;
+  if (stats) { // cantidad de líneas largas y casi enteras por orientación (una grilla de juntas tiene de las dos; un zócalo, una moldura o un marco, de una sola)
+    const cl = (cnt, wid) => { let k = 0; for (let i = 0; i < cnt.length; i++) { if (!(wid[i] > 20 && cnt[i] > minFrac * wid[i])) continue; k++; while (i < cnt.length && wid[i] > 20 && cnt[i] > minFrac * wid[i]) i++; } return k; };
+    stats.rows = cl(rows, rowW); stats.cols = cl(cols, colW);
+  }
   if (!loneLine || t / n === 0) return t / n;
   // Una arista larga y recta SOLA dentro de la máscara (el borde de un zócalo o de un marco que SAM dejó adentro) no es un enlosado: el
   // azulejo tiene una grilla de juntas (al menos dos líneas). Se agrupan las filas/columnas casi enteras de borde; si hay una sola
@@ -1439,10 +1454,13 @@ function morphOpen(src, mask, width, height, win) {
  * Devuelve [{ kind: 'pared'|'techo', name, mask, area, cx, cy, texture }], máscaras DISJUNTAS, paredes de izquierda a derecha.
  */
 export async function detectSurfaces(img, segment, opts = {}) {
-  const { maxSeeds = 9, gradMax = 7, minDist = 2.5, minArea = 0.025, maxPared = 5, maxTexture = 0.12, refineMin = 2, minLumaRatio = 0.55, grow = true, snap = true, partition = true, hang = true, lockObjects = true, thinGaps = true, enclosed = true, tableVeto = true, minWallLuma = 30, frames = true, strips = true, blockRejected = true, splitMax = 2.2, splitEdge = 4.5, maxLine = 0.004, minCoverage = 0.35, relaxFactor = 1.8, corner = true, patience = 3, sky = true, hotMax = 0.3, techoMaxTexture = 0.15, skyBlue = 0.12, techoNeedsWall = true, minTechoContact = 0.3, skyLuma = 210, loneLine = true, rescue = true, splitCornerOnly = true, techoMinLuma = 70, trim = false, techoRelax = false, techoAlto = false, paredRescate = false } = opts; // techoRelax: {minLuma, maxTexture} (opt-in): techo oscuro/con textura que apoya en una pared aceptada; techoAlto: techo que baja hasta ~60 % de la foto (opt-in) // paredRescate: opt-in (agente B): rescate de color también con paredes aceptadas si cubren poco, y en máscaras rechazadas por líneas // trim: opt-in (AUTO_OPTS {"trim":true}); sin verificar en las 15 propias
+  const { maxSeeds = 9, gradMax = 7, minDist = 2.5, minArea = 0.025, maxPared = 5, maxTexture = 0.12, refineMin = 2, minLumaRatio = 0.55, grow = true, snap = true, partition = true, hang = true, lockObjects = true, thinGaps = true, enclosed = true, tableVeto = true, minWallLuma = 30, frames = true, strips = true, blockRejected = true, splitMax = 2.2, splitEdge = 4.5, maxLine = 0.004, minCoverage = 0.35, relaxFactor = 1.8, corner = true, patience = 3, sky = true, hotMax = 0.3, techoMaxTexture = 0.15, skyBlue = 0.12, techoNeedsWall = true, minTechoContact = 0.3, skyLuma = 210, loneLine = true, rescue = true, splitCornerOnly = true, techoMinLuma = 70, trim = false, techoRelax = false, techoAlto = false, paredRescate = false, lineGrid = false } = opts; // techoRelax: {minLuma, maxTexture} (opt-in): techo oscuro/con textura que apoya en una pared aceptada; techoAlto: techo que baja hasta ~60 % de la foto (opt-in) // paredRescate: opt-in (agente B): rescate de color también con paredes aceptadas si cubren poco, y en máscaras rechazadas por líneas // lineGrid: opt-in {min, total}: el veto por líneas (azulejo) solo vale si hay grilla (≥ min líneas largas por orientación o ≥ total en suma); una moldura, un zócalo o un marco dejan líneas de una sola orientación
+  // trim: opt-in (AUTO_OPTS {"trim":true}); sin verificar en las 15 propias
   const { width, height } = img;
   const { luma, w, h } = downscaleLuma(img);
   const grad = gradientMap(luma, w, h);
+  let gradFineCache = null; // gradiente de la luminancia suavizada (caja 5x5 de la grilla): el grano fino (revoque, papel con dibujo chico) desaparece, los bordes grandes (ventana, mueble) no
+  const gradFine = () => (gradFineCache ??= gradientMap(boxBlur(luma, w, h, 2), w, h));
   const freeOrig = new Uint8Array(w * h); // (se reutiliza en la segunda pasada)
   for (let i = 0; i < freeOrig.length; i++) freeOrig[i] = grad[i] < gradMax ? 1 : 0;
   const free = Uint8Array.from(freeOrig);
@@ -1496,9 +1514,10 @@ export async function detectSurfaces(img, segment, opts = {}) {
       if (found.some((f) => { const r = iouAndContain(f.mask, parte); return r.iou > 0.6 || r.inB > 0.85; })) continue;
       aporto = true;
       const lp = toLow(parte, width, height, w, h);
+      const gridStats = {};
       let ls = 0, ln = 0;
       for (let i = 0; i < lp.length; i++) if (lp[i]) { ls += luma[i]; ln++; }
-      found.push({ mask: parte, g, texture: textureRatio(lp, grad, w, h, texGrad * 1.5), luma: ln ? ls / ln : 0, line: lineRatio(parte, fullGrad(), width, height, 10, 5, { loneLine }) });
+      found.push({ mask: parte, g, texture: textureRatio(lp, grad, w, h, texGrad * 1.5), fine: textureRatio(lp, gradFine(), w, h, texGrad * 1.5), luma: ln ? ls / ln : 0, line: lineRatio(parte, fullGrad(), width, height, 10, 5, { loneLine, stats: gridStats }), grid: gridStats });
       if (opts.debugLines) { const G = fullGrad(); found[found.length - 1].lines = opts.debugLines.map((t) => lineRatio(parte, G, width, height, t)); }
     }
     sinNada = aporto ? 0 : sinNada + 1;
@@ -1529,14 +1548,14 @@ export async function detectSurfaces(img, segment, opts = {}) {
     const g = maskGeometry(clean, width, height);
     let kind = classifySurface(g, { techoAlto }), why = kind ? null : 'forma', dudoso = false;
     if (kind === 'pared' && f.texture > maxTexture) { kind = null; why = 'textura'; } // vidrio con paisaje, puerta con paneles, mueble…
-    if (kind === 'pared' && f.line > maxLine) { kind = null; why = 'líneas'; } // azulejo: las juntas son líneas finas y rectas que una pared no tiene
+    if (kind === 'pared' && f.line > maxLine && (!lineGrid || hayGrilla(f.grid, lineGrid) || lineGridGuarda(f, g, lineGrid))) { kind = null; why = 'líneas'; } // azulejo: las juntas son líneas finas y rectas que una pared no tiene
     // Cielo, vidrio y luz de ventana: no son paredes aunque sean lisos y claros.
     //  - quemado: una pared fotografiada normal casi no tiene píxeles al tope de la escala (en las 15 fotos propias, 0 %); un cielo blanco, un vidrio o la luz
     //    de una ventana sí (n27 93 %, n20 99 %, n01 64–72 %, n17 35–68 %). Se descarta lo que tenga más de `hotMax` (una pared real con sol, n12: 25 %).
     //  - techo azul: ningún techo se pinta de azul cielo (n26: B−R = +0,47; los techos propios, ≤ +0,011).
     //  - techo con textura: el techo tampoco puede ser una persiana o un paisaje (la regla de `maxTexture` solo miraba paredes).
     let st = null;
-    if (kind && (opts.debugCand || sky)) st = colorStats(clean, img);
+    if ((kind || opts.debugCand) && (opts.debugCand || sky)) st = colorStats(clean, img);
     if (sky && kind) {
       if (st.hot > hotMax) why = 'quemado';
       else if (kind === 'techo' && st.blue > skyBlue) why = 'cielo azul';
@@ -1544,7 +1563,7 @@ export async function detectSurfaces(img, segment, opts = {}) {
       if (!why && kind === 'techo' && techoMinLuma && f.luma < techoMinLuma) { if (techoRelax && f.luma >= (techoRelax.minLuma ?? 45)) dudoso = true; else why = 'techo oscuro'; } // un techo de madera oscura o un hueco no es un techo a pintar (n34 luma 41, n09 49; los techos propios, ≥ 125: margen 2,5×)
       if (why) kind = null;
     }
-    if (opts.debugCand && st) opts.debugCand({ kind: kind ?? `veto:${why}`, area: +g.area.toFixed(3), cx: +g.cx.toFixed(2), cy: +g.cy.toFixed(2), top: +g.top.toFixed(2), tex: +f.texture.toFixed(3), ...Object.fromEntries(Object.entries(st).map(([k, v]) => [k, +v.toFixed(3)])) });
+    if (opts.debugCand && st) opts.debugCand({ mask: clean, kind: kind ?? `veto:${why}`, area: +g.area.toFixed(3), cx: +g.cx.toFixed(2), cy: +g.cy.toFixed(2), top: +g.top.toFixed(2), tex: +f.texture.toFixed(3), fine: +f.fine.toFixed(3), line: +f.line.toFixed(4), rows: f.grid?.rows, cols: f.grid?.cols, ...Object.fromEntries(Object.entries(st).map(([k, v]) => [k, +v.toFixed(3)])) });
     if (kind === 'pared' && tableVeto) { // una superficie horizontal vista desde arriba (tapa de escritorio, mesada): llena TODO el borde de abajo y su masa está en la mitad baja; una pared tiene piso o zócalo ahí
       let b = 0;
       for (let x = 0; x < width; x++) if (clean[(height - 2) * width + x]) b++;
@@ -1568,7 +1587,7 @@ export async function detectSurfaces(img, segment, opts = {}) {
         const lp = toLow(m, width, height, w, h);
         let ls = 0, ln = 0;
         for (let i = 0; i < lp.length; i++) if (lp[i]) { ls += luma[i]; ln++; }
-        const tex = textureRatio(lp, grad, w, h, gradMax * 1.5), lu = ln ? ls / ln : 0;
+        const tex = textureRatio(lp, paredRescate?.fina ? gradFine() : grad, w, h, gradMax * 1.5), lu = ln ? ls / ln : 0; // paredRescate.fina: la textura del pedazo se mide con la luminancia suavizada (el grano fino de un revoque no cuenta, los bordes grandes sí)
         if (process.env.DEBUG_RESCUE) console.log('    [rescate]', g.area.toFixed(3), 'textura', tex.toFixed(3), 'luma', lu.toFixed(0));
         if (lu < (ro.minLuma ?? 80) || tex > (ro.maxCompTex ?? 0.05)) continue; // oscuro (madera, hueco) o con textura propia (reflejos de vidrio): no se arriesga
         out.push({ kind: 'pared', mask: m, ...g, texture: tex, luma: lu, rescatada: true });
