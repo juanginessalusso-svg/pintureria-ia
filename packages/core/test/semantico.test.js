@@ -76,3 +76,20 @@ test('hibridar con union: la pared del clásico que el modelo dejó como "otro" 
   assert.equal(con[0].mask[10 * w + 40], 1, 'se sumó la zona oscura');
   assert.equal(con[0].mask[35 * w + 40], 0, 'el piso que ve el modelo no se suma');
 });
+
+test('hibridar con partir: una pared del modelo que abarca dos paredes del clásico se parte en dos', () => {
+  const w = 80, h = 40, N = w * h, cm = new Uint8Array(N).fill(CLASE.pared), modelo = new Uint8Array(N).fill(1), izq = new Uint8Array(N), der = new Uint8Array(N);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { if (x >= 5 && x < 35) izq[y * w + x] = 1; if (x >= 45 && x < 75) der[y * w + x] = 1; } // el clásico deja una franja de dudas en el medio
+  const found = [{ kind: 'pared', name: 'Pared 1', area: 1, mask: modelo }];
+  const clas = [{ kind: 'pared', name: 'Pared izquierda', area: 0.4, mask: izq }, { kind: 'pared', name: 'Pared derecha', area: 0.4, mask: der }];
+  const uno = hibridar(found, clas, cm, w, h);
+  assert.equal(uno.length, 1);
+  const dos = hibridar(found, clas, cm, w, h, { partir: true });
+  assert.deepEqual(dos.map((s) => s.name).sort(), ['Pared derecha', 'Pared izquierda']);
+  const i = dos.find((s) => s.name === 'Pared izquierda'), d = dos.find((s) => s.name === 'Pared derecha');
+  assert.equal(i.mask[20 * w + 2], 1, 'el borde izquierdo (sin clásico) va a la pared más cercana');
+  assert.equal(d.mask[20 * w + 78], 1);
+  assert.equal(i.mask[20 * w + 60], 0); assert.equal(d.mask[20 * w + 10], 0);
+  // con una sola pared del clásico no se parte
+  assert.equal(hibridar(found, [clas[0]], cm, w, h, { partir: true }).length, 1);
+});

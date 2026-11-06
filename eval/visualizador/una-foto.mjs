@@ -18,6 +18,7 @@ const file = process.argv[2], mode = process.argv[3] ?? 'auto';
 if (!file || !process.env.MODELS_DIR) { console.error('Uso: MODELS_DIR=... node una-foto.mjs <foto> [modo]'); process.exit(2); }
 const OPTS = process.env.OPTS ? JSON.parse(process.env.OPTS) : {};
 if (process.env.DEBUG_RECTAS) OPTS.debugRectas = (i) => console.log('  [rectas]', JSON.stringify(i));
+if (process.env.DEBUG_CORNER) OPTS.debugCorner = (i) => console.log('  [esquina]', JSON.stringify({ x: i.x, med: +i.med?.toFixed?.(1), n: i.n, frac: +i.frac?.toFixed?.(2), cov: +i.cov?.toFixed?.(2), spread: i.spread, tilt: +i.tilt?.toFixed?.(3), why: i.why }));
 if (process.env.DEBUG_RECTAS) OPTS.debugSombras = (i) => console.log('  [sombras]', JSON.stringify(i));
 const cacheDir = process.env.CACHE, outDir = process.env.OUT ?? path.join(here, 'salidas');
 fs.mkdirSync(outDir, { recursive: true }); if (cacheDir) fs.mkdirSync(cacheDir, { recursive: true });

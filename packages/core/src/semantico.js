@@ -116,7 +116,7 @@ const count = (m) => { let n = 0; for (let i = 0; i < m.length; i++) if (m[i]) n
  * `found` = superficies del camino con modelo, `clasico` = superficies de detectSurfaces. Devuelve la lista nueva (no modifica las de entrada).
  * Opciones: minTechoModelo (fracción del techo clásico que el modelo también ve como techo, 0,4), islaMin (fracción de la foto bajo la cual una mancha suelta de pared se borra, 0,004).
  */
-export function hibridar(found, clasico, classMap, w, h, { minTechoModelo = 0.4, islaMin = 0.004, union = false, unionMinArea = 0.02 } = {}) {
+export function hibridar(found, clasico, classMap, w, h, { minTechoModelo = 0.4, islaMin = 0.004, union = false, unionMinArea = 0.02, partir = false, partirMinSolape = 0.15 } = {}) {
   const N = w * h, techo = new Uint8Array(N);
   let hayTecho = false;
   for (const c of clasico) {
@@ -153,6 +153,27 @@ export function hibridar(found, clasico, classMap, w, h, { minTechoModelo = 0.4,
       if (mejor) { const m = new Uint8Array(mejor.mask); for (let i = 0; i < N; i++) if (limpio[i]) m[i] = 1; let t = 0; for (let i = 0; i < N; i++) if (m[i]) t++; mejor.mask = m; mejor.area = t / N; }
       else out.push({ name: c.name, kind: 'pared', area: a / N, mask: limpio, fuente: 'clasico' });
     }
+  }
+  // partir (opt-in): una pared del modelo que abarca DOS o más paredes del clásico (dos paredes que se juntan en una esquina son una sola componente conexa para el modelo)
+  //  se parte según el clásico: cada píxel va a la pared del clásico que lo contiene o, si no hay, a la más cercana dentro de la pared del modelo.
+  if (partir) {
+    const clas = clasico.filter((c) => c.kind === 'pared' && c.area >= 0.03);
+    const res = [];
+    for (const o of out) {
+      if (o.kind !== 'pared') { res.push(o); continue; }
+      let tot = 0; for (let i = 0; i < N; i++) if (o.mask[i]) tot++;
+      const dueños = clas.filter((c) => { let sol = 0; for (let i = 0; i < N; i++) if (o.mask[i] && c.mask[i]) sol++; return tot && sol / tot >= partirMinSolape; });
+      if (dueños.length < 2) { res.push(o); continue; }
+      const dueño = new Int8Array(N).fill(-1), cola = [];
+      dueños.forEach((c, k) => { for (let i = 0; i < N; i++) if (o.mask[i] && c.mask[i] && dueño[i] < 0) { dueño[i] = k; cola.push(i); } });
+      for (let q = 0; q < cola.length; q++) { // expansión desde las semillas, solo dentro de la pared del modelo
+        const i = cola[q], x = i % w, k = dueño[i];
+        for (const j of [x > 0 ? i - 1 : -1, x < w - 1 ? i + 1 : -1, i >= w ? i - w : -1, i < N - w ? i + w : -1]) if (j >= 0 && o.mask[j] && dueño[j] < 0) { dueño[j] = k; cola.push(j); }
+      }
+      const partes = dueños.map((c, k) => { const m = new Uint8Array(N); let a = 0; for (let i = 0; i < N; i++) if (dueño[i] === k) { m[i] = 1; a++; } return { ...o, name: c.name, mask: m, area: a / N }; }).filter((p) => p.area > 0.01);
+      res.push(...partes);
+    }
+    out.length = 0; out.push(...res);
   }
   if (hayTecho) {
     let a = 0; for (let i = 0; i < N; i++) if (techo[i]) a++;

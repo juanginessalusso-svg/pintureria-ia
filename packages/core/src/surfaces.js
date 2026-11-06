@@ -453,7 +453,9 @@ export function splitMerged(mask, grad, w, h, width, height, { strictMax = 2.2, 
  * píxeles de la foto de trabajo: la esquina es la recta x = x0 + tilt·(y − ym).
  * Con `debug`, informa siempre el mejor candidato y por qué se aceptó o se rechazó.
  */
-export function findVerticalCorner(mask, img, { win = 10, gap = 2, minE = 5, minFrac = 0.65, minCov = 0.8, minRows = 0.08, maxSpread = 2.5, maxTilt = 0.12, minAngle = 10, maxAngleOffset = 0.06, minPart = 0.004, debug = null } = {}) {
+export function findVerticalCorner(mask, img, { win = 10, gap = 2, minE = 5, minFrac = 0.65, minCov = 0.8, minRows = 0.08, maxSpread = 2.5, maxTilt = 0.12, minAngle = 10, maxAngleOffset = 0.06, minPart = 0.004, sinTecho = null, debug = null } = {}) {
+  // sinTecho (opt-in, p. ej. { minE: 7, minFrac: 0.75, minCov: 0.95, maxSpread: 1.5 }): si la pared llega hasta el borde superior de la foto (no hay unión con el techo para medir el quiebre),
+  //  se acepta una esquina igual cuando el escalón de luz es MUY claro, consistente en casi todas las filas y una recta casi perfecta.
   const { width, height, data } = img;
   const f = Math.max(1, Math.round(Math.max(width, height) / 400));
   const lw = Math.floor(width / f), lh = Math.floor(height / f), full = f * f;
@@ -559,8 +561,15 @@ export function findVerticalCorner(mask, img, { win = 10, gap = 2, minE = 5, min
     const gl = Math.round(0.08 * width), wl = Math.round(0.15 * width), gr = Math.round(0.01 * width);
     const wr = Math.min(Math.round(0.15 * width), lastCol - xc - 2);
     const left = fit(xc - gl - wl, xc - gl), right = wr - gr >= 0.04 * width ? fit(xc + gr, xc + wr) : null;
-    if (!left || !right) why.push('techo?');
-    else {
+    let sinUnion = false;
+    if (!left || !right) {
+      let arriba = 0, tot = 0;
+      for (let x = Math.max(0, xc - gl - wl); x <= Math.min(width - 1, xc + wr); x++) { tot++; if (top[x] >= 0 && top[x] <= height * 0.01) arriba++; }
+      const fuerte = sinTecho && Math.abs(c.med) >= (sinTecho.minE ?? 7) && c.frac >= (sinTecho.minFrac ?? 0.75) && c.cov >= (sinTecho.minCov ?? 0.95) && (info.spread ?? 99) <= (sinTecho.maxSpread ?? 1.5);
+      if (fuerte && tot && arriba / tot >= 0.6) sinUnion = true; else why.push('techo?');
+    }
+    if (sinUnion) { /* esquina aceptada sin contorno de techo */ }
+    else if (left && right) {
       info.angle = Math.abs(Math.atan(right.b) - Math.atan(left.b)) * 180 / Math.PI;
       info.resTop = Math.max(left.res, right.res);
       info.xInt = Math.abs(left.b - right.b) > 1e-6 ? (right.a - left.a) / (left.b - right.b) : NaN;

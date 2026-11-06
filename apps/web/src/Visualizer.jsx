@@ -299,17 +299,24 @@ export function Visualizer() {
     const p = photo.current;
     if (!p) return;
     const base = 'foto-' + new Date().toISOString().replace(/[-:T.Z]/g, '').slice(0, 14);
-    const save = (blob, name) => { const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 5000); };
     const draw = (rgba) => { const c = document.createElement('canvas'); c.width = p.width; c.height = p.height; c.getContext('2d').putImageData(new ImageData(rgba, p.width, p.height), 0, 0); return c; };
     const toBlob = (c, type, q) => new Promise((r) => c.toBlob(r, type, q));
+    // Niveles bien separados (0 otro, 80 pared, 160 techo, 240 ignorar): sobreviven a una recompresión (WhatsApp, etc.); agregar_propias.py usa el nivel más cercano.
     const lab = new Uint8ClampedArray(p.width * p.height * 4);
-    for (let i = 0; i < p.width * p.height; i++) { lab[i * 4 + 3] = 255; }
+    for (let i = 0; i < p.width * p.height; i++) lab[i * 4 + 3] = 255;
     for (const sf of surfaces.current) {
-      const v = sf.kind === 'techo' ? 2 : sf.kind === 'ladrillo' ? 255 : 1;
+      const v = sf.kind === 'techo' ? 160 : sf.kind === 'ladrillo' ? 240 : 80;
       for (let i = 0; i < sf.mask.length; i++) if (sf.mask[i]) { lab[i * 4] = lab[i * 4 + 1] = lab[i * 4 + 2] = v; }
     }
-    save(await toBlob(draw(new Uint8ClampedArray(p.data)), 'image/jpeg', 0.93), base + '.jpg');
-    setTimeout(async () => save(await toBlob(draw(lab), 'image/png'), base + '.labels.png'), 400);
+    const files = [
+      new File([await toBlob(draw(new Uint8ClampedArray(p.data)), 'image/jpeg', 0.93)], base + '.jpg', { type: 'image/jpeg' }),
+      new File([await toBlob(draw(lab), 'image/png')], base + '.labels.png', { type: 'image/png' }),
+    ];
+    // En el celular: menú Compartir con los DOS archivos (elegí Drive y la carpeta). Si el navegador no puede, se descargan los dos.
+    if (navigator.canShare?.({ files })) {
+      try { await navigator.share({ files, title: 'Foto y máscaras para entrenamiento' }); setStatus('Compartido: ' + base); return; } catch (e) { if (e?.name === 'AbortError') return; }
+    }
+    files.forEach((f, k) => setTimeout(() => { const a = document.createElement('a'); a.href = URL.createObjectURL(f); a.download = f.name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 5000); }, k * 400));
     setStatus('Guardé ' + base + '.jpg y ' + base + '.labels.png en la carpeta de descargas.');
   };
   const redetect = async (m) => {
@@ -787,7 +794,7 @@ export function Visualizer() {
         {hasPhoto && !prog && new URLSearchParams(location.search).get('dataset') === '1' && (
           <p class="muted small">
             Modo recolección: corregí las superficies con el pincel o el borrador y después{' '}
-            <button onClick={exportDataset}>Guardar foto y máscaras para entrenamiento</button>
+            <button onClick={exportDataset}>Compartir foto y máscaras (para entrenamiento)</button>
           </p>
         )}
 
