@@ -97,6 +97,15 @@ Ginés quiere que el cliente haga lo mínimo: sacar la foto y elegir colores. Lo
 - **Probado** en Chromium (Playwright, imagen sintética, sin modelos): zoom por botones y ctrl+rueda, toque con zoom cae donde se toca, radio en px de pantalla, trazo/borrado/deshacer, superficie activa, reinicio al cambiar de foto, y en táctil emulado (CDP) pellizco, pan con un dedo, trazo y descarte con segundo dedo. El script de prueba no está en el repo.
 - **NO probado**: segmentación SAM + pincel juntos con una foto real (no había modelos ni fotos); celulares reales (iOS Safari en particular: `pan-y` en s=1 puede hacer que un pellizco inicial lo tome el navegador como scroll; si pasa, se amplía con los botones); rendimiento del velo en vivo en equipos lentos (copia la imagen en cada frame). Probar en staging con foto real y ajustar.
 
+## Ronda 2 de mejora (2026-11-05): integrada en la rama  (sin pushear)
+- Medición integrada (139 fotos COCO-Stuff): pared IoU 0,36 test / 0,43 dev; techo 0,47 test / 0,51 dev (línea base 0,32 / 0,42).
+- **lineGrid ACTIVO por defecto** (agente F): el veto por líneas (azulejo) solo vale con grilla de juntas. Pared IoU +0,03 en dev y test (a nivel de ruido de etiquetas); mejora 15/empeora 3 en dev. Desactivar con .
+- Opciones apagadas: , ,  (A/B),  (F, agrega paredes de más),  (E, no mejora).
+- **Modo 'luz'** en  (agente D, opt-in): ΔE00 vs Sinteplast 8,5→6,0 en 16 superficies; reservadas 11,6→9,7. Con solo 7 pares no se cambia el default. Ver docs/FIDELIDAD-COLOR.md.
+- Métrica de bordes robusta (agente E): eval/visualizador/metrica-bordes.mjs (integrada en comparar-par.mjs).
+- Herramientas: coco-cache.mjs (replay sin SAM ~4 s/foto), catalogo-fallas.mjs, luz-eval.mjs.
+- Pendiente: agente G (modelos de segmentación de interiores; rama agente/g-modelos, frenado), más pares Sinteplast (15–20), decidir dónde correr lo pesado (notebook 4 GB; EXO sin SSH; Intel con cooler roto).
+
 ## Pendientes priorizados
 0. **Probar pincel/zoom con foto real en staging** y en celulares (iOS Safari y Android); ajustar `touch-action`, velocidad del velo en vivo y tamaño por defecto del pincel según lo que se vea. Posible mejora: test automatizado de la lógica de `compose`/deshacer (hoy vive dentro del componente).
 1. **Etapa F** (pulido y evaluación): set de 30–50 fotos con máscaras anotadas (IoU) y error de m² contra medidas reales; medir velocidad en **celulares reales** (hoy ~9–10 s de análisis con 1 hilo en una notebook de 4 GB; WASM multihilo se colgaba: `?threads=N`, investigar). PWA instalable (manifest, íconos PNG, service worker).
