@@ -18,13 +18,15 @@ let cancelDetect = false; // lo levanta 'cancel' (o una foto nueva) y la detecci
 async function loadModel(url, label, report) {
   const cache = await caches.open('sam-models-v1');
   const hit = await cache.match(url);
-  if (hit) {
+  if (hit && (hit.headers.get('content-type') ?? '').toLowerCase().includes('html')) { await cache.delete(url); } // una respuesta HTML guardada por error (el servidor responde la página cuando el modelo no existe): se descarta
+  else if (hit) {
     const buf = new Uint8Array(await hit.arrayBuffer());
     report(label, buf.length, buf.length);
     return buf;
   }
   const res = await fetch(url);
   if (!res.ok) throw new Error(`No se pudo bajar ${label} (${res.status})`);
+  if ((res.headers.get('content-type') ?? '').toLowerCase().includes('html')) throw new Error(`${label}: el servidor devolvió una página en vez del modelo (¿falta el archivo?)`); // no se guarda en la caché
   const total = Number(res.headers.get('content-length')) || 0;
   const reader = res.body.getReader();
   const chunks = [];
