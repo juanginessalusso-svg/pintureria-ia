@@ -1,5 +1,6 @@
 // Detección guiada por un segmentador semántico de interiores (clases 0 otro, 1 pared, 2 techo, 3 piso).
 // El modelo da un mapa de clases grueso (1/8 de resolución); SAM lo afina. Todo puro y determinista: `segment` lo inyecta quien llama.
+import { removeSmallIslands } from './recolor.js';
 // Diseño completo en training/DISENO-INTEGRACION.md (rama agente/g-modelos).
 
 export const CLASE = { otro: 0, pared: 1, techo: 2, piso: 3 };
@@ -108,3 +109,36 @@ export async function detectSurfacesSemantico(classMap, w, h, segment, { dilate 
 }
 
 const count = (m) => { let n = 0; for (let i = 0; i < m.length; i++) if (m[i]) n++; return n; };
+
+/**
+ * Híbrido modelo + clásico. Las PAREDES las define el modelo; el TECHO lo dibuja el detector clásico (bordes más prolijos con la pared) cuando
+ * el modelo también ve techo ahí (el clásico a veces marca una pared como techo: ese techo se descarta). Además se limpian las manchas sueltas de las paredes.
+ * `found` = superficies del camino con modelo, `clasico` = superficies de detectSurfaces. Devuelve la lista nueva (no modifica las de entrada).
+ * Opciones: minTechoModelo (fracción del techo clásico que el modelo también ve como techo, 0,4), islaMin (fracción de la foto bajo la cual una mancha suelta de pared se borra, 0,004).
+ */
+export function hibridar(found, clasico, classMap, w, h, { minTechoModelo = 0.4, islaMin = 0.004 } = {}) {
+  const N = w * h, techo = new Uint8Array(N);
+  let hayTecho = false;
+  for (const c of clasico) {
+    if (c.kind !== 'techo') continue;
+    let sol = 0, tot = 0;
+    for (let i = 0; i < N; i++) if (c.mask[i]) { tot++; if (classMap[i] === CLASE.techo) sol++; }
+    if (tot && sol / tot >= minTechoModelo) { for (let i = 0; i < N; i++) if (c.mask[i]) techo[i] = 1; hayTecho = true; }
+  }
+  const out = [];
+  for (const f of found) {
+    if (f.kind === 'techo' && hayTecho) continue; // lo reemplaza el techo del clásico
+    let m = f.mask;
+    if (f.kind === 'pared') {
+      if (hayTecho) { m = new Uint8Array(m); for (let i = 0; i < N; i++) if (techo[i]) m[i] = 0; }
+      m = removeSmallIslands(m, w, h, Math.round(islaMin * N));
+    }
+    let a = 0; for (let i = 0; i < N; i++) if (m[i]) a++;
+    if (a / N > 0.01) out.push({ ...f, mask: m, area: a / N });
+  }
+  if (hayTecho) {
+    let a = 0; for (let i = 0; i < N; i++) if (techo[i]) a++;
+    out.push({ name: 'Techo', kind: 'techo', area: a / N, mask: techo, fuente: 'clasico' });
+  }
+  return out;
+}

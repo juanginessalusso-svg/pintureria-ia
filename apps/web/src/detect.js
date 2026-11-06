@@ -1,7 +1,7 @@
 // Corre la detección automática de superficies (JS pesado: ~35-50 % del análisis). Está pensado para ejecutarse DENTRO del
 // Worker de SAM: así la interfaz no se congela y cada decodificación es una llamada directa (sin mensajes de ida y vuelta).
 // Es puro (sin DOM ni Worker) para poder probarlo con `node --test`.
-import { cleanMask, detectSurfaces, detectFacade, detectSurfacesSemantico } from '@pintureria/core';
+import { cleanMask, detectSurfaces, detectFacade, detectSurfacesSemantico, hibridar } from '@pintureria/core';
 
 export class DetectCancelled extends Error {
   constructor() {
@@ -38,11 +38,11 @@ export async function runDetect({ image, segment, onProgress = () => {}, isCance
     // si el modelo (entrenado con interiores) casi no ve pared/techo, la foto probablemente no es un interior (fachada): se deja que decida el detector clásico
     if (found.reduce((a, f) => a + f.area, 0) < (opts.semantico?.minCobertura ?? 0.12)) found = [];
     // fusion (opt-in, opts.semantico.fusion): a lo del modelo se le suman las PAREDES del detector clásico que el modelo no vio (poco solapadas con lo ya hallado)
-    if (found.length && opts.semantico?.fusion) {
+    if (found.length && (opts.semantico?.fusion || opts.semantico?.hibrido)) {
       const N = width * height, ocupado = new Uint8Array(N);
       for (const f of found) for (let i = 0; i < N; i++) if (f.mask[i]) ocupado[i] = 1;
       const clasico = await detectSurfaces(image, seg, opts);
-      for (const c of clasico) {
+      if (opts.semantico.fusion) for (const c of clasico) {
         if (c.kind !== 'pared' || c.area < (opts.semantico.fusionMinArea ?? 0.03)) continue;
         let sol = 0, tot = 0; for (let i = 0; i < N; i++) if (c.mask[i]) { tot++; if (ocupado[i]) sol++; }
         if (tot && sol / tot < (opts.semantico.fusionMaxSolape ?? 0.25)) {
@@ -51,6 +51,8 @@ export async function runDetect({ image, segment, onProgress = () => {}, isCance
           for (let i = 0; i < N; i++) if (m[i]) ocupado[i] = 1;
         }
       }
+      // hibrido (opt-in, opts.semantico.hibrido): paredes del modelo, techo del clásico (si el modelo también lo ve) y sin manchas sueltas; ver hibridar() en semantico.js
+      if (opts.semantico.hibrido) found = hibridar(found, clasico, classMap, width, height, opts.semantico);
     }
   }
   if (mode !== 'fachada' && !found.length) found = await detectSurfaces(image, seg, opts);
