@@ -2,6 +2,7 @@
 import * as ort from 'onnxruntime-web/wasm';
 import { Sam, encoderSize, rgbaToRgbFloat } from './sam.js';
 import { runDetect } from './detect.js';
+import { runSegmenter } from './seg.js';
 
 // El .wasm lo empaqueta Vite junto al worker (ruta con hash), no hace falta configurar wasmPaths.
 // 1 hilo por defecto. El multihilo (?threads=N) necesita SharedArrayBuffer => página con aislamiento de origen
@@ -9,6 +10,7 @@ import { runDetect } from './detect.js';
 ort.env.wasm.numThreads = 1;
 
 let sam = null;
+let seg = null; // segmentador semántico opcional { session, S } (ver seg.js); solo si la página pidió ?modelo=1
 let lastImg = null; // la foto de trabajo (RGBA) con la que se calculó el encoder: la detección automática corre sobre ella, acá adentro
 let cancelDetect = false; // lo levanta 'cancel' (o una foto nueva) y la detección en curso se corta antes de la próxima decodificación
 
@@ -61,6 +63,12 @@ const handlers = {
     return { threads: ort.env.wasm.numThreads, initMs: Math.round(performance.now() - t0) };
   },
 
+  async loadSeg({ url, size = 256 }) {
+    const bytes = await loadModel(url, 'seg', () => {});
+    seg = { session: await ort.InferenceSession.create(bytes, { executionProviders: ['wasm'] }), S: size };
+    return {};
+  },
+
   async embed({ rgba, width, height }) {
     const t0 = performance.now();
     const { width: rw, height: rh } = encoderSize(width, height);
@@ -90,15 +98,26 @@ const handlers = {
    * Detección automática de paredes y techo, ACÁ en el Worker: antes corría en el hilo principal y congelaba la pantalla
    * (35-50 % del tiempo era JS puro). Avisa el progreso con 'detect-progress' y devuelve las máscaras transferidas (sin copiar).
    */
-  async detect({ mode = 'auto' } = {}) {
+  async detect({ mode = 'auto', useModel = false } = {}) {
     if (!lastImg || !sam) throw new Error('falta analizar la foto antes de detectar');
     cancelDetect = false;
+    let classMap = null;
+    if (useModel && seg) { // mapa de clases del modelo (a 1/8 de resolución, agrandado): guía las semillas de SAM; si algo falla se detecta como siempre
+      try {
+        const { width, height } = lastImg, S = seg.S, src = new OffscreenCanvas(width, height);
+        src.getContext('2d').putImageData(new ImageData(lastImg.data, width, height), 0, 0);
+        const dst = new OffscreenCanvas(S, S), ctx = dst.getContext('2d', { willReadFrequently: true });
+        ctx.imageSmoothingQuality = 'high'; ctx.drawImage(src, 0, 0, S, S);
+        classMap = await runSegmenter(ort, seg.session, ctx.getImageData(0, 0, S, S).data, S, width, height);
+      } catch (e) { console.warn('[modelo] falló, se usa el detector clásico:', e?.message); }
+    }
     const { found, decodes, mode: used } = await runDetect({
       image: lastImg,
       segment: (pts) => { sam.reset(); return sam.segment(pts); }, // cada semilla es independiente (como antes: fresh = true)
       onProgress: (n) => postMessage({ type: 'detect-progress', n }),
       isCancelled: () => cancelDetect,
       mode,
+      classMap,
     });
     const safe = found.map((f) => ({ ...f, mask: f.mask.slice() })); // buffer propio de cada máscara: se pueden transferir sin choques
     return { result: { found: safe, decodes, mode: used }, transfer: safe.map((f) => f.mask.buffer) };

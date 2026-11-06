@@ -33,12 +33,18 @@ export class SamClient {
     const forced = Number(new URLSearchParams(location.search).get('threads')) || 0;
     const auto = globalThis.crossOriginIsolated ? Math.min(4, Math.max(1, Math.floor((navigator.hardwareConcurrency || 2) / 2))) : 0;
     const threads = forced || auto;
-    return this.call('init', { encoderUrl: '/models/mobile_sam_image_encoder.onnx', decoderUrl: '/models/sam_mask_decoder_single.onnx', threads });
+    return this.call('init', { encoderUrl: '/models/mobile_sam_image_encoder.onnx', decoderUrl: '/models/sam_mask_decoder_single.onnx', threads }).then(async (r) => {
+      // ?modelo=1 (opt-in, experimental): segmentador semántico propio como guía de SAM. Si el archivo no está en /models, se sigue sin él.
+      if (new URLSearchParams(location.search).get('modelo') === '1') {
+        try { await this.call('loadSeg', { url: '/models/interior-seg-int8.onnx', size: 256 }); this.useSeg = true; } catch (e) { console.warn('[modelo] no se pudo cargar el segmentador:', e?.message); }
+      }
+      return r;
+    });
   }
   embed(rgba, width, height) { return this.call('embed', { rgba, width, height }, [rgba]); }
   segment(points, fresh) { return this.call('segment', { points, fresh }); }
   /** Detección automática de superficies: corre en el Worker (la interfaz no se congela). El progreso llega por `onDetectProgress(n)`. */
-  detect(mode = 'auto') { return this.call('detect', { mode }); }
+  detect(mode = 'auto') { return this.call('detect', { mode, useModel: !!this.useSeg }); }
   /** Corta la detección en curso (si la hay) antes de su próxima decodificación. */
   cancelDetect() { this.worker.postMessage({ type: 'cancel' }); }
   terminate() { this.worker.terminate(); }
