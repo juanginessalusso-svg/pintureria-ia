@@ -11,6 +11,7 @@ import jpeg from 'jpeg-js';
 import { PNG } from 'pngjs';
 import { encoderSize, rgbaToRgbFloat, workingSize } from '../../apps/web/src/sam.js';
 import { runDetect } from '../../apps/web/src/detect.js';
+import { runSegmenter } from '../../apps/web/src/seg.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const file = process.argv[2], mode = process.argv[3] ?? 'auto';
@@ -60,8 +61,15 @@ const segment = async (pts) => {
   if (key) fs.writeFileSync(key, zlib.gzipSync(Buffer.from(r.mask)));
   return r;
 };
+// SEG_MODEL=ruta.onnx (SEG_SIZE=256): mapa de clases del segmentador propio como guía de SAM (igual que ?modelo=1 en la app)
+let classMap = null;
+if (process.env.SEG_MODEL) {
+  const ort2 = await import('onnxruntime-web/wasm'); ort2.env.wasm.numThreads = 1;
+  const sess = await ort2.InferenceSession.create(new Uint8Array(fs.readFileSync(process.env.SEG_MODEL)), { executionProviders: ['wasm'] }), S = Number(process.env.SEG_SIZE ?? 256);
+  classMap = await runSegmenter(ort2, sess, resize(img.data, width, height, S, S), S, width, height);
+}
 const t0 = performance.now();
-const res = await runDetect({ image: img, segment, opts: OPTS, mode, mergeTecho: !!OPTS.mergeTecho });
+const res = await runDetect({ image: img, segment, opts: OPTS, mode, mergeTecho: !!OPTS.mergeTecho, classMap });
 const { found } = res;
 console.log(`${name}: modo ${res.mode} · ${found.length} superficies · ${decodes} decodificaciones (${misses} sin caché) · ${Math.round(performance.now() - t0)} ms`);
 const COL = { pared: [230, 57, 70], techo: [60, 120, 255], ladrillo: [244, 162, 97], cielo: [69, 123, 157], piso: [42, 157, 143] };

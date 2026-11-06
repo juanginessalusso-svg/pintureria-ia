@@ -33,7 +33,11 @@ export async function runDetect({ image, segment, onProgress = () => {}, isCance
     return cleanMask(r.mask, width, height);
   };
   let found = [], used = mode === 'fachada' ? 'fachada' : 'interior';
-  if (mode !== 'fachada' && classMap) found = await detectSurfacesSemantico(classMap, width, height, seg, opts.semantico ?? {});
+  if (mode !== 'fachada' && classMap) {
+    found = await detectSurfacesSemantico(classMap, width, height, seg, opts.semantico ?? {});
+    // si el modelo (entrenado con interiores) casi no ve pared/techo, la foto probablemente no es un interior (fachada): se deja que decida el detector clásico
+    if (found.reduce((a, f) => a + f.area, 0) < (opts.semantico?.minCobertura ?? 0.12)) found = [];
+  }
   if (mode !== 'fachada' && !found.length) found = await detectSurfaces(image, seg, opts);
   // mergeTecho (opt-in): si el interior halló techo pero ninguna pared, la caída a fachada no tira ese techo (el detector de fachadas no sabe de techo):
   // se conserva el techo del interior en lo que la fachada no ocupó.
