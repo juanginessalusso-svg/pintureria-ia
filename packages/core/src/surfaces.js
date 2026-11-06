@@ -593,6 +593,11 @@ export function splitAtCorner(mask, width, height, { x0, tilt, ym }) {
  * Fracción del interior de una región (a ≥ 5 px del borde) con gradiente fuerte a resolución completa: las juntas de un azulejo
  * son líneas finas y rectas que una pared no tiene. Una pared lisa da ≈ 0; un paño de azulejo da bastante más.
  */
+/** Con lineGrid, el veto por líneas se mantiene (sin grilla igual) para lo oscuro, lo chico y lo que cuelga arriba (cielorraso): ahí no hay evidencia de pared. */
+export function lineGridGuarda(f, g, { minLuma = 45, minArea = 0.08, minCy = 0.2 } = {}) {
+  return f.luma < minLuma || g.area < minArea || g.cy < minCy;
+}
+
 /** ¿Las líneas largas de una máscara forman una grilla de juntas (azulejo, enlosado)? stats = {rows, cols} de lineRatio. */
 export function hayGrilla(stats, { min = 2, total = 8 } = {}) {
   const r = stats?.rows ?? 0, c = stats?.cols ?? 0;
@@ -1543,7 +1548,7 @@ export async function detectSurfaces(img, segment, opts = {}) {
     const g = maskGeometry(clean, width, height);
     let kind = classifySurface(g, { techoAlto }), why = kind ? null : 'forma', dudoso = false;
     if (kind === 'pared' && f.texture > maxTexture) { kind = null; why = 'textura'; } // vidrio con paisaje, puerta con paneles, mueble…
-    if (kind === 'pared' && f.line > maxLine && (!lineGrid || hayGrilla(f.grid, lineGrid))) { kind = null; why = 'líneas'; } // azulejo: las juntas son líneas finas y rectas que una pared no tiene
+    if (kind === 'pared' && f.line > maxLine && (!lineGrid || hayGrilla(f.grid, lineGrid) || lineGridGuarda(f, g, lineGrid))) { kind = null; why = 'líneas'; } // azulejo: las juntas son líneas finas y rectas que una pared no tiene
     // Cielo, vidrio y luz de ventana: no son paredes aunque sean lisos y claros.
     //  - quemado: una pared fotografiada normal casi no tiene píxeles al tope de la escala (en las 15 fotos propias, 0 %); un cielo blanco, un vidrio o la luz
     //    de una ventana sí (n27 93 %, n20 99 %, n01 64–72 %, n17 35–68 %). Se descarta lo que tenga más de `hotMax` (una pared real con sol, n12: 25 %).
