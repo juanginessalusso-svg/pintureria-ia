@@ -3,6 +3,7 @@
 // para el segmentador (MobileSAM) y las máscaras resultantes se ordenan, se hacen disjuntas y se clasifican.
 // Todo es puro (sin DOM ni ONNX): `segment` lo inyecta quien llama.
 import { openMask, removeSmallIslands } from './recolor.js';
+import { refineByColor } from './bordes.js';
 
 /** Reduce a lado largo <= maxSide promediando cajas; devuelve la luminancia (0..255) y el tamaño. */
 export function downscaleLuma(img, maxSide = 192) {
@@ -216,7 +217,7 @@ export function textureRatio(lowMask, grad, w, h, gradMax) {
 }
 
 /** Box blur separable sobre un Float32Array (radio r), borde replicado. */
-function boxBlur(src, w, h, r) {
+export function boxBlur(src, w, h, r) {
   const tmp = new Float32Array(src.length), out = new Float32Array(src.length), win = 2 * r + 1, last = w - 1;
   for (let y = 0; y < h; y++) {
     let acc = 0; const row = y * w;
@@ -1439,7 +1440,7 @@ function morphOpen(src, mask, width, height, win) {
  * Devuelve [{ kind: 'pared'|'techo', name, mask, area, cx, cy, texture }], máscaras DISJUNTAS, paredes de izquierda a derecha.
  */
 export async function detectSurfaces(img, segment, opts = {}) {
-  const { maxSeeds = 9, gradMax = 7, minDist = 2.5, minArea = 0.025, maxPared = 5, maxTexture = 0.12, refineMin = 2, minLumaRatio = 0.55, grow = true, snap = true, partition = true, hang = true, lockObjects = true, thinGaps = true, enclosed = true, tableVeto = true, minWallLuma = 30, frames = true, strips = true, blockRejected = true, splitMax = 2.2, splitEdge = 4.5, maxLine = 0.004, minCoverage = 0.35, relaxFactor = 1.8, corner = true, patience = 3, sky = true, hotMax = 0.3, techoMaxTexture = 0.15, skyBlue = 0.12, techoNeedsWall = true, minTechoContact = 0.3, skyLuma = 210, loneLine = true, rescue = true, splitCornerOnly = true, techoMinLuma = 70, trim = false, techoRelax = false, techoAlto = false, paredRescate = false } = opts; // techoRelax: {minLuma, maxTexture} (opt-in): techo oscuro/con textura que apoya en una pared aceptada; techoAlto: techo que baja hasta ~60 % de la foto (opt-in) // paredRescate: opt-in (agente B): rescate de color también con paredes aceptadas si cubren poco, y en máscaras rechazadas por líneas // trim: opt-in (AUTO_OPTS {"trim":true}); sin verificar en las 15 propias
+  const { maxSeeds = 9, gradMax = 7, minDist = 2.5, minArea = 0.025, maxPared = 5, maxTexture = 0.12, refineMin = 2, minLumaRatio = 0.55, grow = true, snap = true, partition = true, hang = true, lockObjects = true, thinGaps = true, enclosed = true, tableVeto = true, minWallLuma = 30, frames = true, strips = true, blockRejected = true, splitMax = 2.2, splitEdge = 4.5, maxLine = 0.004, minCoverage = 0.35, relaxFactor = 1.8, corner = true, patience = 3, sky = true, hotMax = 0.3, techoMaxTexture = 0.15, skyBlue = 0.12, techoNeedsWall = true, minTechoContact = 0.3, skyLuma = 210, loneLine = true, rescue = true, splitCornerOnly = true, techoMinLuma = 70, trim = false, techoRelax = false, techoAlto = false, paredRescate = false, colorSnap = false } = opts; // techoRelax: {minLuma, maxTexture} (opt-in): techo oscuro/con textura que apoya en una pared aceptada; techoAlto: techo que baja hasta ~60 % de la foto (opt-in) // paredRescate: opt-in (agente B): rescate de color también con paredes aceptadas si cubren poco, y en máscaras rechazadas por líneas // trim: opt-in (AUTO_OPTS {"trim":true}); sin verificar en las 15 propias
   const { width, height } = img;
   const { luma, w, h } = downscaleLuma(img);
   const grad = gradientMap(luma, w, h);
@@ -1659,6 +1660,8 @@ export async function detectSurfaces(img, segment, opts = {}) {
     refineEdges(out, fullGrad(), width, height, { locked: lockObjects ? veto : null });
     for (const s of out) s.mask = removeSmallIslands(s.mask, width, height, Math.round(width * height * 0.002));
   }
+  // colorSnap (opt-in, agente E): tolerancia de color (ΔE, 0/false = apagado) para ajustar el contorno en una franja con el color de cada superficie; ver bordes.js
+  if (colorSnap && out.length) refineByColor(out, img, { tol: colorSnap === true ? 5 : colorSnap, locked: lockObjects ? veto : null, ...opts.colorOpts });
   for (const s of out) Object.assign(s, maskGeometry(s.mask, width, height));
   if (corner) { // esquina vertical suave (dos paredes que se juntan sin arista): solo con la imagen, sin decodificaciones extra
     for (const s of [...out]) {
