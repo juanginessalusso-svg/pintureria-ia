@@ -585,7 +585,7 @@ test('techoRelax: un techo oscuro con pared debajo se acepta (apagado: no); dema
   const seg = async (pts) => fakeSegment(pts);
   const l = await detectSurfaces(roomWith(() => [60, 52, 48]), seg, { techoRelax: {} });
   assert.ok(l.some((s) => s.kind === 'techo'), nombres(l).join());
-  const apagado = await detectSurfaces(roomWith(() => [60, 52, 48]), seg);
+  const apagado = await detectSurfaces(roomWith(() => [60, 52, 48]), seg, { techoRelax: false });
   assert.ok(!apagado.some((s) => s.kind === 'techo'));
   const negro = await detectSurfaces(roomWith(() => [20, 18, 16]), seg, { techoRelax: {} });
   assert.ok(!negro.some((s) => s.kind === 'techo'), 'casi negro sigue siendo hueco');
@@ -762,7 +762,7 @@ test('lineGrid: una pared con dos molduras horizontales se acepta con la opción
   const img = { data, width: W, height: H };
   const pared = (l) => l.filter((s) => s.kind === 'pared').reduce((a, s) => a + s.area, 0);
   const base = { splitMax: 99, partition: false, hang: false }; // sin dividir la máscara en las molduras ni repartir semillas
-  const sin = await detectSurfaces(img, seg, { ...base, lineGrid: false }), con = await detectSurfaces(img, seg, { ...base, lineGrid: true });
+  const sin = await detectSurfaces(img, seg, { ...base, lineGrid: false, paredRescate: false }), con = await detectSurfaces(img, seg, { ...base, lineGrid: true });
   assert.ok(pared(con) > 0.3 && pared(sin) < 0.1, `con lineGrid ${pared(con).toFixed(2)}, sin ${pared(sin).toFixed(2)}`);
   assert.ok(pared(sin) < pared(con), 'sin la opción el veto por líneas la saca');
 });
