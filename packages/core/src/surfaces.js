@@ -1443,6 +1443,8 @@ export async function detectSurfaces(img, segment, opts = {}) {
   const { width, height } = img;
   const { luma, w, h } = downscaleLuma(img);
   const grad = gradientMap(luma, w, h);
+  let gradFineCache = null; // gradiente de la luminancia suavizada (caja 5x5 de la grilla): el grano fino (revoque, papel con dibujo chico) desaparece, los bordes grandes (ventana, mueble) no
+  const gradFine = () => (gradFineCache ??= gradientMap(boxBlur(luma, w, h, 2), w, h));
   const freeOrig = new Uint8Array(w * h); // (se reutiliza en la segunda pasada)
   for (let i = 0; i < freeOrig.length; i++) freeOrig[i] = grad[i] < gradMax ? 1 : 0;
   const free = Uint8Array.from(freeOrig);
@@ -1498,7 +1500,7 @@ export async function detectSurfaces(img, segment, opts = {}) {
       const lp = toLow(parte, width, height, w, h);
       let ls = 0, ln = 0;
       for (let i = 0; i < lp.length; i++) if (lp[i]) { ls += luma[i]; ln++; }
-      found.push({ mask: parte, g, texture: textureRatio(lp, grad, w, h, texGrad * 1.5), luma: ln ? ls / ln : 0, line: lineRatio(parte, fullGrad(), width, height, 10, 5, { loneLine }) });
+      found.push({ mask: parte, g, texture: textureRatio(lp, grad, w, h, texGrad * 1.5), fine: textureRatio(lp, gradFine(), w, h, texGrad * 1.5), luma: ln ? ls / ln : 0, line: lineRatio(parte, fullGrad(), width, height, 10, 5, { loneLine }) });
       if (opts.debugLines) { const G = fullGrad(); found[found.length - 1].lines = opts.debugLines.map((t) => lineRatio(parte, G, width, height, t)); }
     }
     sinNada = aporto ? 0 : sinNada + 1;
@@ -1544,7 +1546,7 @@ export async function detectSurfaces(img, segment, opts = {}) {
       if (!why && kind === 'techo' && techoMinLuma && f.luma < techoMinLuma) { if (techoRelax && f.luma >= (techoRelax.minLuma ?? 45)) dudoso = true; else why = 'techo oscuro'; } // un techo de madera oscura o un hueco no es un techo a pintar (n34 luma 41, n09 49; los techos propios, ≥ 125: margen 2,5×)
       if (why) kind = null;
     }
-    if (opts.debugCand && st) opts.debugCand({ kind: kind ?? `veto:${why}`, area: +g.area.toFixed(3), cx: +g.cx.toFixed(2), cy: +g.cy.toFixed(2), top: +g.top.toFixed(2), tex: +f.texture.toFixed(3), ...Object.fromEntries(Object.entries(st).map(([k, v]) => [k, +v.toFixed(3)])) });
+    if (opts.debugCand && st) opts.debugCand({ mask: clean, kind: kind ?? `veto:${why}`, area: +g.area.toFixed(3), cx: +g.cx.toFixed(2), cy: +g.cy.toFixed(2), top: +g.top.toFixed(2), tex: +f.texture.toFixed(3), fine: +f.fine.toFixed(3), ...Object.fromEntries(Object.entries(st).map(([k, v]) => [k, +v.toFixed(3)])) });
     if (kind === 'pared' && tableVeto) { // una superficie horizontal vista desde arriba (tapa de escritorio, mesada): llena TODO el borde de abajo y su masa está en la mitad baja; una pared tiene piso o zócalo ahí
       let b = 0;
       for (let x = 0; x < width; x++) if (clean[(height - 2) * width + x]) b++;
