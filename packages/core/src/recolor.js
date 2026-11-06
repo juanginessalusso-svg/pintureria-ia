@@ -233,7 +233,7 @@ export const LUZ_WB_STRENGTH = 0.5;
  *  - intensity       : 0..1, mezcla entre original y resultado.
  * Devuelve una imagen nueva (no modifica la de entrada) y estadísticas.
  */
-export function recolorWall(img, mask, targetHex, { mode = 'relative', gains = [1, 1, 1], intensity = 1, minWallL = 45, maxL = 98, refPct = LUZ_REF_PCT } = {}) {
+export function recolorWall(img, mask, targetHex, { mode = 'relative', gains = [1, 1, 1], intensity = 1, minWallL = 45, maxL = 98, refPct = LUZ_REF_PCT, refY = null } = {}) {
   const { data, width, height } = img;
   if (mask.length !== width * height) throw new Error('la máscara no coincide con el tamaño de la imagen');
   const target = hexToLab(targetHex);
@@ -252,6 +252,7 @@ export function recolorWall(img, mask, targetHex, { mode = 'relative', gains = [
     //  - Escalar XYZ (y no L*) baja también el croma de a*/b* en la sombra, como pasa con una pintura real a la sombra.
     //  - Sin piso `minWallL` (el piso era lo que levantaba la sombra). Tope `maxL`: lo más claro (p98) de la pared no pasa de L = maxL.
     yRef = inv((pct(refPct) + 16) / 116);
+    if (refY != null) yRef = refY; // referencia ABSOLUTA (Y lineal 0..1, p. ej. 1 = blanco): la pared de la foto se toma como albedo ~1 y la luz de la foto se conserva sin normalizar
     yRef = Math.max(yRef, 1e-4);
     // lo más claro de la pared (p98) no pasa de L = maxL: si hace falta se achica todo el cociente (no se recorta, así no se pierde la textura)
     yCap = Math.min(1, inv((maxL + 16) / 116) / Math.max(inv((target.L + 16) / 116) * inv((p98L + 16) / 116) / yRef, 1e-6));
