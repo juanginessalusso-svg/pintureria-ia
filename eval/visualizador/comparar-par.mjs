@@ -10,9 +10,10 @@ import { fileURLToPath } from 'node:url';
 import jpeg from 'jpeg-js';
 import { PNG } from 'pngjs';
 import * as ort from 'onnxruntime-web/wasm';
-import { featherMask, recolorWall, estimateWhiteBalance, rgbToLab, deltaE00 } from '@pintureria/core';
+import { refineByColor, featherMask, recolorWall, estimateWhiteBalance, rgbToLab, deltaE00 } from '@pintureria/core';
 import { Sam, encoderSize, rgbaToRgbFloat, workingSize } from '../../apps/web/src/sam.js';
 import { runDetect } from '../../apps/web/src/detect.js';
+import { deltaEMap, changedMask, edgeMetrics, globalIoU, renderedSurfaceMask, aggregate } from './metrica-bordes.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const FOTOS = process.env.FOTOS_DIR ?? path.join(here, 'fotos'); // FOTOS_DIR: carpeta con las fotos originales (en un worktree no existe fotos/)
@@ -52,6 +53,7 @@ const mean = (data, mask) => {
 };
 const dE = (a, b) => (a && b ? deltaE00(rgbToLab(a), rgbToLab(b)) : NaN);
 
+const RESULT = [];
 for (const c of cfg) {
   const raw = jpeg.decode(fs.readFileSync(path.join(FOTOS, c.foto)), { useTArray: true, formatAsRGBA: true });
   const { width, height } = workingSize(raw.width, raw.height), N = width * height;
@@ -73,6 +75,7 @@ for (const c of cfg) {
     found = (await runDetect({ image: img, segment: (p) => { s.reset(); return s.segment(p); }, mode: 'interior' })).found;
     if (cacheFile) { fs.mkdirSync(CACHE, { recursive: true }); fs.writeFileSync(cacheFile, zlib.gzipSync(JSON.stringify(found.map((f) => ({ name: f.name, kind: f.kind, area: f.area, mask: Buffer.from(f.mask).toString('base64') }))))); }
   }
+  const N0 = width * height; if (process.env.EDGE_TOL) refineByColor(found, img, { tol: Number(process.env.EDGE_TOL), peel: process.env.EDGE_MODE !== "grow", grow: process.env.EDGE_MODE === "grow" || process.env.EDGE_MODE === "both", ...(process.env.EDGE_BAND ? { band: Number(process.env.EDGE_BAND) } : {}), debug: process.env.EDGE_DEBUG ? (d) => { console.log(`  [edge] ${d.region}: quitados ${d.quitados} agregados ${d.agregados} de ${d.areaPrevia}`); const pg = new PNG({ width, height }); for (let i = 0; i < N0; i++) { const o = i * 4; pg.data[o] = d.add[i] ? 255 : d.drop[i] ? 0 : img.data[o] / 3; pg.data[o + 1] = d.add[i] ? 0 : d.drop[i] ? 255 : img.data[o + 1] / 3; pg.data[o + 2] = d.drop[i] ? 255 : d.add[i] ? 0 : img.data[o + 2] / 3; pg.data[o + 3] = 255; } fs.writeFileSync(path.join(outDir, `edge-${c.foto}-${d.region.replace(/\W/g, '')}.png`), PNG.sync.write(pg)); } : null });
   console.log(`\n${c.foto}: ${found.map((f) => `${f.name} ${(f.area * 100).toFixed(0)}%`).join(' · ')}`);
 
   // lo que Sinteplast cambió: diferencia grande contra la foto original
@@ -81,12 +84,16 @@ for (const c of cfg) {
     const d = Math.abs(theirs[i * 4] - img.data[i * 4]) + Math.abs(theirs[i * 4 + 1] - img.data[i * 4 + 1]) + Math.abs(theirs[i * 4 + 2] - img.data[i * 4 + 2]);
     changed[i] = d > 60 ? 1 : 0;
   }
+  const dEmap = deltaEMap(theirs, img.data, N), changedBand = changedMask(dEmap, width, height, Number(process.env.TAU ?? 12)), allOurs = new Uint8Array(N);
+  for (const f of found) for (let i = 0; i < N; i++) if (f.mask[i]) allOurs[i] = 1;
+  const paintedFs = [];
   const variants = { wb: estimateWhiteBalance(img), nowb: [1, 1, 1] }, painted = { wb: img, nowb: img }, union = new Uint8Array(N);
   for (const s of c.superficies) {
     const px = Math.min(width - 1, Math.floor(s.en[0] * width)), py = Math.min(height - 1, Math.floor(s.en[1] * height));
     const f = found.find((q) => q.mask[py * width + px]);
     if (!f) { console.log(`  ${s.nombre}: NO detectada en el punto (${s.en})`); continue; }
     for (let i = 0; i < N; i++) if (f.mask[i]) union[i] = 1;
+    paintedFs.push(f);
     for (const v of Object.keys(variants)) {
       painted[v] = recolorWall(painted[v], featherMask(Float32Array.from(f.mask), width, height, Math.max(1, Math.round(width / 500))), hex(s.swatch), { mode: 'relative', gains: variants[v] }).image;
     }
@@ -100,6 +107,24 @@ for (const c of cfg) {
   let i1 = 0, u1 = 0, ch1 = 0;
   for (let i = 0; i < N; i++) { if (union[i] && changed[i]) i1++; if (union[i] || changed[i]) u1++; ch1 += changed[i]; }
   console.log(`  IoU (pintado nuestro vs cambiado por Sinteplast): ${(i1 / Math.max(1, u1)).toFixed(2)} · recall nuestro de lo que ellos cambian: ${(i1 / Math.max(1, ch1)).toFixed(2)}`);
+
+  // métrica de bordes robusta (ver metrica-bordes.mjs): franja alrededor del contorno nuestro, sin contar otras superficies detectadas no pintadas
+  // ARTIFACT=1: simula el artefacto de Sinteplast (retoca el tono de TODO lo que no pintamos: -25 % de brillo y un tinte cálido) para mostrar que la métrica de franja no se mueve
+  let theirsM = theirs, dEm = dEmap, chM = changedBand;
+  if (process.env.ARTIFACT) {
+    theirsM = new Uint8ClampedArray(theirs);
+    for (let i = 0; i < N; i++) if (!union[i]) { theirsM[i * 4] = Math.min(255, theirs[i * 4] * 0.85 + 6); theirsM[i * 4 + 1] *= 0.75; theirsM[i * 4 + 2] *= 0.7; }
+    dEm = deltaEMap(theirsM, img.data, N); chM = changedMask(dEm, width, height, Number(process.env.TAU ?? 12));
+  }
+  const ignore = new Uint8Array(N), band = Number(process.env.BAND ?? 12);
+  for (const f of found) if (!paintedFs.includes(f)) for (let i = 0; i < N; i++) if (f.mask[i] && !union[i]) ignore[i] = 1;
+  const per = paintedFs.map((f) => edgeMetrics({ ours: f.mask, theirs: renderedSurfaceMask(theirsM, f.mask, width, height, { band }), ignore, width, height, band }));
+  const ag = aggregate(per), old = edgeMetrics({ ours: union, theirs: chM, ignore, allOurs, dE: dEm, width, height, band });
+  const f2 = (v) => (Number.isFinite(v) ? v.toFixed(2) : '-');
+  if (paintedFs.length) {
+    console.log(`  BORDES ${c.foto}: bandIoU ${f2(ag.bandIoU)} · bandIoU∪ ${f2(ag.bandIoUUnion)} · dNuestro ${f2(ag.dOurs)}px (≤3px ${f2(ag.in3)}) · dSuyo ${f2(ag.dTheirs)}px (≤3px ${f2(ag.in3T)}) | viejo: IoU global(ΔE>τ) ${f2(globalIoU(union, chM))} bandIoU(ΔE>τ) ${f2(old.bandIoU)} · artefacto: lejos ΔE ${f2(old.farDE)}, lejos-cambiado ${f2(old.farChanged)}`);
+    RESULT.push({ foto: c.foto, ...ag, oldGlobal: globalIoU(union, chM), oldBand: old.bandIoU, farDE: old.farDE });
+  }
 
   // imagen: [Sinteplast | nuestro con balance | nuestro sin balance | máscaras: verde ambos, rojo solo nuestro, azul solo Sinteplast]
   const H = 560, W = Math.round((H * width) / height), png = new PNG({ width: W * 4 + 24, height: H });
@@ -116,3 +141,5 @@ for (const c of cfg) {
   put((q) => (union[q] && changed[q] ? [60, 200, 80] : union[q] ? [230, 60, 60] : changed[q] ? [60, 90, 230] : [235, 235, 235]), 3 * W + 24);
   fs.writeFileSync(path.join(outDir, `par-${c.foto.replace(/\.\w+$/, '')}.png`), PNG.sync.write(png));
 }
+
+if (process.env.RESULT_JSON) fs.writeFileSync(process.env.RESULT_JSON, JSON.stringify(RESULT, null, 1));
