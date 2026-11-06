@@ -114,7 +114,12 @@ Ginés quiere que el cliente haga lo mínimo: sacar la foto y elegir colores. Lo
 - `packages/core/src/semantico.js`: semillas desde un mapa de clases y detección modelo + SAM (aún no conectada a la app ni al detector).
 - Herramientas nuevas en eval/visualizador: `una-foto.mjs` (detección real de una foto + PNG), `comparar-par.mjs` con `LUZ=1` y `ZOOM=x0,y0,x1,y1`, `modelo-propio-iou.mjs` y `modelo-sam-iou.mjs` (miden el ONNX propio).
 - El par real-08 de Sinteplast tiene otro encuadre que la foto original: no sirve para geometría (pedir la captura con el mismo encuadre).
-- Entrenamiento propio (agente G, rama agente/g-modelos, carpeta `training/`): ver su README. Corrida en la Asus por CPU a 256 px; resultados en la sesión.
+- **Segmentador propio entrenado (2026-11-06, Asus, CPU)**: LR-ASPP MobileNetV3-L a 256 px, 10 épocas, 1961 fotos de COCO-Stuff (licencias 4/7/8, sin CC BY-SA). Código en la rama `agente/g-modelos` (`training/`). Pesos y fotos NO van al repo (copias locales en `Comunicacion Digital Avanzada/modelos-entrenados/`, no versionadas).
+  - Solo el modelo (ONNX fp32 12,5 MB; int8 3,6 MB pierde ~0,03): dev pared 0,567 / techo 0,651; **test (una vez) pared 0,525 / techo 0,609**.
+  - Modelo + SAM (camino de producción, `runDetect({ classMap })`, `semantico.js`): dev pared 0,531 / techo 0,680; **test pared 0,505 / techo 0,640 / pared de más 0,095** (detector clásico en test: 0,394 / 0,469 / 0,184). La corrida de dev fue sin el resguardo de cobertura mínima (cae a fachada si el modelo ve < 12 % de pared+techo); la de test, con él.
+  - En fotos reales de Sinteplast es MIXTO: ventanal-tv acierta la pared derecha y el techo pero pierde la pared izquierda (se recupera con `opts.semantico.fusion`); real-06 pierde nitidez en la unión techo/pared y no ve la cara angosta de la columna.
+  - En la app: `?modelo=1` (experimental, apagado) carga `/models/interior-seg-int8.onnx` desde el servidor. NO está subido al VPS. Falta decidir lo legal (backbone ImageNet) antes de ponerlo en un servidor.
+  - Siguientes pasos probables: más épocas / 384 px / más datos; fusionar modelo + clásico (la opción `fusion` es un primer intento); medir en fotos reales de la pinturería.
 
 ## Pendientes priorizados
 0. **Probar pincel/zoom con foto real en staging** y en celulares (iOS Safari y Android); ajustar `touch-action`, velocidad del velo en vivo y tamaño por defecto del pincel según lo que se vea. Posible mejora: test automatizado de la lógica de `compose`/deshacer (hoy vive dentro del componente).
