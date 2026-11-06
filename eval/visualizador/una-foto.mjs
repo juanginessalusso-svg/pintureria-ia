@@ -16,6 +16,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const file = process.argv[2], mode = process.argv[3] ?? 'auto';
 if (!file || !process.env.MODELS_DIR) { console.error('Uso: MODELS_DIR=... node una-foto.mjs <foto> [modo]'); process.exit(2); }
 const OPTS = process.env.OPTS ? JSON.parse(process.env.OPTS) : {};
+if (process.env.DEBUG_RECTAS) OPTS.debugRectas = (i) => console.log('  [rectas]', JSON.stringify(i));
 const cacheDir = process.env.CACHE, outDir = process.env.OUT ?? path.join(here, 'salidas');
 fs.mkdirSync(outDir, { recursive: true }); if (cacheDir) fs.mkdirSync(cacheDir, { recursive: true });
 const name = path.basename(file).replace(/\.\w+$/, '');
@@ -62,7 +63,7 @@ const t0 = performance.now();
 const res = await runDetect({ image: img, segment, opts: OPTS, mode, mergeTecho: !!OPTS.mergeTecho });
 const { found } = res;
 console.log(`${name}: modo ${res.mode} · ${found.length} superficies · ${decodes} decodificaciones (${misses} sin caché) · ${Math.round(performance.now() - t0)} ms`);
-const COL = { pared: [230, 57, 70], techo: [255, 255, 255], ladrillo: [244, 162, 97], cielo: [69, 123, 157], piso: [42, 157, 143] };
+const COL = { pared: [230, 57, 70], techo: [60, 120, 255], ladrillo: [244, 162, 97], cielo: [69, 123, 157], piso: [42, 157, 143] };
 const FALLBACK = [[155, 93, 229], [255, 209, 102], [0, 200, 255]];
 const out = new PNG({ width: width * 2, height });
 const over = new Uint8ClampedArray(img.data);

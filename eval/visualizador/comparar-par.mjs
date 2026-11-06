@@ -141,6 +141,18 @@ for (const c of cfg) {
   put((q) => [painted.nowb.data[q * 4], painted.nowb.data[q * 4 + 1], painted.nowb.data[q * 4 + 2]], 2 * W + 16);
   put((q) => (union[q] && changed[q] ? [60, 200, 80] : union[q] ? [230, 60, 60] : changed[q] ? [60, 90, 230] : [235, 235, 235]), 3 * W + 24);
   fs.writeFileSync(path.join(outDir, `par-${c.foto.replace(/\.\w+$/, '')}.png`), PNG.sync.write(png));
+  if (process.env.ZOOM) { // ZOOM=x0,y0,x1,y1 (0..1): recorte ampliado [original | Sinteplast | nuestro (3.er panel)] para mirar bordes
+    const [zx0, zy0, zx1, zy1] = process.env.ZOOM.split(',').map(Number), cw = Math.round((zx1 - zx0) * width), ch = Math.round((zy1 - zy0) * height), k = Math.max(1, Math.floor(420 / cw));
+    const zp = new PNG({ width: (cw * k + 8) * 3, height: ch * k });
+    zp.data.fill(255);
+    [img.data, theirs, painted.nowb.data].forEach((d, si) => {
+      for (let y = 0; y < ch * k; y++) for (let x = 0; x < cw * k; x++) {
+        const q = (Math.floor(zy0 * height) + Math.floor(y / k)) * width + Math.floor(zx0 * width) + Math.floor(x / k), o = (y * zp.width + si * (cw * k + 8) + x) * 4;
+        zp.data[o] = d[q * 4]; zp.data[o + 1] = d[q * 4 + 1]; zp.data[o + 2] = d[q * 4 + 2]; zp.data[o + 3] = 255;
+      }
+    });
+    fs.writeFileSync(path.join(outDir, `zoom-${c.foto.replace(/\.\w+$/, '')}.png`), PNG.sync.write(zp));
+  }
 }
 
 if (process.env.RESULT_JSON) fs.writeFileSync(process.env.RESULT_JSON, JSON.stringify(RESULT, null, 1));

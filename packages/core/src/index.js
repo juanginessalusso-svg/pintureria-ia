@@ -11,3 +11,4 @@ export * from './deltae.js';
 export * from './whitebalance.js';
 export * from './facade.js';
 export * from './bordes.js';
+export * from './rectas.js';
