@@ -98,7 +98,7 @@ test('runDetect: mergeTecho conserva el techo del interior cuando no hay pared y
   assert.ok(prendido.found.some((f) => f.kind === 'techo'), prendido.found.map((f) => f.kind).join());
 });
 
-test('runDetect: sinFachadaConTecho no cae a fachada si el interior halló un techo (apagado: cae, como antes)', async () => {
+test('runDetect: techoManda recorta el techo del interior de los paños de la fachada (apagado: el techo solo queda con lo que la fachada no ocupó)', async () => {
   const data = room();
   for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
     const i = (y * W + x) * 4;
@@ -106,9 +106,10 @@ test('runDetect: sinFachadaConTecho no cae a fachada si el interior halló un te
     data[i] = data[i + 1] = data[i + 2] = v;
   }
   const image = { data, width: W, height: H };
-  const apagado = await runDetect({ image, segment: fakeSegment, mergeTecho: true });
-  assert.equal(apagado.mode, 'fachada');
-  const prendido = await runDetect({ image, segment: fakeSegment, mergeTecho: true, opts: { sinFachadaConTecho: true } });
-  assert.equal(prendido.mode, 'interior');
-  assert.deepEqual(prendido.found.map((f) => f.kind), ['techo']);
+  const interior = (await runDetect({ image, segment: fakeSegment })).found.find((f) => f.kind === 'techo');
+  const manda = await runDetect({ image, segment: fakeSegment, mergeTecho: true, opts: { techoManda: true } });
+  assert.equal(manda.mode, 'fachada');
+  const techo = manda.found.find((f) => f.kind === 'techo');
+  assert.ok(techo && Math.abs(techo.area - interior.area) < 1e-9, 'el techo del interior queda entero');
+  for (const f of manda.found) if (f !== techo) for (let i = 0; i < f.mask.length; i++) assert.ok(!(f.mask[i] && techo.mask[i]), 'ningún paño pisa el techo');
 });

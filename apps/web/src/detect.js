@@ -35,11 +35,16 @@ export async function runDetect({ image, segment, onProgress = () => {}, isCance
   // mergeTecho (opt-in): si el interior halló techo pero ninguna pared, la caída a fachada no tira ese techo (el detector de fachadas no sabe de techo):
   // se conserva el techo del interior en lo que la fachada no ocupó.
   const techoInterior = mergeTecho && mode === 'auto' && !found.some((f) => f.kind === 'pared') ? found.filter((f) => f.kind === 'techo') : [];
-  // sinFachadaConTecho (opt-in): un ambiente en el que el interior halló un techo aceptado no es una fachada: no se cae a fachada (con paredes vetadas queda sin pared antes que con paños de fachada inventados)
-  const quedaInterior = !!opts.sinFachadaConTecho && mode === 'auto' && found.some((f) => f.kind === 'techo');
-  if (mode === 'fachada' || (mode === 'auto' && !quedaInterior && (!found.length || (mergeTecho && !found.some((f) => f.kind === 'pared'))))) {
+  if (mode === 'fachada' || (mode === 'auto' && (!found.length || (mergeTecho && !found.some((f) => f.kind === 'pared'))))) {
     found = await detectFacade(image, seg); used = 'fachada';
-    if (techoInterior.length && !found.some((f) => f.kind === 'techo')) {
+    // techoManda (opt-in, opts.techoManda): el techo que halló el interior MANDA sobre los paños de la fachada (que suelen tragarse el cielorraso): se lo recorta de ellos en vez de dejar
+    // al techo solo con lo que la fachada no ocupó. Una fachada de verdad no tiene techo aceptado en el interior (el cielo se descarta por azul/brillo/sin pared debajo).
+    if (techoInterior.length && opts.techoManda && !found.some((f) => f.kind === 'techo')) {
+      const N = width * height, techo = new Uint8Array(N);
+      for (const t of techoInterior) for (let i = 0; i < N; i++) if (t.mask[i]) techo[i] = 1;
+      found = found.map((f) => { const m = new Uint8Array(N); let a = 0; for (let i = 0; i < N; i++) if (f.mask[i] && !techo[i]) { m[i] = 1; a++; } return { ...f, mask: m, area: a / N }; }).filter((f) => f.area >= 0.01);
+      found.push(...techoInterior);
+    } else if (techoInterior.length && !found.some((f) => f.kind === 'techo')) {
       const ocupado = new Uint8Array(width * height);
       for (const f of found) for (let i = 0; i < ocupado.length; i++) if (f.mask[i]) ocupado[i] = 1;
       for (const t of techoInterior) {
