@@ -35,7 +35,9 @@ export async function runDetect({ image, segment, onProgress = () => {}, isCance
   // mergeTecho (opt-in): si el interior halló techo pero ninguna pared, la caída a fachada no tira ese techo (el detector de fachadas no sabe de techo):
   // se conserva el techo del interior en lo que la fachada no ocupó.
   const techoInterior = mergeTecho && mode === 'auto' && !found.some((f) => f.kind === 'pared') ? found.filter((f) => f.kind === 'techo') : [];
-  if (mode === 'fachada' || (mode === 'auto' && (!found.length || (mergeTecho && !found.some((f) => f.kind === 'pared'))))) {
+  // sinFachadaConTecho (opt-in): un ambiente en el que el interior halló un techo aceptado no es una fachada: no se cae a fachada (con paredes vetadas queda sin pared antes que con paños de fachada inventados)
+  const quedaInterior = !!opts.sinFachadaConTecho && mode === 'auto' && found.some((f) => f.kind === 'techo');
+  if (mode === 'fachada' || (mode === 'auto' && !quedaInterior && (!found.length || (mergeTecho && !found.some((f) => f.kind === 'pared'))))) {
     found = await detectFacade(image, seg); used = 'fachada';
     if (techoInterior.length && !found.some((f) => f.kind === 'techo')) {
       const ocupado = new Uint8Array(width * height);

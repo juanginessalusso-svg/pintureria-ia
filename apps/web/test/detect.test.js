@@ -97,3 +97,18 @@ test('runDetect: mergeTecho conserva el techo del interior cuando no hay pared y
   assert.equal(prendido.mode, 'fachada');
   assert.ok(prendido.found.some((f) => f.kind === 'techo'), prendido.found.map((f) => f.kind).join());
 });
+
+test('runDetect: sinFachadaConTecho no cae a fachada si el interior halló un techo (apagado: cae, como antes)', async () => {
+  const data = room();
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const i = (y * W + x) * 4;
+    const v = y < H * 0.2 ? 150 : (x * 7 + y * 13) % 2 ? 250 : 10;
+    data[i] = data[i + 1] = data[i + 2] = v;
+  }
+  const image = { data, width: W, height: H };
+  const apagado = await runDetect({ image, segment: fakeSegment, mergeTecho: true });
+  assert.equal(apagado.mode, 'fachada');
+  const prendido = await runDetect({ image, segment: fakeSegment, mergeTecho: true, opts: { sinFachadaConTecho: true } });
+  assert.equal(prendido.mode, 'interior');
+  assert.deepEqual(prendido.found.map((f) => f.kind), ['techo']);
+});
