@@ -13,3 +13,4 @@ export * from './facade.js';
 export * from './bordes.js';
 export * from './rectas.js';
 export * from './sombras.js';
+export * from './semantico.js';
