@@ -87,7 +87,8 @@ for (const c of cfg) {
   const dEmap = deltaEMap(theirs, img.data, N), changedBand = changedMask(dEmap, width, height, Number(process.env.TAU ?? 12)), allOurs = new Uint8Array(N);
   for (const f of found) for (let i = 0; i < N; i++) if (f.mask[i]) allOurs[i] = 1;
   const paintedFs = [];
-  const variants = { wb: estimateWhiteBalance(img), nowb: [1, 1, 1] }, painted = { wb: img, nowb: img }, union = new Uint8Array(N);
+  const LUZ = !!process.env.LUZ; // LUZ=1: el 3.er panel (antes 'sin balance') usa el modo 'luz' (percentil + balance 0,5)
+  const variants = { wb: estimateWhiteBalance(img), nowb: LUZ ? estimateWhiteBalance(img, { strength: 0.5 }) : [1, 1, 1] }, painted = { wb: img, nowb: img }, union = new Uint8Array(N);
   for (const s of c.superficies) {
     const px = Math.min(width - 1, Math.floor(s.en[0] * width)), py = Math.min(height - 1, Math.floor(s.en[1] * height));
     const f = found.find((q) => q.mask[py * width + px]);
@@ -95,7 +96,7 @@ for (const c of cfg) {
     for (let i = 0; i < N; i++) if (f.mask[i]) union[i] = 1;
     paintedFs.push(f);
     for (const v of Object.keys(variants)) {
-      painted[v] = recolorWall(painted[v], featherMask(Float32Array.from(f.mask), width, height, Math.max(1, Math.round(width / 500))), hex(s.swatch), { mode: 'relative', gains: variants[v] }).image;
+      painted[v] = recolorWall(painted[v], featherMask(Float32Array.from(f.mask), width, height, Math.max(1, Math.round(width / 500))), hex(s.swatch), { mode: LUZ && v === 'nowb' ? 'luz' : 'relative', gains: variants[v] }).image;
     }
     const sw = s.swatch.split(',').map(Number), common = new Uint8Array(N);
     let nMask = 0, inter = 0;

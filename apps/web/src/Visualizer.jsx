@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { estimateWhiteBalance, whiteBalanceFor, featherMask, recolorWall, cleanMask, pxPerMeter, wallPixels, paintStroke, maskCount, encodeMask, cutObjectFromSurface } from '@pintureria/core';
+import { LUZ_WB_STRENGTH, estimateWhiteBalance, whiteBalanceFor, featherMask, recolorWall, cleanMask, pxPerMeter, wallPixels, paintStroke, maskCount, encodeMask, cutObjectFromSurface } from '@pintureria/core';
 import { SamClient } from './samClient.js';
 import { workingSize } from './sam.js';
 import { Calculator } from './Calculator.jsx';
@@ -61,7 +61,7 @@ export function Visualizer() {
   const [, setTick] = useState(0); // fuerza re-render cuando cambian refs que la interfaz lee (trazos, deshacer)
   const bump = () => setTick((t) => t + 1);
   const [color, setColor] = useState(null);
-  const [lum, setLum] = useState('relative');
+  const [lum, setLum] = useState('luz'); // 'luz': el sombreado de la foto se conserva (sombra queda sombra) y el balance de blancos va al 50 % (medido contra Sinteplast: ΔE00 8,5 → 6,0)
   const [intensity, setIntensity] = useState(1);
   const [wb, setWb] = useState(true);
   const [timing, setTiming] = useState({});
@@ -206,7 +206,7 @@ export function Visualizer() {
     for (const L of layers) {
       const soft = featherMask(Float32Array.from(L.mask), p.width, p.height, Math.max(1, Math.round(p.width / 500)));
       image = recolorWall(image, soft, L.hex, {
-        mode: opts.lum ?? lum, intensity: opts.intensity ?? intensity, gains: (opts.wb ?? wb) ? gains.current : [1, 1, 1],
+        mode: opts.lum ?? lum, intensity: opts.intensity ?? intensity, gains: (opts.wb ?? wb) ? ((opts.lum ?? lum) === 'luz' ? gains.current.map((g) => 1 + (g - 1) * LUZ_WB_STRENGTH) : gains.current) : [1, 1, 1],
       }).image;
     }
     result.current = image;
@@ -787,7 +787,8 @@ export function Visualizer() {
         <div class="card grid">
           <label>Luminancia
             <select value={lum} onChange={(e) => { setLum(e.target.value); repaint(color, { lum: e.target.value }); }}>
-              <option value="relative">Relativa (recomendada)</option>
+              <option value="luz">Conserva luz y sombras (recomendada)</option>
+              <option value="relative">Relativa</option>
               <option value="pure">Pura (L original)</option>
             </select>
           </label>
