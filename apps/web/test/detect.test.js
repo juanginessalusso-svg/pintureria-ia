@@ -113,3 +113,17 @@ test('runDetect: techoManda recorta el techo del interior de los paños de la fa
   assert.ok(techo && Math.abs(techo.area - interior.area) < 1e-9, 'el techo del interior queda entero');
   for (const f of manda.found) if (f !== techo) for (let i = 0; i < f.mask.length; i++) assert.ok(!(f.mask[i] && techo.mask[i]), 'ningún paño pisa el techo');
 });
+
+test('runDetect con classMap: usa el mapa del modelo (pared + techo, sin el hueco) y cae al detector clásico si el mapa no halla nada', async () => {
+  const image = { data: room(), width: W, height: H };
+  const cm = new Uint8Array(W * H); // 1 pared, 2 techo, 0 hueco/otro
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) cm[y * W + x] = y < H * 0.2 ? 2 : (x > 90 && x < 150 && y > H * 0.4 && y < H * 0.85) ? 0 : 1;
+  const r = await runDetect({ image, segment: fakeSegment, classMap: cm });
+  assert.deepEqual(r.found.map((f) => f.kind).sort(), ['pared', 'techo']);
+  const pared = r.found.find((f) => f.kind === 'pared');
+  assert.equal(pared.mask[(H * 0.6 | 0) * W + 120], 0, 'el hueco de la puerta no es pared');
+  assert.equal(r.mode, 'interior');
+  const vacio = await runDetect({ image, segment: fakeSegment, classMap: new Uint8Array(W * H) });
+  const clasico = await runDetect({ image, segment: fakeSegment });
+  assert.deepEqual(vacio.found.map((f) => f.kind).sort(), clasico.found.map((f) => f.kind).sort());
+});

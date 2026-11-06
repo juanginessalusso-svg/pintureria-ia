@@ -1,7 +1,7 @@
 // Corre la detección automática de superficies (JS pesado: ~35-50 % del análisis). Está pensado para ejecutarse DENTRO del
 // Worker de SAM: así la interfaz no se congela y cada decodificación es una llamada directa (sin mensajes de ida y vuelta).
 // Es puro (sin DOM ni Worker) para poder probarlo con `node --test`.
-import { cleanMask, detectSurfaces, detectFacade } from '@pintureria/core';
+import { cleanMask, detectSurfaces, detectFacade, detectSurfacesSemantico } from '@pintureria/core';
 
 export class DetectCancelled extends Error {
   constructor() {
@@ -17,10 +17,12 @@ export class DetectCancelled extends Error {
  * isCancelled(): se consulta antes de cada decodificación; si da true se corta con DetectCancelled
  * mode: 'interior' (paredes y techo de un ambiente) · 'fachada' (exterior: cielo/piso/paños lisos/ladrillo) · 'auto' (default: interior y, si no encuentra
  *   nada, fachada con la misma foto ya analizada)
+ * classMap (opcional, Uint8Array width*height, 0 otro / 1 pared / 2 techo / 3 piso): mapa de clases de un segmentador semántico; si viene, el interior se detecta con él
+ *   (semillas para SAM + recorte, ver semantico.js) y solo si no halla nada se usa el detector clásico.
  * Devuelve { found: [{ name, kind, area, mask }], decodes, mode: 'interior'|'fachada' }
  *   kind 'ladrillo' = superficie rugosa: la app NO le pone color por defecto.
  */
-export async function runDetect({ image, segment, onProgress = () => {}, isCancelled = () => false, opts = {}, mode = 'auto', mergeTecho = false }) {
+export async function runDetect({ image, segment, onProgress = () => {}, isCancelled = () => false, opts = {}, mode = 'auto', mergeTecho = false, classMap = null }) {
   const { width, height } = image;
   let n = 0;
   const seg = async (pts) => {
@@ -31,7 +33,8 @@ export async function runDetect({ image, segment, onProgress = () => {}, isCance
     return cleanMask(r.mask, width, height);
   };
   let found = [], used = mode === 'fachada' ? 'fachada' : 'interior';
-  if (mode !== 'fachada') found = await detectSurfaces(image, seg, opts);
+  if (mode !== 'fachada' && classMap) found = await detectSurfacesSemantico(classMap, width, height, seg, opts.semantico ?? {});
+  if (mode !== 'fachada' && !found.length) found = await detectSurfaces(image, seg, opts);
   // mergeTecho (opt-in): si el interior halló techo pero ninguna pared, la caída a fachada no tira ese techo (el detector de fachadas no sabe de techo):
   // se conserva el techo del interior en lo que la fachada no ocupó.
   const techoInterior = mergeTecho && mode === 'auto' && !found.some((f) => f.kind === 'pared') ? found.filter((f) => f.kind === 'techo') : [];
