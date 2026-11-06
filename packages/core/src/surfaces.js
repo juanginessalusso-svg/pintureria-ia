@@ -4,6 +4,7 @@
 // Todo es puro (sin DOM ni ONNX): `segment` lo inyecta quien llama.
 import { openMask, removeSmallIslands } from './recolor.js';
 import { straightenBoundaries } from './rectas.js';
+import { growIntoShadow } from './sombras.js';
 import { refineByColor } from './bordes.js';
 
 /** Reduce a lado largo <= maxSide promediando cajas; devuelve la luminancia (0..255) y el tamaño. */
@@ -1456,7 +1457,7 @@ function morphOpen(src, mask, width, height, win) {
  * Devuelve [{ kind: 'pared'|'techo', name, mask, area, cx, cy, texture }], máscaras DISJUNTAS, paredes de izquierda a derecha.
  */
 export async function detectSurfaces(img, segment, opts = {}) {
-  const { maxSeeds = 9, gradMax = 7, minDist = 2.5, minArea = 0.025, maxPared = 5, maxTexture = 0.12, refineMin = 2, minLumaRatio = 0.55, grow = true, snap = true, partition = true, hang = true, lockObjects = true, thinGaps = true, enclosed = true, tableVeto = true, minWallLuma = 30, frames = true, strips = true, blockRejected = true, splitMax = 2.2, splitEdge = 4.5, maxLine = 0.004, minCoverage = 0.35, relaxFactor = 1.8, corner = true, patience = 3, sky = true, hotMax = 0.3, techoMaxTexture = 0.15, skyBlue = 0.12, techoNeedsWall = true, minTechoContact = 0.3, skyLuma = 210, loneLine = true, rescue = true, splitCornerOnly = true, techoMinLuma = 70, trim = false, techoRelax = {}, techoAlto = true, paredRescate = true, lineGrid = {}, colorSnap = false, rectas = false } = opts; // techoRelax: {minLuma, maxTexture} (opt-in): techo oscuro/con textura que apoya en una pared aceptada; techoAlto: techo que baja hasta ~60 % de la foto (opt-in) // paredRescate: opt-in (agente B): rescate de color también con paredes aceptadas si cubren poco, y en máscaras rechazadas por líneas // lineGrid: opt-in {min, total}: el veto por líneas (azulejo) solo vale si hay grilla (≥ min líneas largas por orientación o ≥ total en suma); una moldura, un zócalo o un marco dejan líneas de una sola orientación
+  const { maxSeeds = 9, gradMax = 7, minDist = 2.5, minArea = 0.025, maxPared = 5, maxTexture = 0.12, refineMin = 2, minLumaRatio = 0.55, grow = true, snap = true, partition = true, hang = true, lockObjects = true, thinGaps = true, enclosed = true, tableVeto = true, minWallLuma = 30, frames = true, strips = true, blockRejected = true, splitMax = 2.2, splitEdge = 4.5, maxLine = 0.004, minCoverage = 0.35, relaxFactor = 1.8, corner = true, patience = 3, sky = true, hotMax = 0.3, techoMaxTexture = 0.15, skyBlue = 0.12, techoNeedsWall = true, minTechoContact = 0.3, skyLuma = 210, loneLine = true, rescue = true, splitCornerOnly = true, techoMinLuma = 70, trim = false, techoRelax = {}, techoAlto = true, paredRescate = true, lineGrid = {}, colorSnap = false, rectas = true, sombras = false } = opts; // techoRelax: {minLuma, maxTexture} (opt-in): techo oscuro/con textura que apoya en una pared aceptada; techoAlto: techo que baja hasta ~60 % de la foto (opt-in) // paredRescate: opt-in (agente B): rescate de color también con paredes aceptadas si cubren poco, y en máscaras rechazadas por líneas // lineGrid: opt-in {min, total}: el veto por líneas (azulejo) solo vale si hay grilla (≥ min líneas largas por orientación o ≥ total en suma); una moldura, un zócalo o un marco dejan líneas de una sola orientación
   // trim: opt-in (AUTO_OPTS {"trim":true}); sin verificar en las 15 propias
   const { width, height } = img;
   const { luma, w, h } = downscaleLuma(img);
@@ -1682,8 +1683,10 @@ export async function detectSurfaces(img, segment, opts = {}) {
   }
   // colorSnap (opt-in, agente E): tolerancia de color (ΔE, 0/false = apagado) para ajustar el contorno en una franja con el color de cada superficie; ver bordes.js
   if (colorSnap && out.length) refineByColor(out, img, { tol: colorSnap === true ? 5 : colorSnap, locked: lockObjects ? veto : null, ...opts.colorOpts });
+  // sombras (opt-in): cada superficie crece sobre su propia sombra (misma crominancia, menos luz, sin arista); ver sombras.js
+  if (sombras && out.length) { const inf = growIntoShadow(out, img, sombras === true ? {} : sombras); opts.debugSombras?.(inf); }
   // rectas (opt-in): endereza la unión techo/pared (y pared/pared) con una recta robusta; ver rectas.js
-  if (rectas && out.length > 1) opts.debugRectas?.(straightenBoundaries(out, width, height, rectas === true ? {} : rectas));
+  if (rectas && out.length > 1) { const inf = straightenBoundaries(out, width, height, rectas === true ? {} : rectas); opts.debugRectas?.(inf); }
   for (const s of out) Object.assign(s, maskGeometry(s.mask, width, height));
   if (corner) { // esquina vertical suave (dos paredes que se juntan sin arista): solo con la imagen, sin decodificaciones extra
     for (const s of [...out]) {

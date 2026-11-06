@@ -33,3 +33,19 @@ test('fitLine: ignora puntos atípicos', () => {
   const L = fitLine(pts, 2);
   assert.ok(Math.abs(L.nx * 50 + L.ny * 30 - L.c) < 1);
 });
+
+import { growIntoShadow } from '../src/sombras.js';
+
+test('growIntoShadow: el techo crece sobre su sombra suave pero no sobre un objeto con arista', () => {
+  const w = 120, h = 80, data = new Uint8ClampedArray(w * h * 4);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    let v = 220;
+    if (y >= 30 && y < 50) v = 220 - Math.round(((y - 30) / 20) * 60); // sombra que se degrada suave (220 → 160)
+    if (y >= 50) v = 60; // objeto oscuro con arista fuerte
+    const i = (y * w + x) * 4; data[i] = data[i + 1] = data[i + 2] = v; data[i + 3] = 255;
+  }
+  const mask = new Uint8Array(w * h); for (let y = 0; y < 30; y++) for (let x = 0; x < w; x++) mask[y * w + x] = 1;
+  growIntoShadow([{ kind: 'techo', mask }], { data, width: w, height: h }, { maxGrow: 0.3, brighter: 3 });
+  assert.equal(mask[40 * w + 60], 1, 'la sombra suave quedó en el techo');
+  assert.equal(mask[60 * w + 60], 0, 'el objeto oscuro no');
+});
