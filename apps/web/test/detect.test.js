@@ -127,3 +127,13 @@ test('runDetect con classMap: usa el mapa del modelo (pared + techo, sin el huec
   const clasico = await runDetect({ image, segment: fakeSegment });
   assert.deepEqual(vacio.found.map((f) => f.kind).sort(), clasico.found.map((f) => f.kind).sort());
 });
+
+test('runDetect con classMap y fusion: suma la pared del clásico que el modelo no vio', async () => {
+  const image = { data: room(), width: W, height: H };
+  const cm = new Uint8Array(W * H); // el modelo solo ve el techo
+  for (let y = 0; y < H * 0.2; y++) for (let x = 0; x < W; x++) cm[y * W + x] = 2;
+  const sin = await runDetect({ image, segment: fakeSegment, classMap: cm, opts: { semantico: { minCobertura: 0.05 } } });
+  assert.deepEqual(sin.found.map((f) => f.kind), ['techo']);
+  const con = await runDetect({ image, segment: fakeSegment, classMap: cm, opts: { semantico: { minCobertura: 0.05, fusion: true } } });
+  assert.deepEqual(con.found.map((f) => f.kind).sort(), ['pared', 'techo']);
+});

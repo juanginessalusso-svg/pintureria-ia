@@ -37,6 +37,21 @@ export async function runDetect({ image, segment, onProgress = () => {}, isCance
     found = await detectSurfacesSemantico(classMap, width, height, seg, opts.semantico ?? {});
     // si el modelo (entrenado con interiores) casi no ve pared/techo, la foto probablemente no es un interior (fachada): se deja que decida el detector clásico
     if (found.reduce((a, f) => a + f.area, 0) < (opts.semantico?.minCobertura ?? 0.12)) found = [];
+    // fusion (opt-in, opts.semantico.fusion): a lo del modelo se le suman las PAREDES del detector clásico que el modelo no vio (poco solapadas con lo ya hallado)
+    if (found.length && opts.semantico?.fusion) {
+      const N = width * height, ocupado = new Uint8Array(N);
+      for (const f of found) for (let i = 0; i < N; i++) if (f.mask[i]) ocupado[i] = 1;
+      const clasico = await detectSurfaces(image, seg, opts);
+      for (const c of clasico) {
+        if (c.kind !== 'pared' || c.area < (opts.semantico.fusionMinArea ?? 0.03)) continue;
+        let sol = 0, tot = 0; for (let i = 0; i < N; i++) if (c.mask[i]) { tot++; if (ocupado[i]) sol++; }
+        if (tot && sol / tot < (opts.semantico.fusionMaxSolape ?? 0.25)) {
+          const m = new Uint8Array(N); let a = 0; for (let i = 0; i < N; i++) if (c.mask[i] && !ocupado[i]) { m[i] = 1; a++; }
+          found.push({ name: c.name, kind: 'pared', area: a / N, mask: m });
+          for (let i = 0; i < N; i++) if (m[i]) ocupado[i] = 1;
+        }
+      }
+    }
   }
   if (mode !== 'fachada' && !found.length) found = await detectSurfaces(image, seg, opts);
   // mergeTecho (opt-in): si el interior halló techo pero ninguna pared, la caída a fachada no tira ese techo (el detector de fachadas no sabe de techo):
