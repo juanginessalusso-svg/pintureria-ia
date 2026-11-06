@@ -116,7 +116,7 @@ const count = (m) => { let n = 0; for (let i = 0; i < m.length; i++) if (m[i]) n
  * `found` = superficies del camino con modelo, `clasico` = superficies de detectSurfaces. Devuelve la lista nueva (no modifica las de entrada).
  * Opciones: minTechoModelo (fracción del techo clásico que el modelo también ve como techo, 0,4), islaMin (fracción de la foto bajo la cual una mancha suelta de pared se borra, 0,004).
  */
-export function hibridar(found, clasico, classMap, w, h, { minTechoModelo = 0.4, islaMin = 0.004 } = {}) {
+export function hibridar(found, clasico, classMap, w, h, { minTechoModelo = 0.4, islaMin = 0.004, union = false, unionMinArea = 0.02 } = {}) {
   const N = w * h, techo = new Uint8Array(N);
   let hayTecho = false;
   for (const c of clasico) {
@@ -135,6 +135,24 @@ export function hibridar(found, clasico, classMap, w, h, { minTechoModelo = 0.4,
     }
     let a = 0; for (let i = 0; i < N; i++) if (m[i]) a++;
     if (a / N > 0.01) out.push({ ...f, mask: m, area: a / N });
+  }
+  // union (opt-in): las PAREDES del clásico que el modelo dejó como 'otro' (p. ej. una pared muy oscura) se suman a la pared del modelo con la que más se solapan
+  //  (o quedan como superficie propia si no se solapan con ninguna). No se suma lo que el modelo ve como techo o piso ni lo que ya es techo.
+  if (union) {
+    for (const c of clasico) {
+      if (c.kind !== 'pared') continue;
+      const libre = new Uint8Array(N); let nl = 0;
+      const ocupado = new Uint8Array(N);
+      for (const o of out) if (o.kind === 'pared') for (let i = 0; i < N; i++) if (o.mask[i]) ocupado[i] = 1;
+      for (let i = 0; i < N; i++) if (c.mask[i] && !ocupado[i] && !techo[i] && classMap[i] !== CLASE.techo && classMap[i] !== CLASE.piso) { libre[i] = 1; nl++; }
+      const limpio = removeSmallIslands(libre, w, h, Math.round(islaMin * N));
+      let a = 0; for (let i = 0; i < N; i++) if (limpio[i]) a++;
+      if (a / N < unionMinArea) continue;
+      let mejor = null, mejorSol = 0;
+      for (const o of out) { if (o.kind !== 'pared') continue; let sol = 0; for (let i = 0; i < N; i++) if (o.mask[i] && c.mask[i]) sol++; if (sol > mejorSol) { mejorSol = sol; mejor = o; } }
+      if (mejor) { const m = new Uint8Array(mejor.mask); for (let i = 0; i < N; i++) if (limpio[i]) m[i] = 1; let t = 0; for (let i = 0; i < N; i++) if (m[i]) t++; mejor.mask = m; mejor.area = t / N; }
+      else out.push({ name: c.name, kind: 'pared', area: a / N, mask: limpio, fuente: 'clasico' });
+    }
   }
   if (hayTecho) {
     let a = 0; for (let i = 0; i < N; i++) if (techo[i]) a++;

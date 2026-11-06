@@ -293,6 +293,25 @@ export function Visualizer() {
   };
 
   // Vuelve a detectar con el otro detector (fachada <-> interior) sobre la misma foto ya analizada: no repite el análisis de SAM, solo la detección.
+  // Modo de recolección (solo con ?dataset=1): descarga a ESTA computadora la foto y las máscaras tal como quedaron después de corregir (0 otro, 1 pared, 2 techo, 255 ignorar).
+  // Nada se sube a ningún servidor: sirve para armar ejemplos de entrenamiento con fotos propias o de gente que lo autorizó.
+  const exportDataset = async () => {
+    const p = photo.current;
+    if (!p) return;
+    const base = 'foto-' + new Date().toISOString().replace(/[-:T.Z]/g, '').slice(0, 14);
+    const save = (blob, name) => { const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 5000); };
+    const draw = (rgba) => { const c = document.createElement('canvas'); c.width = p.width; c.height = p.height; c.getContext('2d').putImageData(new ImageData(rgba, p.width, p.height), 0, 0); return c; };
+    const toBlob = (c, type, q) => new Promise((r) => c.toBlob(r, type, q));
+    const lab = new Uint8ClampedArray(p.width * p.height * 4);
+    for (let i = 0; i < p.width * p.height; i++) { lab[i * 4 + 3] = 255; }
+    for (const sf of surfaces.current) {
+      const v = sf.kind === 'techo' ? 2 : sf.kind === 'ladrillo' ? 255 : 1;
+      for (let i = 0; i < sf.mask.length; i++) if (sf.mask[i]) { lab[i * 4] = lab[i * 4 + 1] = lab[i * 4 + 2] = v; }
+    }
+    save(await toBlob(draw(new Uint8ClampedArray(p.data)), 'image/jpeg', 0.93), base + '.jpg');
+    setTimeout(async () => save(await toBlob(draw(lab), 'image/png'), base + '.labels.png'), 400);
+    setStatus('Guardé ' + base + '.jpg y ' + base + '.labels.png en la carpeta de descargas.');
+  };
   const redetect = async (m) => {
     if (!sam.current || !photo.current || prog) return;
     if (surfaces.current.some((x) => x.color) && typeof confirm === 'function' && !confirm('Detectar de nuevo descarta lo que ya pintaste. ¿Seguimos?')) return;
@@ -762,6 +781,13 @@ export function Visualizer() {
           <p class="muted small redetect">
             {detMode === 'fachada' ? 'Detecté la foto como fachada.' : '¿La foto es una fachada o el exterior de una casa?'}{' '}
             <button onClick={() => redetect(detMode === 'fachada' ? 'interior' : 'fachada')}>{detMode === 'fachada' ? 'Detectar como interior' : 'Detectar como fachada'}</button>
+          </p>
+        )}
+
+        {hasPhoto && !prog && new URLSearchParams(location.search).get('dataset') === '1' && (
+          <p class="muted small">
+            Modo recolección: corregí las superficies con el pincel o el borrador y después{' '}
+            <button onClick={exportDataset}>Guardar foto y máscaras para entrenamiento</button>
           </p>
         )}
 

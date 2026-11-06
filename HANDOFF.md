@@ -106,7 +106,7 @@ Ginés quiere que el cliente haga lo mínimo: sacar la foto y elegir colores. Lo
 - Herramientas: coco-cache.mjs (replay sin SAM ~4 s/foto), catalogo-fallas.mjs, luz-eval.mjs.
 - Pendiente: agente G (modelos de segmentación de interiores; rama agente/g-modelos, frenado), más pares Sinteplast (15–20), decidir dónde correr lo pesado (notebook 4 GB; EXO sin SSH; Intel con cooler roto).
 
-## Rama `mejora-sinteplast` (2026-11-06, sin pushear): fidelidad contra Sinteplast
+## Rama `mejora-deteccion` (2026-11-06, sin pushear): fidelidad de color y detección (Sinteplast se usó solo como referencia visual de resultados)
 - App: el modo de luminancia por defecto es **'luz'** (sombreado multiplicativo en luz lineal, balance de blancos al 50 %). En real-06 el ΔE00 contra el render de Sinteplast bajó a 4,4 (techo), 1,9 (columna), 2,4 (pared).
 - `packages/core/src/rectas.js` (activo por defecto, `rectas: false` lo apaga): endereza la unión techo/pared con una recta robusta (RANSAC). Neutro en COCO dev (IoU 0,459 / 0,512).
 - `packages/core/src/sombras.js` (OPT-IN, `sombras: true`): el techo crece sobre su propia sombra. Mejora la franja oscura pero invade la cara angosta de una columna; no se activó.

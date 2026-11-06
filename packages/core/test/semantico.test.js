@@ -59,3 +59,20 @@ test('hibridar: el techo lo pone el clásico si el modelo también lo ve; un "te
   const falso = hibridar(found, [{ kind: 'techo', name: 'Techo', area: 0.3, mask: pared }], cm, w, h);
   assert.ok(falso.find((s) => s.kind === 'techo').mask === techoM, 'se conserva el techo del modelo');
 });
+
+test('hibridar con union: la pared del clásico que el modelo dejó como "otro" se suma a la pared del modelo; no toca techo ni piso', () => {
+  const w = 60, h = 40, N = w * h, cm = new Uint8Array(N), modelo = new Uint8Array(N), clas = new Uint8Array(N);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const i = y * w + x;
+    cm[i] = x < 30 ? CLASE.pared : (y > 30 ? CLASE.piso : CLASE.otro); // derecha = pared oscura que el modelo no ve; abajo a la derecha = piso
+    if (x < 30) modelo[i] = 1;
+    if (x < 45) clas[i] = 1; // el clásico ve pared hasta x=45 (incluye 15 columnas "otro" y el piso de la derecha)
+  }
+  const found = [{ kind: 'pared', name: 'Pared 1', area: 0.5, mask: modelo }];
+  const sin = hibridar(found, [{ kind: 'pared', name: 'Pared', area: 0.75, mask: clas }], cm, w, h);
+  assert.equal(sin[0].mask[10 * w + 40], 0);
+  const con = hibridar(found, [{ kind: 'pared', name: 'Pared', area: 0.75, mask: clas }], cm, w, h, { union: true });
+  assert.equal(con.length, 1, 'se fusiona con la pared del modelo');
+  assert.equal(con[0].mask[10 * w + 40], 1, 'se sumó la zona oscura');
+  assert.equal(con[0].mask[35 * w + 40], 0, 'el piso que ve el modelo no se suma');
+});
