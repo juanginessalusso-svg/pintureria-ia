@@ -106,6 +106,16 @@ Ginés quiere que el cliente haga lo mínimo: sacar la foto y elegir colores. Lo
 - Herramientas: coco-cache.mjs (replay sin SAM ~4 s/foto), catalogo-fallas.mjs, luz-eval.mjs.
 - Pendiente: agente G (modelos de segmentación de interiores; rama agente/g-modelos, frenado), más pares Sinteplast (15–20), decidir dónde correr lo pesado (notebook 4 GB; EXO sin SSH; Intel con cooler roto).
 
+## Rama `mejora-sinteplast` (2026-11-06, sin pushear): fidelidad contra Sinteplast
+- App: el modo de luminancia por defecto es **'luz'** (sombreado multiplicativo en luz lineal, balance de blancos al 50 %). En real-06 el ΔE00 contra el render de Sinteplast bajó a 4,4 (techo), 1,9 (columna), 2,4 (pared).
+- `packages/core/src/rectas.js` (activo por defecto, `rectas: false` lo apaga): endereza la unión techo/pared con una recta robusta (RANSAC). Neutro en COCO dev (IoU 0,459 / 0,512).
+- `packages/core/src/sombras.js` (OPT-IN, `sombras: true`): el techo crece sobre su propia sombra. Mejora la franja oscura pero invade la cara angosta de una columna; no se activó.
+- `recolorWall(..., { refY })`: referencia de luz ABSOLUTA; medida contra los 7 pares: peor que el percentil (ΔE 8,4 contra 4,8 en entrenamiento). Sinteplast oscurece los tonos claros en fotos muy luminosas (par ventanal-tv): sin explicar; se necesitan más pares.
+- `packages/core/src/semantico.js`: semillas desde un mapa de clases y detección modelo + SAM (aún no conectada a la app ni al detector).
+- Herramientas nuevas en eval/visualizador: `una-foto.mjs` (detección real de una foto + PNG), `comparar-par.mjs` con `LUZ=1` y `ZOOM=x0,y0,x1,y1`, `modelo-propio-iou.mjs` y `modelo-sam-iou.mjs` (miden el ONNX propio).
+- El par real-08 de Sinteplast tiene otro encuadre que la foto original: no sirve para geometría (pedir la captura con el mismo encuadre).
+- Entrenamiento propio (agente G, rama agente/g-modelos, carpeta `training/`): ver su README. Corrida en la Asus por CPU a 256 px; resultados en la sesión.
+
 ## Pendientes priorizados
 0. **Probar pincel/zoom con foto real en staging** y en celulares (iOS Safari y Android); ajustar `touch-action`, velocidad del velo en vivo y tamaño por defecto del pincel según lo que se vea. Posible mejora: test automatizado de la lógica de `compose`/deshacer (hoy vive dentro del componente).
 1. **Etapa F** (pulido y evaluación): set de 30–50 fotos con máscaras anotadas (IoU) y error de m² contra medidas reales; medir velocidad en **celulares reales** (hoy ~9–10 s de análisis con 1 hilo en una notebook de 4 GB; WASM multihilo se colgaba: `?threads=N`, investigar). PWA instalable (manifest, íconos PNG, service worker).
