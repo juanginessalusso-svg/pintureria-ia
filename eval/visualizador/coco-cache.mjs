@@ -53,7 +53,8 @@ for (const e of list) {
   const cands = [];
   const t0 = performance.now();
   let found, mode;
-  try { ({ found, mode } = await runDetect({ image: img, segment, opts: { ...OPTS, debugCand: (c) => { if (c.mask) { let n = 0, wl = 0, wa = 0, ce = 0; for (let i = 0; i < c.mask.length; i++) if (c.mask[i] && lab[i] !== 255) { n++; if (WALL(lab[i])) wl++; if (WALL_ANY(lab[i])) wa++; if (CEIL(lab[i])) ce++; } c.gtWall = n ? +(wl / n).toFixed(2) : null; c.gtWallAny = n ? +(wa / n).toFixed(2) : null; c.gtCeil = n ? +(ce / n).toFixed(2) : null; delete c.mask; } cands.push(c); } }, mode: process.env.COCO_MODE ?? 'auto', mergeTecho: !!OPTS.mergeTecho })); } catch (err) { console.log(e.id, 'ERR', err.message); continue; }
+  const segFile = process.env.SEG_CACHE ? path.join(process.env.SEG_CACHE, `${e.id}.cls`) : null, classMap = segFile && fs.existsSync(segFile) ? new Uint8Array(fs.readFileSync(segFile)) : null; // SEG_CACHE: mapa del modelo (modelo-propio-iou.mjs), como ?modelo=1
+  try { ({ found, mode } = await runDetect({ image: img, segment, classMap, opts: { ...OPTS, debugCand: (c) => { if (c.mask) { let n = 0, wl = 0, wa = 0, ce = 0; for (let i = 0; i < c.mask.length; i++) if (c.mask[i] && lab[i] !== 255) { n++; if (WALL(lab[i])) wl++; if (WALL_ANY(lab[i])) wa++; if (CEIL(lab[i])) ce++; } c.gtWall = n ? +(wl / n).toFixed(2) : null; c.gtWallAny = n ? +(wa / n).toFixed(2) : null; c.gtCeil = n ? +(ce / n).toFixed(2) : null; delete c.mask; } cands.push(c); } }, mode: process.env.COCO_MODE ?? 'auto', mergeTecho: !!OPTS.mergeTecho })); } catch (err) { console.log(e.id, 'ERR', err.message); continue; }
   if (miss) fs.writeFileSync(cf, zlib.gzipSync(JSON.stringify(cache)));
   const walls = new Uint8Array(width * height), ceil = new Uint8Array(width * height);
   for (const f of found) { const t = f.kind === 'techo' ? ceil : f.kind === 'pared' ? walls : null; if (t) for (let i = 0; i < t.length; i++) if (f.mask[i]) t[i] = 1; }

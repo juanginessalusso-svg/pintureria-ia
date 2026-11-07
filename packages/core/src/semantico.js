@@ -123,7 +123,19 @@ function erosionar(mask, w, h, r) { // erosión = complemento de dilatar el comp
  * finas que quedan junto a los bordes) y cada pedazo de >= `minFrac` de la foto se segmenta de nuevo con detectSurfacesSemantico
  * (SAM con semillas en ese pedazo, recortado a él + `dilate`; si SAM se desborda, el pedazo mismo). Se agregan sin pisar lo que ya había.
  */
-export async function completarConModelo(found, classMap, w, h, segment, { apertura = 0.012, minFrac = 0.02, dilate = 6, ...semOpts } = {}) {
+function rasgos(mask, L, G, w, h) { // mediana de luz, textura media en el INTERIOR (sin el borde de 3 px) y grosor medio (área / alto de la caja)
+  const inner = erosionar(mask, w, h, 3), hist = new Uint32Array(256);
+  let n = 0, tex = 0, nt = 0, y0 = h, y1 = -1;
+  for (let i = 0; i < mask.length; i++) {
+    if (!mask[i]) continue;
+    n++; hist[Math.min(255, L[i] | 0)]++; const y = (i / w) | 0; if (y < y0) y0 = y; if (y > y1) y1 = y;
+    if (inner[i]) { tex += G[i]; nt++; }
+  }
+  let acc = 0, med = 0; for (let v = 0; v < 256; v++) { acc += hist[v]; if (acc >= n / 2) { med = v; break; } }
+  return { luz: med, tex: nt ? tex / nt : 0, grosor: n / Math.max(1, y1 - y0 + 1) };
+}
+
+export async function completarConModelo(found, classMap, w, h, segment, { apertura = 0.012, minFrac = 0.02, dilate = 6, image = null, minLuz = 0.5, minGrosor = 0.06, maxArea = 0.3, debug = false, ...semOpts } = {}) {
   const N = w * h, cubierto = new Uint8Array(N);
   for (const f of found) for (let i = 0; i < N; i++) if (f.mask[i]) cubierto[i] = 1;
   const rad = Math.max(1, Math.round(apertura * w)), resto = new Uint8Array(N);
@@ -137,10 +149,25 @@ export async function completarConModelo(found, classMap, w, h, segment, { apert
   const nuevos = await detectSurfacesSemantico(resto, w, h, segment, { dilate, minFrac, ...semOpts });
   const out = [...found];
   let np = found.filter((f) => f.kind === 'pared').length;
+  // rasgos para el filtro (si viene la imagen): luz relativa a las paredes ya halladas, textura interior relativa y grosor
+  let L = null, G = null, refLuz = 0, refTex = 0;
+  if (image) {
+    L = new Float32Array(N); G = new Float32Array(N);
+    for (let i = 0; i < N; i++) L[i] = 0.299 * image.data[4 * i] + 0.587 * image.data[4 * i + 1] + 0.114 * image.data[4 * i + 2];
+    for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++) { const i = y * w + x; G[i] = Math.abs(L[i + 1] - L[i - 1]) + Math.abs(L[i + w] - L[i - w]); }
+    const paredes = new Uint8Array(N); for (const f of found) if (f.kind === 'pared') for (let i = 0; i < N; i++) if (f.mask[i]) paredes[i] = 1;
+    const r = rasgos(paredes, L, G, w, h); refLuz = r.luz; refTex = r.tex;
+  }
   for (const s of nuevos) {
     const m = new Uint8Array(N); let a = 0;
     for (let i = 0; i < N; i++) if (s.mask[i] && !cubierto[i]) { m[i] = 1; a++; }
     if (a / N < minFrac) continue;
+    if (L && s.kind === 'pared') {
+      const r = rasgos(m, L, G, w, h), luz = refLuz ? r.luz / refLuz : 1, tex = refTex ? r.tex / refTex : 1;
+      const ok = luz >= minLuz && r.grosor >= minGrosor * w && a / N <= maxArea; // la textura se registra (debug) pero no filtra: probado 2026-11-07, cortaba paredes en tiras
+      if (debug) console.log(`  [completar] área ${(100 * a / N).toFixed(1)} % · luz ${luz.toFixed(2)} · textura ${tex.toFixed(2)} · grosor ${(r.grosor / w).toFixed(3)} → ${ok ? 'SE AGREGA' : 'descartado'}`);
+      if (!ok) continue;
+    }
     for (let i = 0; i < N; i++) if (m[i]) cubierto[i] = 1;
     const techo = s.kind === 'techo' && out.find((f) => f.kind === 'techo');
     if (techo) { const t = new Uint8Array(techo.mask); for (let i = 0; i < N; i++) if (m[i]) t[i] = 1; techo.mask = t; techo.area += a / N; continue; } // un solo techo

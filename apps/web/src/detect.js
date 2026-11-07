@@ -55,7 +55,7 @@ export async function runDetect({ image, segment, onProgress = () => {}, isCance
       if (opts.semantico.hibrido) found = hibridar(found, clasico, classMap, width, height, opts.semantico);
     }
     // completar (opt-in, opts.semantico.completar): lo que el modelo ve como pared/techo y quedó sin cubrir se vuelve a pedir a SAM; ver completarConModelo() en semantico.js
-    if (found.length && opts.semantico?.completar) found = await completarConModelo(found, classMap, width, height, seg, typeof opts.semantico.completar === 'object' ? opts.semantico.completar : {});
+    if (found.length && opts.semantico?.completar) found = await completarConModelo(found, classMap, width, height, seg, { image, ...(typeof opts.semantico.completar === 'object' ? opts.semantico.completar : {}) });
     // veto (opt-in, opts.semantico.veto): cada superficie se recorta a la zona que el modelo ve como su clase (+ margen); ver vetarConModelo() en semantico.js
     if (found.length && opts.semantico?.veto) found = vetarConModelo(found, classMap, width, height, typeof opts.semantico.veto === 'object' ? opts.semantico.veto : {});
   }
