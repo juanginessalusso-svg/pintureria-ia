@@ -120,7 +120,7 @@ const handlers = {
       isCancelled: () => cancelDetect,
       mode,
       classMap,
-      opts: classMap ? { semantico: { fusion: true, hibrido: true, union: true } } : {}, // con el modelo: paredes del modelo + techo del clásico + unión de lo que el modelo no vio
+      opts: classMap ? { semantico: { fusion: true, hibrido: true, union: true, veto: true } } : {}, // con el modelo: paredes del modelo + techo del clásico + unión de lo que el modelo no vio; veto: nada fuera de la zona que el modelo ve como pared/techo (puertas, azulejos)
     });
     const safe = found.map((f) => ({ ...f, mask: f.mask.slice() })); // buffer propio de cada máscara: se pueden transferir sin choques
     return { result: { found: safe, decodes, mode: used }, transfer: safe.map((f) => f.mask.buffer) };

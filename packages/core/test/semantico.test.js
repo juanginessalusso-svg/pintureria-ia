@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { semillasDesdeMapa, detectSurfacesSemantico, componentes, CLASE } from '../src/semantico.js';
+import { semillasDesdeMapa, detectSurfacesSemantico, componentes, CLASE, vetarConModelo, completarConModelo } from '../src/semantico.js';
 
 const W = 80, H = 60;
 function mapa() { // techo arriba (y<15), pared izquierda (x<40) y pared derecha (x>=45), con un hueco de "otro" entre ellas
@@ -92,4 +92,36 @@ test('hibridar con partir: una pared del modelo que abarca dos paredes del clás
   assert.equal(i.mask[20 * w + 60], 0); assert.equal(d.mask[20 * w + 10], 0);
   // con una sola pared del clásico no se parte
   assert.equal(hibridar(found, [clas[0]], cm, w, h, { partir: true }).length, 1);
+});
+
+test('vetarConModelo: SAM no puede sumar una puerta que el modelo ve como "otro"; el borde se puede correr hasta el margen', () => {
+  const w = 100, h = 50, N = w * h, cm = new Uint8Array(N).fill(CLASE.pared), pared = new Uint8Array(N).fill(1);
+  for (let y = 10; y < h; y++) for (let x = 40; x < 60; x++) cm[y * w + x] = CLASE.otro; // puerta en el medio: el modelo la ve como "otro"
+  const found = [{ kind: 'pared', name: 'Pared 1', area: 1, mask: pared }]; // SAM/el clásico la pegaron a la pared
+  const r = vetarConModelo(found, cm, w, h, { r: 0.02 }); // margen 2 px
+  assert.equal(r.length, 1);
+  assert.equal(r[0].mask[30 * w + 50], 0, 'el centro de la puerta no se pinta');
+  assert.equal(r[0].mask[30 * w + 41], 1, 'dentro del margen el borde se respeta');
+  assert.equal(r[0].mask[30 * w + 10], 1, 'la pared sigue entera');
+  assert.equal(r[0].mask[5 * w + 50], 1, 'arriba de la puerta sigue la pared');
+  // un techo no se recorta con la zona de pared
+  const techo = new Uint8Array(N); for (let i = 0; i < 10 * w; i++) techo[i] = 1;
+  const cm2 = new Uint8Array(cm); for (let i = 0; i < 10 * w; i++) cm2[i] = CLASE.techo;
+  const r2 = vetarConModelo([{ kind: 'techo', name: 'Techo', area: 0.2, mask: techo }], cm2, w, h);
+  assert.equal(r2.length, 1); assert.equal(r2[0].mask[5 * w + 50], 1);
+});
+
+test('completarConModelo: una pared que el modelo ve pero quedó sin cubrir se vuelve a pedir y se agrega', async () => {
+  const w = 100, h = 50, N = w * h, cm = new Uint8Array(N).fill(CLASE.pared), der = new Uint8Array(N);
+  for (let y = 0; y < h; y++) for (let x = 50; x < w; x++) der[y * w + x] = 1; // solo la pared derecha quedó como superficie
+  const pedidos = [];
+  const segment = async (pts) => { pedidos.push(pts); const m = new Uint8Array(N); for (let y = 0; y < h; y++) for (let x = 0; x < 50; x++) m[y * w + x] = 1; return m; }; // SAM devuelve la izquierda
+  const r = await completarConModelo([{ kind: 'pared', name: 'Pared 1', area: 0.5, mask: der }], cm, w, h, segment, { apertura: 0.02 });
+  assert.equal(r.length, 2, 'se agregó la pared izquierda');
+  assert.ok(pedidos.length >= 1);
+  assert.equal(r[1].mask[25 * w + 10], 1); assert.equal(r[1].mask[25 * w + 80], 0, 'no pisa la que ya estaba');
+  // si todo está cubierto no se pide nada
+  const todo = new Uint8Array(N).fill(1); pedidos.length = 0;
+  const r2 = await completarConModelo([{ kind: 'pared', name: 'Pared 1', area: 1, mask: todo }], cm, w, h, segment);
+  assert.equal(r2.length, 1); assert.equal(pedidos.length, 0);
 });

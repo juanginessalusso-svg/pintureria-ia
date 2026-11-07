@@ -110,6 +110,71 @@ export async function detectSurfacesSemantico(classMap, w, h, segment, { dilate 
 
 const count = (m) => { let n = 0; for (let i = 0; i < m.length; i++) if (m[i]) n++; return n; };
 
+function erosionar(mask, w, h, r) { // erosión = complemento de dilatar el complemento
+  const inv = new Uint8Array(mask.length); for (let i = 0; i < mask.length; i++) inv[i] = mask[i] ? 0 : 1;
+  const d = dilatar(inv, w, h, r); for (let i = 0; i < d.length; i++) d[i] = d[i] ? 0 : 1;
+  return d;
+}
+
+/**
+ * Completar con el modelo (opt-in): lo que el modelo ve como pared/techo y quedó SIN cubrir por ninguna superficie se vuelve a pedir.
+ * Pasa cuando el modelo ve varias paredes como UNA mancha conectada (se tocan por una esquina o por arriba): SAM devuelve solo una
+ * (la más grande) y las otras se pierden. Acá el resto sin cubrir se limpia con una apertura (radio `apertura`·ancho: saca las tiras
+ * finas que quedan junto a los bordes) y cada pedazo de >= `minFrac` de la foto se segmenta de nuevo con detectSurfacesSemantico
+ * (SAM con semillas en ese pedazo, recortado a él + `dilate`; si SAM se desborda, el pedazo mismo). Se agregan sin pisar lo que ya había.
+ */
+export async function completarConModelo(found, classMap, w, h, segment, { apertura = 0.012, minFrac = 0.02, dilate = 6, ...semOpts } = {}) {
+  const N = w * h, cubierto = new Uint8Array(N);
+  for (const f of found) for (let i = 0; i < N; i++) if (f.mask[i]) cubierto[i] = 1;
+  const rad = Math.max(1, Math.round(apertura * w)), resto = new Uint8Array(N);
+  for (const [cls] of [[CLASE.pared], [CLASE.techo]]) {
+    let m = new Uint8Array(N); for (let i = 0; i < N; i++) if (classMap[i] === cls && !cubierto[i]) m[i] = 1;
+    m = dilatar(erosionar(m, w, h, rad), w, h, rad);
+    for (let i = 0; i < N; i++) if (m[i] && !cubierto[i]) resto[i] = cls;
+  }
+  let hay = 0; for (let i = 0; i < N; i++) if (resto[i]) hay++;
+  if (hay < minFrac * N) return found;
+  const nuevos = await detectSurfacesSemantico(resto, w, h, segment, { dilate, minFrac, ...semOpts });
+  const out = [...found];
+  let np = found.filter((f) => f.kind === 'pared').length;
+  for (const s of nuevos) {
+    const m = new Uint8Array(N); let a = 0;
+    for (let i = 0; i < N; i++) if (s.mask[i] && !cubierto[i]) { m[i] = 1; a++; }
+    if (a / N < minFrac) continue;
+    for (let i = 0; i < N; i++) if (m[i]) cubierto[i] = 1;
+    const techo = s.kind === 'techo' && out.find((f) => f.kind === 'techo');
+    if (techo) { const t = new Uint8Array(techo.mask); for (let i = 0; i < N; i++) if (m[i]) t[i] = 1; techo.mask = t; techo.area += a / N; continue; } // un solo techo
+    out.push({ kind: s.kind, name: s.kind === 'techo' ? 'Techo' : `Pared ${++np}`, area: a / N, mask: m, fuente: 'completar' });
+  }
+  return out;
+}
+
+/**
+ * Veto del modelo (opt-in): el modelo decide las ZONAS y SAM/el clásico solo afinan el BORDE.
+ * Cada superficie se recorta a lo que el modelo ve como su clase (pared -> pared, techo -> techo) dilatado `r` (fracción del ancho):
+ * así SAM puede correr el borde hasta ~r para asentarlo en la arista real, pero no puede sumar una región que el modelo ve como otra cosa
+ * (la puerta blanca que SAM pega a la pared, lo que agrega `union`/`fusion`). Después se borran las manchas sueltas.
+ * Devuelve una lista nueva; descarta superficies que quedan < 1 % de la foto.
+ */
+export function vetarConModelo(found, classMap, w, h, { r = 0.02, islaMin = 0.004 } = {}) {
+  const N = w * h, rad = Math.max(1, Math.round(r * w)), zonas = {};
+  for (const [kind, cls] of [['pared', CLASE.pared], ['techo', CLASE.techo]]) {
+    const z = new Uint8Array(N); for (let i = 0; i < N; i++) if (classMap[i] === cls) z[i] = 1;
+    zonas[kind] = dilatar(z, w, h, rad);
+  }
+  const out = [];
+  for (const f of found) {
+    const z = zonas[f.kind];
+    if (!z) { out.push(f); continue; }
+    let m = new Uint8Array(N);
+    for (let i = 0; i < N; i++) if (f.mask[i] && z[i]) m[i] = 1;
+    m = removeSmallIslands(m, w, h, Math.round(islaMin * N));
+    const a = count(m) / N;
+    if (a > 0.01) out.push({ ...f, mask: m, area: a });
+  }
+  return out;
+}
+
 /**
  * Híbrido modelo + clásico. Las PAREDES las define el modelo; el TECHO lo dibuja el detector clásico (bordes más prolijos con la pared) cuando
  * el modelo también ve techo ahí (el clásico a veces marca una pared como techo: ese techo se descarta). Además se limpian las manchas sueltas de las paredes.
