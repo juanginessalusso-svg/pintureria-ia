@@ -14,7 +14,8 @@ const getJson = (path) => fetch(`/api/public/${path}${tenantQ()}`).then((r) => (
 const mb = (n) => (n / 1048576).toFixed(0);
 
 const ANOTAR = new URLSearchParams(location.search).get('anotar') === '1'; // modo de anotación (herramienta interna): ver eval/visualizador/medir.mjs
-const MAX_ZOOM = 8;
+const MAX_ZOOM = 16;
+const DATASET = typeof location !== 'undefined' && new URLSearchParams(location.search).get('dataset') === '1'; // modo recolección: tipo de cada superficie editable y botón de compartir
 const MAX_SURF_UNDO = 8;
 const DRAG_PX = 4; // cuánto hay que mover el dedo para que un toque pase a ser arrastre
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
@@ -178,6 +179,15 @@ export function Visualizer() {
       ctx.fillStyle = pt.label ? '#16a34a' : '#dc2626'; ctx.fill();
       ctx.lineWidth = 2; ctx.strokeStyle = '#fff'; ctx.stroke();
     }
+    // polígono en curso: línea y vértices (verde = suma, rojo = quita)
+    const pp = polyRef.current;
+    if (pp.length) {
+      const col = mode === 'polyx' ? '#dc2626' : '#16a34a', r = Math.max(4, p.width / 160);
+      ctx.beginPath(); pp.forEach((q, i) => (i ? ctx.lineTo(q.x, q.y) : ctx.moveTo(q.x, q.y)));
+      if (pp.length > 2) ctx.closePath();
+      ctx.lineWidth = Math.max(2, p.width / 450); ctx.strokeStyle = col; ctx.stroke();
+      for (const q of pp) { ctx.beginPath(); ctx.arc(q.x, q.y, r, 0, 7); ctx.fillStyle = col; ctx.fill(); ctx.lineWidth = 2; ctx.strokeStyle = '#fff'; ctx.stroke(); }
+    }
     // línea de referencia de la calibración (ámbar)
     const cp = calibRef.current.pts;
     if (cp.length) {
@@ -193,6 +203,7 @@ export function Visualizer() {
     }
   };
   const pointsRef = useRef([]);
+  const polyRef = useRef([]); // vértices del polígono en curso (coordenadas de la foto)
 
   const repaint = (col = color, opts = {}) => {
     const p = photo.current;
@@ -306,10 +317,11 @@ export function Visualizer() {
     // Niveles bien separados (0 otro, 80 pared, 160 techo, 240 ignorar): sobreviven a una recompresión (WhatsApp, etc.); agregar_propias.py usa el nivel más cercano.
     const lab = new Uint8ClampedArray(p.width * p.height * 4);
     for (let i = 0; i < p.width * p.height; i++) lab[i * 4 + 3] = 255;
-    for (const sf of surfaces.current) {
-      const v = sf.kind === 'techo' ? 160 : sf.kind === 'ladrillo' ? 240 : 80;
-      for (let i = 0; i < sf.mask.length; i++) if (sf.mask[i]) { lab[i * 4] = lab[i * 4 + 1] = lab[i * 4 + 2] = v; }
-    }
+    const tipo = (sf) => sf.kind ?? (/^techo/i.test(sf.name) ? 'techo' : 'pared');
+    const pint = (mask, v) => { for (let i = 0; i < mask.length; i++) if (mask[i]) { lab[i * 4] = lab[i * 4 + 1] = lab[i * 4 + 2] = v; } };
+    if (current.current) pint(current.current, 80); // selección todavía sin confirmar: cuenta como pared
+    for (const sf of surfaces.current) if (tipo(sf) !== 'objeto') pint(sf.mask, tipo(sf) === 'techo' ? 160 : tipo(sf) === 'ladrillo' ? 240 : 80);
+    for (const sf of surfaces.current) if (tipo(sf) === 'objeto') pint(sf.mask, 0); // "No pintar": quedan como otro aunque se solapen con una pared
     const files = [
       new File([await toBlob(draw(new Uint8ClampedArray(p.data)), 'image/jpeg', 0.93)], base + '.jpg', { type: 'image/jpeg' }),
       new File([await toBlob(draw(lab), 'image/png')], base + '.labels.png', { type: 'image/png' }),
@@ -441,10 +453,8 @@ export function Visualizer() {
     return { x: ((clientX - rect.left) * p.width) / rect.width, y: ((clientY - rect.top) * p.height) / rect.height };
   };
 
-  // Varita: un toque toma toda la zona de color parecido (tolerando el degradado de la luz) y la suma (o la quita) de la superficie elegida o de la selección nueva.
-  const aplicarVarita = (pt) => {
-    const p = photo.current, quitar = mode === 'wandx';
-    const m = varita(p, pt.x, pt.y, { tol });
+  // Aplica una máscara (de la varita o de un polígono) a la superficie elegida o a la selección nueva: suma o quita. Se puede deshacer.
+  const aplicarMascara = (m, quitar, que) => {
     let n = 0; for (let i = 0; i < m.length; i++) n += m[i];
     const surf = activeId ? surfaces.current.find((x) => x.id === activeId) : null;
     if (surf) {
@@ -456,8 +466,28 @@ export function Visualizer() {
       current.current = compose();
     }
     repaint(); bump();
-    setStatus(`Varita: ${quitar ? 'quité' : 'sumé'} ${(100 * n / m.length).toFixed(0)} % de la foto. Si fue de más o de menos, bajá o subí la tolerancia y tocá Deshacer.`);
+    setStatus(`${que}: ${quitar ? 'quité' : 'sumé'} ${(100 * n / m.length).toFixed(1)} % de la foto. Si no era eso, tocá Deshacer.`);
   };
+  // Varita: un toque toma toda la zona de color parecido (tolerando el degradado de la luz).
+  const aplicarVarita = (pt) => {
+    aplicarMascara(varita(photo.current, pt.x, pt.y, { tol }), mode === 'wandx', 'Varita');
+  };
+  // Polígono: se tocan los vértices (con zoom, en las esquinas) y se cierra; sirve para marcos, ventanas y bordes rectos.
+  const aplicarPoligono = () => {
+    const pts = polyRef.current, p = photo.current;
+    if (pts.length < 3) { setStatus('Marcá al menos 3 puntos para cerrar el polígono.'); return; }
+    const cv = document.createElement('canvas'); cv.width = p.width; cv.height = p.height;
+    const cx = cv.getContext('2d'); cx.fillStyle = '#fff'; cx.beginPath();
+    pts.forEach((q, i) => (i ? cx.lineTo(q.x, q.y) : cx.moveTo(q.x, q.y)));
+    cx.closePath(); cx.fill();
+    const al = cx.getImageData(0, 0, p.width, p.height).data, m = new Uint8Array(p.width * p.height);
+    for (let i = 0; i < m.length; i++) m[i] = al[i * 4 + 3] > 127 ? 1 : 0;
+    polyRef.current = [];
+    aplicarMascara(m, mode === 'polyx', 'Polígono');
+  };
+  const cancelarPoligono = () => { polyRef.current = []; render(); bump(); setStatus('Polígono cancelado.'); };
+  const quitarPuntoPoligono = () => { polyRef.current.pop(); render(); bump(); };
+
   const onCanvasClick = async (e) => {
     if (suppressClick.current) { suppressClick.current = false; return; } // era el final de un arrastre, trazo o pellizco
     const p = photo.current;
@@ -473,6 +503,7 @@ export function Visualizer() {
       return;
     }
     if (mode === 'wand' || mode === 'wandx') return aplicarVarita(pt);
+    if (mode === 'poly' || mode === 'polyx') { polyRef.current.push({ x: pt.x, y: pt.y }); render(); bump(); setStatus(`Polígono: ${polyRef.current.length} ${polyRef.current.length === 1 ? 'punto' : 'puntos'}. Seguí tocando las esquinas y después tocá "Cerrar y aplicar".`); return; }
     if (mode !== 'pos' && mode !== 'neg') return; // pincel, borrador y mover no marcan puntos de SAM
     if (model.state !== 'ready') return;
     try { await runSegment([...pointsRef.current, pt], pointsRef.current.length === 0); }
@@ -481,8 +512,9 @@ export function Visualizer() {
 
   // Deshacer unificado: con una superficie seleccionada en la lista deshace sus trazos; si no, el último trazo de la
   // selección en curso; si no, el último punto de SAM.
-  const canUndo = activeId ? surfUndo.current.some((u) => u.id === activeId) : strokes.current.length > 0 || points.length > 0;
+  const canUndo = polyRef.current.length > 0 || (activeId ? surfUndo.current.some((u) => u.id === activeId) : strokes.current.length > 0 || points.length > 0);
   const undo = async () => {
+    if (polyRef.current.length) { quitarPuntoPoligono(); return; }
     if (activeId) {
       const i = surfUndo.current.map((u) => u.id).lastIndexOf(activeId);
       if (i < 0) return;
@@ -648,15 +680,18 @@ export function Visualizer() {
   const onPointerLeave = (e) => { if (ringRef.current && e.pointerType !== 'touch') ringRef.current.style.opacity = '0'; };
 
   const chooseMode = (m) => {
+    if (m !== 'poly' && m !== 'polyx' && polyRef.current.length) { polyRef.current = []; setTimeout(() => render(), 0); }
     setMode(m);
     if (m === 'brush') setStatus('Pincel: pintá lo que falta de la pared. Con dos dedos hacés zoom para más precisión.');
     else if (m === 'erase') setStatus('Borrador: pasalo por lo que sobra de la selección.');
     else if (m === 'wand') setStatus('Varita: tocá una pared y se suma toda la zona de color parecido. Si se pasa o se queda corta, cambiá la tolerancia.');
+    else if (m === 'poly' || m === 'polyx') setStatus('Polígono: tocá las esquinas de la zona (conviene ampliar con zoom) y después "Cerrar y aplicar". Con "Último punto" o Deshacer corregís un vértice.');
     else if (m === 'wandx') setStatus('Varita (quitar): tocá algo que sobra y se quita toda la zona de color parecido.');
     else if (m === 'pan') setStatus('Mover: arrastrá la foto. También podés ampliar con − / + o pellizcando.');
   };
   const touchAction = zoom > 1 || mode === 'brush' || mode === 'erase' || mode === 'pan' ? 'none' : 'pan-y'; // pan-y: se puede scrollear la página
-  const syncSurfaces = () => setSurfList(surfaces.current.map(({ id, name, color: c }) => ({ id, name, color: c })));
+  const syncSurfaces = () => setSurfList(surfaces.current.map(({ id, name, kind, color: c }) => ({ id, name, kind, color: c })));
+  const setKind = (id, kind) => { const x = surfaces.current.find((q) => q.id === id); if (x) { x.kind = kind; syncSurfaces(); } };
   const commit = async () => {
     const m = current.current, p = photo.current;
     if (!m) return;
@@ -666,7 +701,7 @@ export function Visualizer() {
     for (let i = 0; i < m.length; i += 7) if (m[i]) { sumY += Math.floor(i / p.width); n++; }
     const isCeiling = n > 0 && sumY / n / p.height < 0.2 && !surfaces.current.some((s) => s.name === 'Techo');
     const name = isCeiling ? 'Techo' : `Pared ${surfaces.current.filter((s) => /^Pared/.test(s.name)).length + 1}`;
-    surfaces.current.push({ id: ++surfSeq.current, name, mask: m, color: colorRef.current });
+    surfaces.current.push({ id: ++surfSeq.current, name, kind: isCeiling ? 'techo' : 'pared', mask: m, color: colorRef.current });
     current.current = null; samMask.current = null; strokes.current = []; pointsRef.current = []; setPoints([]); setActiveId(null); syncSurfaces();
     await sam.current.call('reset');
     setStatus(`${name} confirmada. Tocá otra superficie y elegí su color, o tocá una de la lista para cambiarle el color.`);
@@ -803,8 +838,17 @@ export function Visualizer() {
               <button class={mode === 'erase' ? 'on' : ''} onClick={() => chooseMode('erase')}>🧽 Borrador</button>
               <button class={mode === 'wand' ? 'on' : ''} onClick={() => chooseMode('wand')}>🪄 Varita +</button>
               <button class={mode === 'wandx' ? 'on' : ''} onClick={() => chooseMode('wandx')}>🪄 Varita −</button>
+              <button class={mode === 'poly' ? 'on' : ''} onClick={() => chooseMode('poly')}>▱ Polígono +</button>
+              <button class={mode === 'polyx' ? 'on' : ''} onClick={() => chooseMode('polyx')}>▱ Polígono −</button>
               <button class={mode === 'pan' ? 'on' : ''} onClick={() => chooseMode('pan')}>✋ Mover</button>
             </div>
+            {(mode === 'poly' || mode === 'polyx') && (
+              <div class="row">
+                <button onClick={aplicarPoligono} disabled={polyRef.current.length < 3}>✔︎ Cerrar y aplicar</button>
+                <button onClick={quitarPuntoPoligono} disabled={!polyRef.current.length}>↶ Último punto</button>
+                <button onClick={cancelarPoligono} disabled={!polyRef.current.length}>✕ Cancelar</button>
+              </div>
+            )}
             {(mode === 'wand' || mode === 'wandx') && (
               <label class="brushsize">Tolerancia {tol}
                 <input type="range" min="3" max="30" step="1" value={tol} onInput={(e) => setTol(Number(e.target.value))} />
@@ -846,6 +890,14 @@ export function Visualizer() {
             <strong>Superficies</strong>
             {surfList.map((s) => (
               <div key={s.id} class={`surf ${activeId === s.id ? 'on' : ''}`} onClick={() => selectSurface(s.id)}>
+                {DATASET && (
+                  <select value={s.kind ?? (/^techo/i.test(s.name) ? 'techo' : 'pared')} onClick={(e) => e.stopPropagation()} onChange={(e) => setKind(s.id, e.target.value)} aria-label="Tipo de superficie">
+                    <option value="pared">Pared</option>
+                    <option value="techo">Techo</option>
+                    <option value="objeto">No pintar (objeto)</option>
+                    <option value="ladrillo">Rugosa / ladrillo (ignorar)</option>
+                  </select>
+                )}
                 <input class="surfname" value={s.name} onClick={(e) => e.stopPropagation()} onInput={(e) => renameSurface(s.id, e.target.value)} aria-label="Nombre de la superficie" />
                 <span class="sw" style={{ background: s.color?.hex ?? '#fff' }} />
                 <span class="muted small">{s.color ? s.color.name : 'sin color'}</span>
