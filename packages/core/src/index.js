@@ -14,3 +14,4 @@ export * from './bordes.js';
 export * from './rectas.js';
 export * from './sombras.js';
 export * from './semantico.js';
+export * from './varita.js';

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { LUZ_WB_STRENGTH, estimateWhiteBalance, whiteBalanceFor, featherMask, recolorWall, cleanMask, pxPerMeter, wallPixels, paintStroke, maskCount, encodeMask, cutObjectFromSurface } from '@pintureria/core';
+import { varita, LUZ_WB_STRENGTH, estimateWhiteBalance, whiteBalanceFor, featherMask, recolorWall, cleanMask, pxPerMeter, wallPixels, paintStroke, maskCount, encodeMask, cutObjectFromSurface } from '@pintureria/core';
 import { SamClient } from './samClient.js';
 import { workingSize } from './sam.js';
 import { Calculator } from './Calculator.jsx';
@@ -58,6 +58,8 @@ export function Visualizer() {
   const [mode, setMode] = useState('pos'); // 'pos' es pared · 'neg' no es pared · 'brush' pincel · 'erase' borrador · 'pan' mover
   const [radius, setRadius] = useState(16); // radio del pincel en píxeles de PANTALLA
   const [zoom, setZoom] = useState(1);
+  const [tol, setTol] = useState(8); // tolerancia de la varita (diferencia de color)
+  const [recta, setRecta] = useState(false); // pincel/borrador en línea recta (de donde apoyás a donde soltás)
   const [, setTick] = useState(0); // fuerza re-render cuando cambian refs que la interfaz lee (trazos, deshacer)
   const bump = () => setTick((t) => t + 1);
   const [color, setColor] = useState(null);
@@ -385,7 +387,10 @@ export function Visualizer() {
   const compose = () => {
     const p = photo.current;
     const m = samMask.current ? samMask.current.slice() : new Uint8Array(p.width * p.height);
-    for (const s of strokes.current) paintStroke(m, p.width, p.height, s.pts, s.r, s.erase ? 0 : 1);
+    for (const s of strokes.current) {
+      if (s.mask) { for (let i = 0; i < m.length; i++) if (s.mask[i]) m[i] = s.erase ? 0 : 1; } // toque de la varita
+      else paintStroke(m, p.width, p.height, s.pts, s.r, s.erase ? 0 : 1);
+    }
     return m;
   };
   const recompose = () => (samMask.current || strokes.current.length ? compose() : null);
@@ -436,6 +441,23 @@ export function Visualizer() {
     return { x: ((clientX - rect.left) * p.width) / rect.width, y: ((clientY - rect.top) * p.height) / rect.height };
   };
 
+  // Varita: un toque toma toda la zona de color parecido (tolerando el degradado de la luz) y la suma (o la quita) de la superficie elegida o de la selección nueva.
+  const aplicarVarita = (pt) => {
+    const p = photo.current, quitar = mode === 'wandx';
+    const m = varita(p, pt.x, pt.y, { tol });
+    let n = 0; for (let i = 0; i < m.length; i++) n += m[i];
+    const surf = activeId ? surfaces.current.find((x) => x.id === activeId) : null;
+    if (surf) {
+      surfUndo.current.push({ id: surf.id, mask: surf.mask.slice() });
+      if (surfUndo.current.length > MAX_SURF_UNDO) surfUndo.current.shift();
+      for (let i = 0; i < m.length; i++) if (m[i]) surf.mask[i] = quitar ? 0 : 1;
+    } else {
+      strokes.current.push({ mask: m, erase: quitar });
+      current.current = compose();
+    }
+    repaint(); bump();
+    setStatus(`Varita: ${quitar ? 'quité' : 'sumé'} ${(100 * n / m.length).toFixed(0)} % de la foto. Si fue de más o de menos, bajá o subí la tolerancia y tocá Deshacer.`);
+  };
   const onCanvasClick = async (e) => {
     if (suppressClick.current) { suppressClick.current = false; return; } // era el final de un arrastre, trazo o pellizco
     const p = photo.current;
@@ -450,6 +472,7 @@ export function Visualizer() {
       else setStatus('Ahí no detecté una superficie. Si falta una pared, usá "Ajustar a mano".');
       return;
     }
+    if (mode === 'wand' || mode === 'wandx') return aplicarVarita(pt);
     if (mode !== 'pos' && mode !== 'neg') return; // pincel, borrador y mover no marcan puntos de SAM
     if (model.state !== 'ready') return;
     try { await runSegment([...pointsRef.current, pt], pointsRef.current.length === 0); }
@@ -495,13 +518,21 @@ export function Visualizer() {
       target = current.current;
     }
     const pt = toImg(e.clientX, e.clientY);
-    stroke.current = { erase: mode === 'erase', r: rImg, pts: [pt], target, surfId: surf?.id ?? null, base: target.slice() };
+    stroke.current = { erase: mode === 'erase', r: rImg, pts: [pt], target, surfId: surf?.id ?? null, base: target.slice(), straight: recta };
     paintStroke(target, p.width, p.height, [pt], rImg, stroke.current.erase ? 0 : 1);
     scheduleRender();
   };
   const extendStroke = (e) => {
     const s = stroke.current, p = photo.current;
     if (!s) return;
+    if (s.straight) { // recta: se vuelve a la base y se dibuja una línea del punto donde apoyaste al punto actual
+      const pt = toImg(e.clientX, e.clientY);
+      s.target.set(s.base);
+      s.pts = [s.pts[0], pt];
+      paintStroke(s.target, p.width, p.height, s.pts, s.r, s.erase ? 0 : 1);
+      scheduleRender();
+      return;
+    }
     for (const ev of e.getCoalescedEvents?.() ?? [e]) {
       const pt = toImg(ev.clientX, ev.clientY), last = s.pts[s.pts.length - 1];
       s.pts.push(pt);
@@ -620,6 +651,8 @@ export function Visualizer() {
     setMode(m);
     if (m === 'brush') setStatus('Pincel: pintá lo que falta de la pared. Con dos dedos hacés zoom para más precisión.');
     else if (m === 'erase') setStatus('Borrador: pasalo por lo que sobra de la selección.');
+    else if (m === 'wand') setStatus('Varita: tocá una pared y se suma toda la zona de color parecido. Si se pasa o se queda corta, cambiá la tolerancia.');
+    else if (m === 'wandx') setStatus('Varita (quitar): tocá algo que sobra y se quita toda la zona de color parecido.');
     else if (m === 'pan') setStatus('Mover: arrastrá la foto. También podés ampliar con − / + o pellizcando.');
   };
   const touchAction = zoom > 1 || mode === 'brush' || mode === 'erase' || mode === 'pan' ? 'none' : 'pan-y'; // pan-y: se puede scrollear la página
@@ -768,8 +801,18 @@ export function Visualizer() {
               <button class={mode === 'neg' ? 'on' : ''} onClick={() => chooseMode('neg')}>🔴 No es pared</button>
               <button class={mode === 'brush' ? 'on' : ''} onClick={() => chooseMode('brush')}>🖌️ Pincel</button>
               <button class={mode === 'erase' ? 'on' : ''} onClick={() => chooseMode('erase')}>🧽 Borrador</button>
+              <button class={mode === 'wand' ? 'on' : ''} onClick={() => chooseMode('wand')}>🪄 Varita +</button>
+              <button class={mode === 'wandx' ? 'on' : ''} onClick={() => chooseMode('wandx')}>🪄 Varita −</button>
               <button class={mode === 'pan' ? 'on' : ''} onClick={() => chooseMode('pan')}>✋ Mover</button>
             </div>
+            {(mode === 'wand' || mode === 'wandx') && (
+              <label class="brushsize">Tolerancia {tol}
+                <input type="range" min="3" max="30" step="1" value={tol} onInput={(e) => setTol(Number(e.target.value))} />
+              </label>
+            )}
+            {(mode === 'brush' || mode === 'erase') && (
+              <label class="check"><input type="checkbox" checked={recta} onChange={(e) => setRecta(e.target.checked)} /> 📏 Línea recta (apoyá, arrastrá y soltá)</label>
+            )}
             {(mode === 'brush' || mode === 'erase') && (
               <label class="brushsize">Tamaño {radius} px
                 <input type="range" min="6" max="60" step="1" value={radius} onInput={(e) => setRadius(Number(e.target.value))} />
