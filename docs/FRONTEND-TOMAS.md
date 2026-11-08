@@ -41,7 +41,7 @@ API local con una pinturería de prueba (en otra terminal; en Windows usá Git B
 
 ```bash
 mkdir -p ../datos-local
-DATA_DIR=../datos-local node apps/api/scripts/create-tenant.js --slug demo --name "Pinturería Demo" --seed-demo
+DATA_DIR=../datos-local node apps/api/scripts/create-tenant.js --slug demo --name "Pinturería Demo" --user admin --seed-demo   # imprime UNA vez la contraseña del admin: anotala
 DATA_DIR=../datos-local ALLOW_TENANT_PARAM=1 NODE_ENV=development PORT=3000 node apps/api/src/server.js
 ```
 
