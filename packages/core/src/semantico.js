@@ -208,6 +208,40 @@ export function vetarConModelo(found, classMap, w, h, { r = 0.02, islaMin = 0.00
  * `found` = superficies del camino con modelo, `clasico` = superficies de detectSurfaces. Devuelve la lista nueva (no modifica las de entrada).
  * Opciones: minTechoModelo (fracción del techo clásico que el modelo también ve como techo, 0,4), islaMin (fracción de la foto bajo la cual una mancha suelta de pared se borra, 0,004).
  */
+/**
+ * Recorte de objetos (opt-in): lo PINTADO que el modelo ve como 'otro' y tiene cuerpo (no una franja fina de borde) se le pide a SAM con un punto
+ * en su centro. Si SAM devuelve algo acotado (<= maxFrac de la foto) y mayormente 'otro' para el modelo (>= minOtro), se saca de todas las superficies:
+ * así un cuadro, la tele, una puerta o un mueble quedan fuera con el borde exacto de SAM, aunque el veto los haya dejado pasar por su margen.
+ */
+export async function recortarObjetos(found, classMap, w, h, segment, { nucleo = 0.006, minFrac = 0.002, maxObjetos = 8, minOtro = 0.6, maxFrac = 0.25, islaMin = 0.004, debug = false } = {}) {
+  const N = w * h, pint = new Uint8Array(N);
+  for (const f of found) for (let i = 0; i < N; i++) if (f.mask[i]) pint[i] = 1;
+  let p = new Uint8Array(N); for (let i = 0; i < N; i++) if (pint[i] && classMap[i] === CLASE.otro) p[i] = 1;
+  p = erosionar(p, w, h, Math.max(1, Math.round(nucleo * w))); // sin las franjas finas del borde (ahí manda SAM, no el modelo)
+  const cands = componentes(p, w, h).comps.filter((c) => c.area >= minFrac * N).sort((a, b) => b.area - a.area).slice(0, maxObjetos);
+  if (!cands.length) return found;
+  const sacar = new Uint8Array(N);
+  for (const c of cands) {
+    const { d, bw, x0, y0 } = distanciaInterior(c, w, h);
+    let best = 0, bx = 0, by = 0; for (let k = 0; k < d.length; k++) if (d[k] > best) { best = d[k]; bx = x0 + (k % bw); by = y0 + ((k / bw) | 0); }
+    const m = (await segment([{ x: bx, y: by, label: 1 }])).mask;
+    let a = 0, o = 0; for (let i = 0; i < N; i++) if (m[i]) { a++; if (classMap[i] === CLASE.otro) o++; }
+    const ok = a > 0 && a <= maxFrac * N && o / a >= minOtro;
+    if (debug) console.log(`  [objetos] núcleo ${(100 * c.area / N).toFixed(1)} % en (${bx},${by}) · SAM ${(100 * a / N).toFixed(1)} % · otro ${a ? (100 * o / a).toFixed(0) : 0} % → ${ok ? 'SE SACA' : 'se deja'}`);
+    if (ok) for (let i = 0; i < N; i++) if (m[i]) sacar[i] = 1;
+  }
+  const out = [];
+  for (const f of found) {
+    let m = new Uint8Array(N), cambio = false;
+    for (let i = 0; i < N; i++) { if (f.mask[i] && !sacar[i]) m[i] = 1; else if (f.mask[i]) cambio = true; }
+    if (!cambio) { out.push(f); continue; }
+    m = removeSmallIslands(m, w, h, Math.round(islaMin * N));
+    const a = count(m) / N;
+    if (a > 0.01) out.push({ ...f, mask: m, area: a });
+  }
+  return out;
+}
+
 export function hibridar(found, clasico, classMap, w, h, { minTechoModelo = 0.4, islaMin = 0.004, union = false, unionMinArea = 0.02, partir = false, partirMinSolape = 0.15 } = {}) {
   const N = w * h, techo = new Uint8Array(N);
   let hayTecho = false;

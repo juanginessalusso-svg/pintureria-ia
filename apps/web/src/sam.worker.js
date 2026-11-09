@@ -100,11 +100,25 @@ const handlers = {
    * Detección automática de paredes y techo, ACÁ en el Worker: antes corría en el hilo principal y congelaba la pantalla
    * (35-50 % del tiempo era JS puro). Avisa el progreso con 'detect-progress' y devuelve las máscaras transferidas (sin copiar).
    */
-  async detect({ mode = 'auto', useModel = false } = {}) {
+  async detect({ mode = 'auto', useModel = false, servidor = null } = {}) {
     if (!lastImg || !sam) throw new Error('falta analizar la foto antes de detectar');
     cancelDetect = false;
     let classMap = null;
-    if (useModel && seg) { // mapa de clases del modelo (a 1/8 de resolución, agrandado): guía las semillas de SAM; si algo falla se detecta como siempre
+    if (servidor) { // mapa de clases del servidor (SAM 3 + r9): PNG del mismo tamaño, 0 otro / 1 pared / 2 techo
+      try {
+        const { width, height } = lastImg, c = new OffscreenCanvas(width, height);
+        c.getContext('2d').putImageData(new ImageData(lastImg.data, width, height), 0, 0);
+        const t0 = performance.now();
+        const r = await fetch(servidor, { method: 'POST', headers: { 'Content-Type': 'image/jpeg' }, body: await c.convertToBlob({ type: 'image/jpeg', quality: 0.9 }) });
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const bmp = await createImageBitmap(await r.blob()), d = new OffscreenCanvas(width, height), dctx = d.getContext('2d', { willReadFrequently: true });
+        dctx.imageSmoothingEnabled = false; dctx.drawImage(bmp, 0, 0, width, height);
+        const px = dctx.getImageData(0, 0, width, height).data; classMap = new Uint8Array(width * height);
+        for (let i = 0; i < classMap.length; i++) classMap[i] = px[i * 4];
+        console.info(`[servidor] mapa listo en ${Math.round(performance.now() - t0)} ms (GPU ${r.headers.get('X-Segundos') ?? '?'} s)`);
+      } catch (e) { console.warn('[servidor] falló, se sigue con el modelo local:', e?.message); classMap = null; }
+    }
+    if (!classMap && useModel && seg) { // mapa de clases del modelo (a 1/8 de resolución, agrandado): guía las semillas de SAM; si algo falla se detecta como siempre
       try {
         const { width, height } = lastImg, S = seg.S, src = new OffscreenCanvas(width, height);
         src.getContext('2d').putImageData(new ImageData(lastImg.data, width, height), 0, 0);

@@ -1,7 +1,7 @@
 // Corre la detección automática de superficies (JS pesado: ~35-50 % del análisis). Está pensado para ejecutarse DENTRO del
 // Worker de SAM: así la interfaz no se congela y cada decodificación es una llamada directa (sin mensajes de ida y vuelta).
 // Es puro (sin DOM ni Worker) para poder probarlo con `node --test`.
-import { cleanMask, detectSurfaces, detectFacade, detectSurfacesSemantico, hibridar, vetarConModelo, completarConModelo } from '@pintureria/core';
+import { cleanMask, detectSurfaces, detectFacade, detectSurfacesSemantico, hibridar, vetarConModelo, completarConModelo, recortarObjetos } from '@pintureria/core';
 
 export class DetectCancelled extends Error {
   constructor() {
@@ -58,6 +58,8 @@ export async function runDetect({ image, segment, onProgress = () => {}, isCance
     if (found.length && opts.semantico?.completar) found = await completarConModelo(found, classMap, width, height, seg, { image, ...(typeof opts.semantico.completar === 'object' ? opts.semantico.completar : {}) });
     // veto (opt-in, opts.semantico.veto): cada superficie se recorta a la zona que el modelo ve como su clase (+ margen); ver vetarConModelo() en semantico.js
     if (found.length && opts.semantico?.veto) found = vetarConModelo(found, classMap, width, height, typeof opts.semantico.veto === 'object' ? opts.semantico.veto : {});
+    // objetos (opt-in, opts.semantico.objetos): lo pintado que el modelo ve como 'otro' y tiene cuerpo se recorta con SAM; ver recortarObjetos() en semantico.js
+    if (found.length && opts.semantico?.objetos) found = await recortarObjetos(found, classMap, width, height, seg, typeof opts.semantico.objetos === 'object' ? opts.semantico.objetos : {});
   }
   if (mode !== 'fachada' && !found.length) found = await detectSurfaces(image, seg, opts);
   // mergeTecho (opt-in): si el interior halló techo pero ninguna pared, la caída a fachada no tira ese techo (el detector de fachadas no sabe de techo):

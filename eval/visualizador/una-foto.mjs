@@ -69,6 +69,14 @@ if (process.env.SEG_MODEL) {
   const sess = await ort2.InferenceSession.create(new Uint8Array(fs.readFileSync(process.env.SEG_MODEL)), { executionProviders: ['wasm'] }), S = Number(process.env.SEG_SIZE ?? 256);
   classMap = await runSegmenter(ort2, sess, resize(img.data, width, height, S, S), S, width, height);
 }
+// CLASSMAP_PNG=ruta.png: mapa de clases del servidor SAM 3 + r9 (PNG 0 otro / 1 pared / 2 techo), igual que ?servidor= en la app
+if (process.env.CLASSMAP_PNG) {
+  const p = PNG.sync.read(fs.readFileSync(process.env.CLASSMAP_PNG)); classMap = new Uint8Array(width * height);
+  for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+    const sx = Math.min(p.width - 1, Math.floor((x + 0.5) * p.width / width)), sy = Math.min(p.height - 1, Math.floor((y + 0.5) * p.height / height));
+    classMap[y * width + x] = p.data[(sy * p.width + sx) * 4];
+  }
+}
 const t0 = performance.now();
 const res = await runDetect({ image: img, segment, opts: OPTS, mode, mergeTecho: !!OPTS.mergeTecho, classMap });
 const { found } = res;
@@ -87,3 +95,19 @@ for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) for (let j = 0;
 const outFile = path.join(outDir, `una-${name}.png`);
 fs.writeFileSync(outFile, PNG.sync.write(out));
 console.log('→', outFile);
+// PINTAR="#pared,#techo[;#pared2,#techo2...]": además deja pintado-<foto>-<k>.png pintado como en la app (modo 'luz', balance de blancos al 50 %, borde suavizado)
+if (process.env.PINTAR) {
+  const { estimateWhiteBalance, featherMask, recolorWall, LUZ_WB_STRENGTH } = await import('@pintureria/core');
+  const gains = estimateWhiteBalance(img).map((g) => 1 + (g - 1) * LUZ_WB_STRENGTH);
+  process.env.PINTAR.split(';').forEach((par, k) => {
+    const [hp, ht] = par.split(',');
+    let image = img;
+    for (const f of found) {
+      const hex = f.kind === 'techo' ? ht : f.kind === 'pared' ? hp : null; if (!hex) continue;
+      const soft = featherMask(Float32Array.from(f.mask), width, height, Math.max(1, Math.round(width / 500)));
+      image = recolorWall(image, soft, hex, { mode: 'luz', gains }).image;
+    }
+    const o = new PNG({ width, height }); o.data.set(image.data); for (let i = 3; i < o.data.length; i += 4) o.data[i] = 255;
+    const f2 = path.join(outDir, `pintado-${name}-${k + 1}.png`); fs.writeFileSync(f2, PNG.sync.write(o)); console.log('→', f2);
+  });
+}

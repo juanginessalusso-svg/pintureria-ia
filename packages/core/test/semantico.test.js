@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { semillasDesdeMapa, detectSurfacesSemantico, componentes, CLASE, vetarConModelo, completarConModelo } from '../src/semantico.js';
+import { semillasDesdeMapa, detectSurfacesSemantico, componentes, CLASE, vetarConModelo, completarConModelo, recortarObjetos } from '../src/semantico.js';
 
 const W = 80, H = 60;
 function mapa() { // techo arriba (y<15), pared izquierda (x<40) y pared derecha (x>=45), con un hueco de "otro" entre ellas
@@ -124,4 +124,29 @@ test('completarConModelo: una pared que el modelo ve pero quedó sin cubrir se v
   const todo = new Uint8Array(N).fill(1); pedidos.length = 0;
   const r2 = await completarConModelo([{ kind: 'pared', name: 'Pared 1', area: 1, mask: todo }], cm, w, h, segment);
   assert.equal(r2.length, 1); assert.equal(pedidos.length, 0);
+});
+
+test('recortarObjetos: un cuadro pintado que el modelo ve como "otro" se saca con el borde de SAM; una franja fina de borde no', async () => {
+  const w = 100, h = 80, N = w * h, cm = new Uint8Array(N).fill(CLASE.pared);
+  const cuadro = (x, y) => x >= 30 && x < 60 && y >= 20 && y < 45;
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { if (cuadro(x, y)) cm[y * w + x] = CLASE.otro; if (x >= 97) cm[y * w + x] = CLASE.otro; } // franja de 3 px a la derecha
+  const pared = new Uint8Array(N).fill(1); // todo pintado (el veto dejó pasar el cuadro y la franja)
+  const pedidos = [];
+  const segment = async (pts) => { pedidos.push(pts[0]); const m = new Uint8Array(N); for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (cuadro(x, y)) m[y * w + x] = 1; return { mask: m }; };
+  const out = await recortarObjetos([{ kind: 'pared', name: 'Pared 1', area: 1, mask: pared }], cm, w, h, segment, { nucleo: 0.03 });
+  assert.equal(pedidos.length, 1, 'un solo objeto con cuerpo: la franja fina no cuenta');
+  assert.ok(cuadro(pedidos[0].x, pedidos[0].y), 'el punto cae dentro del cuadro');
+  const m = out[0].mask;
+  assert.equal(m[30 * w + 45], 0, 'el cuadro queda sin pintar');
+  assert.equal(m[10 * w + 10], 1, 'la pared sigue pintada');
+  assert.equal(m[40 * w + 98], 1, 'la franja de borde no se toca');
+});
+
+test('recortarObjetos: si SAM devuelve algo que el modelo ve como pared (no es un objeto), no se saca nada', async () => {
+  const w = 100, h = 80, N = w * h, cm = new Uint8Array(N).fill(CLASE.pared);
+  for (let y = 20; y < 45; y++) for (let x = 30; x < 60; x++) cm[y * w + x] = CLASE.otro;
+  const pared = new Uint8Array(N).fill(1);
+  const segment = async () => ({ mask: new Uint8Array(N).fill(1) }); // SAM agarra toda la pared
+  const out = await recortarObjetos([{ kind: 'pared', name: 'Pared 1', area: 1, mask: pared }], cm, w, h, segment, { nucleo: 0.03 });
+  assert.equal(out[0].mask[30 * w + 45], 1);
 });

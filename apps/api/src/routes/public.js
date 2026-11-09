@@ -1,9 +1,10 @@
-import { Router } from 'express';
+import express, { Router } from 'express';
 import { catalog } from '../catalog.js';
 import { branches } from '../branches.js';
+import { crearLimitador, segmentarEnRunpod } from '../segmentador.js';
 
-/** Datos que ve el cliente final. Siempre filtrados por req.tenant (lo resuelve tenantMiddleware). */
-export function publicRoutes(db) {
+/** Datos que ve el cliente final. Siempre filtrados por req.tenant (lo resuelve tenantMiddleware). `segmentarFn` es para tests. */
+export function publicRoutes(db, { segmentarFn } = {}) {
   const cat = catalog(db);
   const branchRepo = branches(db);
   const r = Router();
@@ -34,6 +35,24 @@ export function publicRoutes(db) {
         }),
       ),
     );
+  });
+
+  // Segmentador con GPU (SAM 3 + r9): la app manda la foto (jpeg/png crudo) y recibe el mapa de clases en PNG
+  // (0 otro / 1 pared / 2 techo). Si no está configurado o falla, 503: la app sigue con el modelo del celular.
+  const limitador = crearLimitador({ max: Number(process.env.SEGMENTADOR_MAX ?? 20) });
+  r.post('/segmentar', express.raw({ type: ['image/jpeg', 'image/png', 'image/webp'], limit: '4mb' }), async (req, res) => {
+    const apiKey = process.env.RUNPOD_API_KEY, endpointId = process.env.RUNPOD_ENDPOINT_ID;
+    if (!apiKey || !endpointId) return res.status(503).json({ error: 'segmentador_no_configurado' });
+    if (!Buffer.isBuffer(req.body) || req.body.length < 100) return res.status(400).json({ error: 'falta_la_foto' });
+    if (!limitador.permitir(req.ip)) return res.status(429).json({ error: 'demasiadas_fotos' });
+    try {
+      // 55 s: Nginx corta a los 60 s. Si el worker estaba apagado (arranque en frío) y no llega, la app usa el modelo del celular para esa foto.
+      const out = await (segmentarFn ?? segmentarEnRunpod)(req.body, { apiKey, endpointId, plazoMs: 55_000 });
+      res.set('Cache-Control', 'no-store').set('X-Segundos', String(out.segundos ?? '')).type('png').send(out.png);
+    } catch (e) {
+      console.warn('[segmentador]', e?.message);
+      res.status(503).json({ error: 'segmentador_no_disponible' });
+    }
   });
 
   return r;

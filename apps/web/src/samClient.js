@@ -44,8 +44,19 @@ export class SamClient {
   embed(rgba, width, height) { return this.call('embed', { rgba, width, height }, [rgba]); }
   segment(points, fresh) { return this.call('segment', { points, fresh }); }
   /** Detección automática de superficies: corre en el Worker (la interfaz no se congela). El progreso llega por `onDetectProgress(n)`. */
-  detect(mode = 'auto') { return this.call('detect', { mode, useModel: !!this.useSeg }); }
+  // ?servidor=1 (experimental): el mapa de clases lo calcula el servidor con GPU (SAM 3 + r9, ver servidor-sam3/) a través de
+  // nuestra API (/api/public/segmentar, que guarda la clave de RunPod). Si no responde, se usa el modelo del celular (?modelo=1)
+  // o el detector clásico, como siempre.
+  detect(mode = 'auto') { return this.call('detect', { mode, useModel: !!this.useSeg, servidor: urlServidor() }); }
   /** Corta la detección en curso (si la hay) antes de su próxima decodificación. */
   cancelDetect() { this.worker.postMessage({ type: 'cancel' }); }
   terminate() { this.worker.terminate(); }
+}
+
+/** URL absoluta del segmentador con GPU si la página pidió ?servidor=1 (el Worker no conoce el tenant ni el origen). */
+function urlServidor() {
+  const q = new URLSearchParams(location.search);
+  if (q.get('servidor') !== '1') return null;
+  const t = q.get('tenant');
+  return `${location.origin}/api/public/segmentar${t ? `?tenant=${encodeURIComponent(t)}` : ''}`;
 }
