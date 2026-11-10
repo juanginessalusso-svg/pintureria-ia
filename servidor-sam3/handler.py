@@ -25,8 +25,8 @@ def handler(job):
             img.thumbnail((1280, 1280))
         R = mapas_sam(img, textos)
         return {"mapas": {t: base64.b64encode(png((R[t][0] * 255).astype(np.uint8))).decode() for t in textos}, "ancho": img.size[0], "alto": img.size[1]}
-    p, seg = clases(img)
-    return {"png": base64.b64encode(png(p)).decode(), "ancho": int(p.shape[1]), "alto": int(p.shape[0]), "segundos": round(seg, 2)}
+    p, ids, seg = clases(img)
+    return {"png": base64.b64encode(png(p, ids)).decode(), "ancho": int(p.shape[1]), "alto": int(p.shape[0]), "segundos": round(seg, 2)}
 
 
 if __name__ == "__main__":

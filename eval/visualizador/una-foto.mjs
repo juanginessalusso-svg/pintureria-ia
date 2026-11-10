@@ -63,7 +63,7 @@ const segment = async (pts) => {
   return r;
 };
 // SEG_MODEL=ruta.onnx (SEG_SIZE=256): mapa de clases del segmentador propio como guía de SAM (igual que ?modelo=1 en la app)
-let classMap = null;
+let classMap = null, instancias = null;
 if (process.env.SEG_MODEL) {
   const ort2 = await import('onnxruntime-web/wasm'); ort2.env.wasm.numThreads = 1;
   const sess = await ort2.InferenceSession.create(new Uint8Array(fs.readFileSync(process.env.SEG_MODEL)), { executionProviders: ['wasm'] }), S = Number(process.env.SEG_SIZE ?? 256);
@@ -71,14 +71,15 @@ if (process.env.SEG_MODEL) {
 }
 // CLASSMAP_PNG=ruta.png: mapa de clases del servidor SAM 3 + r9 (PNG 0 otro / 1 pared / 2 techo), igual que ?servidor= en la app
 if (process.env.CLASSMAP_PNG) {
-  const p = PNG.sync.read(fs.readFileSync(process.env.CLASSMAP_PNG)); classMap = new Uint8Array(width * height);
+  const p = PNG.sync.read(fs.readFileSync(process.env.CLASSMAP_PNG)); classMap = new Uint8Array(width * height); instancias = new Uint8Array(width * height);
   for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
     const sx = Math.min(p.width - 1, Math.floor((x + 0.5) * p.width / width)), sy = Math.min(p.height - 1, Math.floor((y + 0.5) * p.height / height));
-    classMap[y * width + x] = p.data[(sy * p.width + sx) * 4];
+    classMap[y * width + x] = p.data[(sy * p.width + sx) * 4]; instancias[y * width + x] = p.data[(sy * p.width + sx) * 4 + 1]; // G = número de pared (PNG RGB del servidor)
   }
+  if (!instancias.some((v, i) => v !== classMap[i])) instancias = null; // PNG gris: no trae instancias
 }
 const t0 = performance.now();
-const res = await runDetect({ image: img, segment, opts: OPTS, mode, mergeTecho: !!OPTS.mergeTecho, classMap });
+const res = await runDetect({ image: img, segment, opts: OPTS, mode, mergeTecho: !!OPTS.mergeTecho, classMap, instancias });
 const { found } = res;
 console.log(`${name}: modo ${res.mode} · ${found.length} superficies · ${decodes} decodificaciones (${misses} sin caché) · ${Math.round(performance.now() - t0)} ms`);
 const COL = { pared: [230, 57, 70], techo: [60, 120, 255], ladrillo: [244, 162, 97], cielo: [69, 123, 157], piso: [42, 157, 143] };

@@ -45,6 +45,27 @@ async function loadModel(url, label, report) {
   return buf;
 }
 
+
+let pedidoServidor = null; // { img, promesa }: el mapa del servidor para la foto actual, pedido en paralelo con el análisis de MobileSAM
+
+/** Pide el mapa de clases al servidor con GPU (PNG 0 otro / 1 pared / 2 techo) y lo devuelve al tamaño de la foto; null si falla. */
+async function pedirMapa(url, img) {
+  try {
+    const { width, height } = img, c = new OffscreenCanvas(width, height);
+    c.getContext('2d').putImageData(new ImageData(img.data, width, height), 0, 0);
+    const t0 = performance.now();
+    const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'image/jpeg' }, body: await c.convertToBlob({ type: 'image/jpeg', quality: 0.9 }) });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const bmp = await createImageBitmap(await r.blob()), d = new OffscreenCanvas(width, height), dctx = d.getContext('2d', { willReadFrequently: true });
+    dctx.imageSmoothingEnabled = false; dctx.drawImage(bmp, 0, 0, width, height);
+    const px = dctx.getImageData(0, 0, width, height).data, map = new Uint8Array(width * height), inst = new Uint8Array(width * height);
+    for (let i = 0; i < map.length; i++) { map[i] = px[i * 4]; inst[i] = px[i * 4 + 1]; } // R = clase, G = número de pared (si el PNG es gris, G = R y se ignora abajo)
+    console.info(`[servidor] mapa listo en ${Math.round(performance.now() - t0)} ms (GPU ${r.headers.get('X-Segundos') ?? '?'} s)`);
+    const rgb = inst.some((v, i) => v !== map[i]); // PNG RGB del servidor nuevo; uno gris viejo trae G = R
+    return { map, inst: rgb ? inst : null };
+  } catch (e) { console.warn('[servidor] falló, se sigue con el modelo local:', e?.message); return null; }
+}
+
 const handlers = {
   async init({ encoderUrl, decoderUrl, threads }) {
     // Se fija acá (justo antes de crear la sesión) y no solo al cargar el módulo: así sí se respeta.
@@ -71,11 +92,12 @@ const handlers = {
     return {};
   },
 
-  async embed({ rgba, width, height }) {
+  async embed({ rgba, width, height, servidor = null }) {
     const t0 = performance.now();
     const { width: rw, height: rh } = encoderSize(width, height);
     const data = new Uint8ClampedArray(rgba);
     lastImg = { data, width, height };
+    pedidoServidor = servidor ? { img: lastImg, promesa: pedirMapa(servidor, lastImg) } : null; // en paralelo con MobileSAM
     const src = new OffscreenCanvas(width, height);
     src.getContext('2d').putImageData(new ImageData(data, width, height), 0, 0);
     const dst = new OffscreenCanvas(rw, rh);
@@ -103,20 +125,10 @@ const handlers = {
   async detect({ mode = 'auto', useModel = false, servidor = null } = {}) {
     if (!lastImg || !sam) throw new Error('falta analizar la foto antes de detectar');
     cancelDetect = false;
-    let classMap = null;
-    if (servidor) { // mapa de clases del servidor (SAM 3 + r9): PNG del mismo tamaño, 0 otro / 1 pared / 2 techo
-      try {
-        const { width, height } = lastImg, c = new OffscreenCanvas(width, height);
-        c.getContext('2d').putImageData(new ImageData(lastImg.data, width, height), 0, 0);
-        const t0 = performance.now();
-        const r = await fetch(servidor, { method: 'POST', headers: { 'Content-Type': 'image/jpeg' }, body: await c.convertToBlob({ type: 'image/jpeg', quality: 0.9 }) });
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        const bmp = await createImageBitmap(await r.blob()), d = new OffscreenCanvas(width, height), dctx = d.getContext('2d', { willReadFrequently: true });
-        dctx.imageSmoothingEnabled = false; dctx.drawImage(bmp, 0, 0, width, height);
-        const px = dctx.getImageData(0, 0, width, height).data; classMap = new Uint8Array(width * height);
-        for (let i = 0; i < classMap.length; i++) classMap[i] = px[i * 4];
-        console.info(`[servidor] mapa listo en ${Math.round(performance.now() - t0)} ms (GPU ${r.headers.get('X-Segundos') ?? '?'} s)`);
-      } catch (e) { console.warn('[servidor] falló, se sigue con el modelo local:', e?.message); classMap = null; }
+    let classMap = null, instancias = null, delServidor = false;
+    if (servidor) { // mapa del servidor (SAM 3 + r9): se pidió en paralelo apenas se cargó la foto (embed); si no, se pide ahora
+      const pedido = pedidoServidor?.img === lastImg ? pedidoServidor.promesa : pedirMapa(servidor, lastImg);
+      const r = await pedido; classMap = r?.map ?? null; instancias = r?.inst ?? null; delServidor = !!classMap;
     }
     if (!classMap && useModel && seg) { // mapa de clases del modelo (a 1/8 de resolución, agrandado): guía las semillas de SAM; si algo falla se detecta como siempre
       try {
@@ -134,7 +146,8 @@ const handlers = {
       isCancelled: () => cancelDetect,
       mode,
       classMap,
-      opts: classMap ? { semantico: { veto: true, completar: true } } : {}, // con el modelo: solo modelo + SAM (sin el detector clásico, que metía puertas); completar recupera paredes que SAM no tomó; veto: nada fuera de lo que el modelo ve como pared/techo. Medido 2026-11-07: COCO dev pared 0.600 (=), techo 0.689 (+0.016), mitad de tiempo
+      instancias,
+      opts: delServidor ? { semantico: { directo: true } } : classMap ? { semantico: { veto: true, completar: true } } : {}, // del servidor: superficies directo del mapa (sin SAM). // con el modelo: solo modelo + SAM (sin el detector clásico, que metía puertas); completar recupera paredes que SAM no tomó; veto: nada fuera de lo que el modelo ve como pared/techo. Medido 2026-11-07: COCO dev pared 0.600 (=), techo 0.689 (+0.016), mitad de tiempo
     });
     const safe = found.map((f) => ({ ...f, mask: f.mask.slice() })); // buffer propio de cada máscara: se pueden transferir sin choques
     return { result: { found: safe, decodes, mode: used }, transfer: safe.map((f) => f.mask.buffer) };

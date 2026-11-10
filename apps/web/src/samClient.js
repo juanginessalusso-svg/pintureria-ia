@@ -41,7 +41,7 @@ export class SamClient {
       return r;
     });
   }
-  embed(rgba, width, height) { return this.call('embed', { rgba, width, height }, [rgba]); }
+  embed(rgba, width, height) { return this.call('embed', { rgba, width, height, servidor: urlServidor() }, [rgba]); } // con ?servidor=1 el Worker pide el mapa en paralelo
   segment(points, fresh) { return this.call('segment', { points, fresh }); }
   /** Detección automática de superficies: corre en el Worker (la interfaz no se congela). El progreso llega por `onDetectProgress(n)`. */
   // ?servidor=1 (experimental): el mapa de clases lo calcula el servidor con GPU (SAM 3 + r9, ver servidor-sam3/) a través de

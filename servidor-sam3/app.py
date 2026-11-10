@@ -101,15 +101,34 @@ def clases(img: Image.Image):
     p[(p == 0) & (R["stucco wall"][0] >= 0.5)] = 1  # regla 5: revoque exterior que "painted wall" no toma
     for texto in ("sky", "garage door", "pergola", "brick wall"):  # regla 6: cielo, portón, pérgola y ladrillo visto nunca se pintan
         p[R[texto][0] >= 0.5] = 0
-    return p, time.perf_counter() - t0
+    return p, ids_pared(ipw + iww + R["stucco wall"][1], p == 1), time.perf_counter() - t0
 
 
-def png(p: np.ndarray) -> bytes:
-    buf = io.BytesIO(); Image.fromarray(p).save(buf, "PNG", optimize=True); return buf.getvalue()
+def ids_pared(insts, pared, umbral=0.35, dup=0.5):
+    """Número de pared por píxel (0 = sin instancia) desde las instancias de SAM 3: de mayor a menor score; una instancia que cae
+    >= `dup` de su área dentro de un grupo ya hecho (el mismo muro visto por "painted wall" y "wall") se suma a ese grupo.
+    Así la app separa dos paredes que se tocan en una esquina, o la franja de una fachada de la pared de abajo."""
+    grupos = []
+    for mk, s in sorted(insts, key=lambda x: -x[1]):
+        if s < umbral: continue
+        m = mk & pared; a = m.sum()
+        if not a: continue
+        j = next((j for j, g in enumerate(grupos) if (g & m).sum() >= dup * a), None)
+        if j is None: grupos.append(m)
+        else: grupos[j] |= m
+    ids = np.zeros(pared.shape, np.uint8)
+    for k in range(min(len(grupos), 255) - 1, -1, -1): ids[grupos[k]] = k + 1  # el de mayor score gana en los solapes
+    return ids
+
+
+def png(p: np.ndarray, ids: np.ndarray = None) -> bytes:
+    """PNG: gris (solo clases) o RGB con R = clase (0 otro / 1 pared / 2 techo) y G = número de pared."""
+    a = p if ids is None else np.stack([p, ids, np.zeros_like(p)], axis=-1)
+    buf = io.BytesIO(); Image.fromarray(a).save(buf, "PNG", optimize=True); return buf.getvalue()
 
 
 @app.post("/segmentar")
 async def segmentar(foto: UploadFile = File(...)):
     img = Image.open(io.BytesIO(await foto.read())).convert("RGB")
-    p, seg = clases(img)
-    return Response(png(p), media_type="image/png", headers={"X-Tamano": f"{p.shape[1]}x{p.shape[0]}", "X-Segundos": f"{seg:.2f}"})
+    p, ids, seg = clases(img)
+    return Response(png(p, ids), media_type="image/png", headers={"X-Tamano": f"{p.shape[1]}x{p.shape[0]}", "X-Segundos": f"{seg:.2f}"})

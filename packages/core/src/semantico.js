@@ -307,3 +307,63 @@ export function hibridar(found, clasico, classMap, w, h, { minTechoModelo = 0.4,
   }
   return out;
 }
+
+/**
+ * Superficies DIRECTO del mapa de clases (sin SAM): para el mapa del servidor con GPU (SAM 3 + r9), que ya trae los bordes exactos.
+ * Cada zona conectada de pared o techo de al menos `minFrac` de la foto es una superficie (así una cornisa y la pared de abajo,
+ * separadas por una columna de ladrillo, se pueden pintar de colores distintos). Antes se sacan las manchas sueltas < `islaMin`.
+ * Medido 2026-11-10: el paso con MobileSAM (semillas + completar + veto) perdía paños que el mapa sí tenía (pared beige de fachada-05/06)
+ * y tardaba 10-40 s en el celular; esto es instantáneo.
+ * Devuelve [{ name, kind, area, mask }] (paredes de mayor a menor, después el techo).
+ */
+export function superficiesDesdeMapa(classMap, w, h, { minFrac = 0.01, islaMin = 0.002, instancias = null } = {}) {
+  const N = w * h, out = [];
+  for (const [kind, cls] of [['pared', CLASE.pared], ['techo', CLASE.techo]]) {
+    let m = new Uint8Array(N);
+    for (let i = 0; i < N; i++) if (classMap[i] === cls) m[i] = 1;
+    m = removeSmallIslands(m, w, h, Math.round(islaMin * N));
+    let zonas;
+    if (kind === 'pared' && instancias) zonas = zonasPorInstancia(m, instancias, w, h, minFrac);
+    else zonas = componentes(m, w, h).comps.filter((c) => c.area >= minFrac * N).map((c) => { const z = new Uint8Array(N); for (const i of c.pixels) z[i] = 1; return { mask: z, area: c.area }; });
+    zonas.sort((a, b) => b.area - a.area).forEach((z, k) => {
+      const name = kind === 'techo' ? (zonas.length > 1 ? `Techo ${k + 1}` : 'Techo') : `Pared ${k + 1}`;
+      out.push({ name, kind, area: z.area / N, mask: z.mask });
+    });
+  }
+  return out;
+}
+
+/**
+ * Separa la pared en muros usando el número de pared por píxel que manda el servidor (instancias de SAM 3): cada zona conectada de un
+ * mismo número >= minFrac es un muro; lo que queda sin número o en pedacitos (el relleno de r9) se suma al muro vecino (BFS por la pared).
+ * Lo que no toca ningún muro y es grande queda como muro propio.
+ */
+function zonasPorInstancia(pared, ids, w, h, minFrac) {
+  const N = w * h, lab = new Int32Array(N), zonas = [];
+  let maxId = 0; for (let i = 0; i < N; i++) if (pared[i] && ids[i] > maxId) maxId = ids[i];
+  for (let g = 1; g <= maxId; g++) {
+    const m = new Uint8Array(N); let hay = false;
+    for (let i = 0; i < N; i++) if (pared[i] && ids[i] === g && !lab[i]) { m[i] = 1; hay = true; }
+    if (!hay) continue;
+    for (const c of componentes(m, w, h).comps) {
+      if (c.area < minFrac * N) continue;
+      zonas.push(null); const k = zonas.length; for (const i of c.pixels) lab[i] = k;
+    }
+  }
+  // BFS: la pared sin muro se reparte entre los muros vecinos
+  const cola = new Int32Array(N); let a = 0, b = 0;
+  for (let i = 0; i < N; i++) if (lab[i]) cola[b++] = i;
+  while (a < b) {
+    const i = cola[a++], x = i % w, k = lab[i];
+    for (const j of [x > 0 ? i - 1 : -1, x < w - 1 ? i + 1 : -1, i - w, i + w]) if (j >= 0 && j < N && pared[j] && !lab[j]) { lab[j] = k; cola[b++] = j; }
+  }
+  // lo que no tocó ningún muro: zonas propias si son grandes
+  const resto = new Uint8Array(N); for (let i = 0; i < N; i++) if (pared[i] && !lab[i]) resto[i] = 1;
+  for (const c of componentes(resto, w, h).comps) {
+    if (c.area < minFrac * N) continue;
+    zonas.push(null); const k = zonas.length; for (const i of c.pixels) lab[i] = k;
+  }
+  const res = zonas.map(() => ({ mask: new Uint8Array(N), area: 0 }));
+  for (let i = 0; i < N; i++) if (lab[i]) { const z = res[lab[i] - 1]; z.mask[i] = 1; z.area++; }
+  return res.filter((z) => z.area > 0);
+}

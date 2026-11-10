@@ -150,3 +150,38 @@ test('recortarObjetos: si SAM devuelve algo que el modelo ve como pared (no es u
   const out = await recortarObjetos([{ kind: 'pared', name: 'Pared 1', area: 1, mask: pared }], cm, w, h, segment, { nucleo: 0.03 });
   assert.equal(out[0].mask[30 * w + 45], 1);
 });
+
+test('superficiesDesdeMapa: cada zona de pared es una superficie, el techo aparte, sin SAM y sin manchas chicas', async () => {
+  const { superficiesDesdeMapa } = await import('../src/semantico.js');
+  const w = 100, h = 80, N = w * h, cm = new Uint8Array(N);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    if (y < 15) cm[y * w + x] = CLASE.techo;
+    else if (x < 40) cm[y * w + x] = CLASE.pared;          // pared grande a la izquierda
+    else if (x >= 45 && x < 70) cm[y * w + x] = CLASE.pared; // otra pared, separada por una columna de "otro"
+  }
+  cm[79 * w + 99] = CLASE.pared; // mancha suelta de 1 px: no es superficie
+  const s = superficiesDesdeMapa(cm, w, h);
+  assert.deepEqual(s.map((x) => [x.kind, x.name]), [['pared', 'Pared 1'], ['pared', 'Pared 2'], ['techo', 'Techo']]);
+  assert.equal(s[0].mask[50 * w + 10], 1); assert.equal(s[0].mask[50 * w + 50], 0);
+  assert.equal(s[1].mask[50 * w + 50], 1);
+  assert.ok(Math.abs(s[0].area - (65 * 40) / N) < 1e-9);
+  assert.equal(s.every((x) => x.mask[79 * w + 99] === 0), true);
+});
+
+test('superficiesDesdeMapa con instancias: dos paredes que se tocan salen separadas y el relleno sin número va a la vecina', async () => {
+  const { superficiesDesdeMapa } = await import('../src/semantico.js');
+  const w = 100, h = 80, N = w * h, cm = new Uint8Array(N), ids = new Uint8Array(N);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const i = y * w + x;
+    if (y < 15) { cm[i] = CLASE.techo; continue; }
+    cm[i] = CLASE.pared;                                  // una sola zona de pared (las dos paredes se tocan en x = 50)
+    ids[i] = x < 50 ? 1 : 2;
+    if (y > 70 && x > 40 && x < 45) ids[i] = 0;           // relleno sin número (de r9), del lado de la pared 1
+  }
+  const s = superficiesDesdeMapa(cm, w, h, { instancias: ids });
+  assert.deepEqual(s.map((x) => x.name), ['Pared 1', 'Pared 2', 'Techo']);
+  const izq = s.find((x) => x.mask[40 * w + 10]), der = s.find((x) => x.mask[40 * w + 90]);
+  assert.notEqual(izq, der);
+  assert.equal(izq.mask[75 * w + 42], 1, 'el relleno sin número quedó con la pared vecina');
+  assert.equal(s.slice(0, 2).reduce((a, x) => a + x.area, 0).toFixed(4), ((65 * 100) / N).toFixed(4), 'no se pierde pared');
+});

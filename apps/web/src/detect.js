@@ -1,7 +1,7 @@
 // Corre la detección automática de superficies (JS pesado: ~35-50 % del análisis). Está pensado para ejecutarse DENTRO del
 // Worker de SAM: así la interfaz no se congela y cada decodificación es una llamada directa (sin mensajes de ida y vuelta).
 // Es puro (sin DOM ni Worker) para poder probarlo con `node --test`.
-import { cleanMask, detectSurfaces, detectFacade, detectSurfacesSemantico, hibridar, vetarConModelo, completarConModelo, recortarObjetos } from '@pintureria/core';
+import { cleanMask, detectSurfaces, detectFacade, detectSurfacesSemantico, hibridar, vetarConModelo, completarConModelo, recortarObjetos, superficiesDesdeMapa } from '@pintureria/core';
 
 export class DetectCancelled extends Error {
   constructor() {
@@ -22,7 +22,7 @@ export class DetectCancelled extends Error {
  * Devuelve { found: [{ name, kind, area, mask }], decodes, mode: 'interior'|'fachada' }
  *   kind 'ladrillo' = superficie rugosa: la app NO le pone color por defecto.
  */
-export async function runDetect({ image, segment, onProgress = () => {}, isCancelled = () => false, opts = {}, mode = 'auto', mergeTecho = false, classMap = null }) {
+export async function runDetect({ image, segment, onProgress = () => {}, isCancelled = () => false, opts = {}, mode = 'auto', mergeTecho = false, classMap = null, instancias = null }) {
   const { width, height } = image;
   let n = 0;
   const seg = async (pts) => {
@@ -33,6 +33,12 @@ export async function runDetect({ image, segment, onProgress = () => {}, isCance
     return cleanMask(r.mask, width, height);
   };
   let found = [], used = mode === 'fachada' ? 'fachada' : 'interior';
+  // directo (opts.semantico.directo): el mapa viene del servidor con GPU (SAM 3 + r9) con los bordes ya exactos; las superficies salen
+  // de él sin pedirle nada a SAM (más fiel y sin los 10-40 s de decodificaciones en el celular). Interior y fachada por igual.
+  if (classMap && opts.semantico?.directo) {
+    found = superficiesDesdeMapa(classMap, width, height, { ...opts.semantico, instancias });
+    if (found.length) return { found, decodes: 0, mode: 'servidor' };
+  }
   if (mode !== 'fachada' && classMap) {
     found = await detectSurfacesSemantico(classMap, width, height, seg, opts.semantico ?? {});
     // si el modelo (entrenado con interiores) casi no ve pared/techo, la foto probablemente no es un interior (fachada): se deja que decida el detector clásico
