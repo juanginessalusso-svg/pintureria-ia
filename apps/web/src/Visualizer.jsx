@@ -779,7 +779,6 @@ export function Visualizer() {
           {tenant?.logo_url && <img class="logo" src={tenant.logo_url} alt={`Logo de ${tenant.name}`} width="48" height="48" />}
           <h1>{tenant ? tenant.name : 'Visualizador de color'}</h1>
         </div>
-        <a class="muted" href="/admin">Admin</a>
       </header>
 
       {model.state === 'loading' && (

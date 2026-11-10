@@ -2,6 +2,7 @@ export * from './color.js';
 export * from './recolor.js';
 export * from './paint.js';
 export * from './whatsapp.js';
+export * from './cart.js';
 export * from './csv.js';
 export * from './brush.js';
 export * from './surfaces.js';

@@ -44,9 +44,14 @@ function Login({ onLogin }) {
   const enviar = async (e) => {
     e.preventDefault();
     setErr('');
+    const cleanTenant = f.tenant.trim().toLowerCase();
+    const cleanUsername = f.username.trim();
     try {
-      const m = await api('/admin/login', { method: 'POST', body: f });
-      localStorage.setItem('tenant', f.tenant);
+      const m = await api('/admin/login', {
+        method: 'POST',
+        body: { tenant: cleanTenant, username: cleanUsername, password: f.password },
+      });
+      localStorage.setItem('tenant', cleanTenant);
       onLogin(m);
     } catch (x) { setErr(mensaje(x)); }
   };
