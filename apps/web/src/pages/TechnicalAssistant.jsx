@@ -150,6 +150,17 @@ export function TechnicalAssistant() {
                 <h2 className="assistant-detail-title">/ {selectedItem.title}</h2>
               </div>
 
+              {selectedItem.image && (
+                <div className="assistant-detail-img-wrap">
+                  <img
+                    src={selectedItem.image}
+                    alt={`Fotografía real de ${selectedItem.title}`}
+                    className="assistant-detail-img"
+                    loading="lazy"
+                  />
+                </div>
+              )}
+
               {/* SECCIÓN DESCRIPCIÓN */}
               <div className="assistant-section-box">
                 <h3 className="assistant-section-heading">
