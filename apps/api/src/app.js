@@ -12,7 +12,8 @@ const CSP = [
   "worker-src 'self' blob:",
   "connect-src 'self'",
   "img-src 'self' data: blob: https:",
-  "style-src 'self' 'unsafe-inline'",
+  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com", // tipografías de la tienda (Montserrat, Nunito Sans)
+  "font-src 'self' https://fonts.gstatic.com",
   "frame-ancestors 'none'",
 ].join('; ');
 

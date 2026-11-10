@@ -16,7 +16,7 @@ const mb = (n) => (n / 1048576).toFixed(0);
 
 const ANOTAR = new URLSearchParams(location.search).get('anotar') === '1'; // modo de anotación (herramienta interna): ver eval/visualizador/medir.mjs
 const MAX_ZOOM = 16;
-const CON_SERVIDOR = typeof location !== 'undefined' && urlServidor() !== null; // ?servidor=1: detecta el servidor con GPU; MobileSAM solo si hace falta
+const CON_SERVIDOR = typeof location !== 'undefined' && urlServidor() !== null; // por defecto detecta el servidor con GPU (?servidor=0 lo apaga); MobileSAM solo si hace falta
 // Herramientas manuales (ajustar a mano, sacar un objeto): el cliente no tiene que hacer nada más que la foto y los colores.
 // Quedan solo para el equipo con ?ajustes=1 (o ?dataset=1, que las necesita para corregir etiquetas).
 const AJUSTES = typeof location !== 'undefined' && ['ajustes', 'dataset'].some((k) => new URLSearchParams(location.search).get(k) === '1');
