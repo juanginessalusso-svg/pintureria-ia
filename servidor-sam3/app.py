@@ -81,7 +81,7 @@ def clases(img: Image.Image):
     if max(img.size) > 1280:  # mismo tamaño de trabajo que la app
         img.thumbnail((1280, 1280))
     t0 = time.perf_counter()
-    R = mapas_sam(img, ["painted wall", "wall", "ceiling", "tile", "mirror", "wallpaper", "stucco wall", "brick wall", "sky", "garage door", "pergola"])
+    R = mapas_sam(img, ["painted wall", "wall", "ceiling", "tile", "tiled wall", "mirror", "wallpaper", "stucco wall", "brick wall", "sky", "garage door", "pergola"])
     (pw, ipw), (ww, iww), (pc, ipc) = R["painted wall"], R["wall"], R["ceiling"]
     m9 = clases_r9(img)
     p = np.zeros(pw.shape, np.uint8)
@@ -99,6 +99,10 @@ def clases(img: Image.Image):
             # lisa salía "tile" con 0,45). Examen interior: 0,967 -> 0,968 y pinta mal 0,3 % -> 0,2 %.
             if s >= RESTA and (mk.mean() <= 0.05 or s >= 0.6):
                 p[mk] = 0
+    # regla 4b: pared de azulejo entera (baños/cocinas) que "tile" no toma: "tiled wall" >= 0,6 y más alto que "painted wall".
+    # Arregla el azulejo blanco de w27 y el papel tapiz con dibujos de w29; el examen interior no cambia.
+    tw = R["tiled wall"][0]
+    p[(tw >= 0.6) & (tw > pw)] = 0
     # Fachadas (2026-11-10; en el examen interior no cambian nada: 0,967 / 0,3 %):
     p[(p == 0) & (R["stucco wall"][0] >= 0.5)] = 1  # regla 5: revoque exterior que "painted wall" no toma
     for texto in ("sky", "garage door", "pergola", "brick wall"):  # regla 6: cielo, portón, pérgola y ladrillo visto nunca se pintan
