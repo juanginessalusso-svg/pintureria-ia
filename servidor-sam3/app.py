@@ -10,6 +10,7 @@ Regla (medida en el examen sellado de 9 casas: pared 0,967 / pinta mal 0,3 %; r9
      ("wall" o "painted wall") a ese píxel: el modelo propio rellena, SAM 3 veta.
   3. Instancias dudosas (puntaje entre DUDA y ALTO, >= 1 % de la foto): se aceptan ENTERAS si r9 ve al menos la mitad
      como su clase. Arregla paredes que SAM 3 ve con 0,5-0,6 (ex01 0,69 -> 0,76; promedio 0,934 -> 0,946, mismo "pinta mal").
+  5-6. Fachadas: revoque ("stucco wall" >= 0,5) suma pared; cielo, portón, pérgola y ladrillo visto (>= 0,5) nunca se pintan.
   4. Resta: instancias de "tile" y "mirror" con score >= RESTA y <= 5 % de la foto se sacan (azulejo blanco que SAM 3 llamaba pared).
      0,949 -> 0,967 y 1,0 % -> 0,3 %; estable con RESTA 0,3-0,5. Ojo: la mejora viene casi toda de ex01 (cocina).
 Variables de entorno: HF_TOKEN (acceso a facebook/sam3, NUNCA en el código), MODELO_R9 (ruta al .onnx),
@@ -80,7 +81,7 @@ def clases(img: Image.Image):
     if max(img.size) > 1280:  # mismo tamaño de trabajo que la app
         img.thumbnail((1280, 1280))
     t0 = time.perf_counter()
-    R = mapas_sam(img, ["painted wall", "wall", "ceiling", "tile", "mirror"])
+    R = mapas_sam(img, ["painted wall", "wall", "ceiling", "tile", "mirror", "stucco wall", "brick wall", "sky", "garage door", "pergola"])
     (pw, ipw), (ww, iww), (pc, ipc) = R["painted wall"], R["wall"], R["ceiling"]
     m9 = clases_r9(img)
     p = np.zeros(pw.shape, np.uint8)
@@ -96,6 +97,10 @@ def clases(img: Image.Image):
         for mk, s in R[texto][1]:
             if s >= RESTA and mk.mean() <= 0.05:
                 p[mk] = 0
+    # Fachadas (2026-11-10; en el examen interior no cambian nada: 0,967 / 0,3 %):
+    p[(p == 0) & (R["stucco wall"][0] >= 0.5)] = 1  # regla 5: revoque exterior que "painted wall" no toma
+    for texto in ("sky", "garage door", "pergola", "brick wall"):  # regla 6: cielo, portón, pérgola y ladrillo visto nunca se pintan
+        p[R[texto][0] >= 0.5] = 0
     return p, time.perf_counter() - t0
 
 
