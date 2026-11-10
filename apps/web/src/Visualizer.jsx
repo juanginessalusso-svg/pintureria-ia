@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { varita, LUZ_WB_STRENGTH, estimateWhiteBalance, whiteBalanceFor, featherMask, recolorWall, cleanMask, pxPerMeter, wallPixels, paintStroke, maskCount, encodeMask, cutObjectFromSurface } from '@pintureria/core';
-import { SamClient } from './samClient.js';
+import { SamClient, urlServidor } from './samClient.js';
+import { superficiesDelServidor } from './servidor.js';
 import { workingSize } from './sam.js';
 import { Calculator } from './Calculator.jsx';
 import { ColorPicker } from './ColorPicker.jsx';
@@ -15,6 +16,7 @@ const mb = (n) => (n / 1048576).toFixed(0);
 
 const ANOTAR = new URLSearchParams(location.search).get('anotar') === '1'; // modo de anotación (herramienta interna): ver eval/visualizador/medir.mjs
 const MAX_ZOOM = 16;
+const CON_SERVIDOR = typeof location !== 'undefined' && urlServidor() !== null; // ?servidor=1: detecta el servidor con GPU; MobileSAM solo si hace falta
 const DATASET = typeof location !== 'undefined' && new URLSearchParams(location.search).get('dataset') === '1'; // modo recolección: tipo de cada superficie editable y botón de compartir
 const MAX_SURF_UNDO = 8;
 const DRAG_PX = 4; // cuánto hay que mover el dedo para que un toque pase a ser arrastre
@@ -29,6 +31,16 @@ function AnalysisProgress({ prog, now, model }) {
   const frac = totalFraction({ stage: prog.stage, embedElapsed: stageElapsed, embedEstimate: initMs * EMBED_PER_INIT, n: prog.n });
   const pctModel = model.total ? Math.round((model.loaded / model.total) * 100) : 0;
   const hint = prog.stage === 'wait' ? '' : timeHint({ stage: prog.stage, initMs, embedElapsed: stageElapsed, detectElapsed: stageElapsed, n: prog.n });
+  if (prog.stage === 'servidor') {
+    const s = (t - prog.tAll) / 1000;
+    return (
+      <div class="analysis" role="status" aria-live="polite" data-stage="servidor">
+        <strong>{s < 12 ? 'Buscando paredes y techo…' : 'Despertando el servidor (la primera vez puede tardar hasta un minuto)…'}</strong>
+        <progress max="100" value={Math.round(100 * Math.min(0.95, s / (s < 12 ? 5 : 60)))} aria-label="Avance del análisis" />
+        <span class="muted small">Van {fmtElapsed(t - prog.tAll)}.</span>
+      </div>
+    );
+  }
   const label = prog.stage === 'wait'
     ? (model.total ? `Cargando el modelo (solo la primera vez): ${mb(model.loaded)} de ${mb(model.total)} MB` : 'Cargando el modelo (solo la primera vez)…')
     : prog.stage === 'embed' ? 'Analizando la foto…' : `Buscando paredes y techo (paso ${prog.n + 1})…`;
@@ -49,7 +61,7 @@ const fmtElapsed = (ms) => { const s = Math.round(ms / 1000); return s < 60 ? `$
 export function Visualizer() {
   const [tenant, setTenant] = useState(null);
   const [colors, setColors] = useState([]);
-  const [model, setModel] = useState({ state: 'loading', loaded: 0, total: 0, info: '' });
+  const [model, setModel] = useState({ state: CON_SERVIDOR ? 'idle' : 'loading', loaded: 0, total: 0, info: '' }); // 'idle': MobileSAM sin cargar (se carga solo si hace falta)
   const [status, setStatus] = useState('');
   const [hasPhoto, setHasPhoto] = useState(false);
   const [aspect, setAspect] = useState(1); // ancho/alto de la foto: la foto fija en pantallas chicas se limita en alto sin deformarse
@@ -111,16 +123,37 @@ export function Visualizer() {
   const gesture = useRef(null);
   const suppressClick = useRef(false); // ignora el click que el navegador manda después de un arrastre/trazo/pellizco
 
+  // MobileSAM (en el celular): herramientas manuales y plan B. Se crea una sola vez, cuando hace falta.
+  const ensureSam = () => {
+    if (!ready.current) {
+      setModel((m) => (m.state === 'idle' ? { ...m, state: 'loading' } : m));
+      sam.current = new SamClient(({ loaded, total }) => setModel((m) => ({ ...m, loaded, total })));
+      ready.current = sam.current.init().then((r) => {
+        setModel((m) => ({ ...m, state: 'ready', initMs: r.initMs, info: `${r.threads} hilo(s), init ${r.initMs} ms` }));
+      }).catch((e) => { setModel({ state: 'error', loaded: 0, total: 0, info: e.message }); throw e; });
+    }
+    return ready.current;
+  };
+  const embedded = useRef(0); // photoSeq de la foto que MobileSAM ya analizó
+  // Deja a MobileSAM listo para la foto actual (tocar, recortar, varita…). Con el servidor, recién acá se baja el modelo.
+  const ensureEmbed = async () => {
+    await ensureSam();
+    const p = photo.current, seq = photoSeq.current;
+    if (p && embedded.current !== seq) {
+      setStatus('Preparando el ajuste a mano (la primera vez baja el modelo)…');
+      await sam.current.embed(p.data.slice().buffer, p.width, p.height, false);
+      embedded.current = seq;
+      setStatus('Listo para ajustar a mano.');
+    }
+  };
+
   // ---- carga inicial: datos de la pinturería y modelo ----
   useEffect(() => {
     getJson('tenant').then(setTenant).catch(() => {});
     getJson('colors').then(setColors).catch(() => {});
     getJson('products').then(setProducts).catch(() => {});
     getJson('branches').then(setBranches).catch(() => {});
-    sam.current = new SamClient(({ loaded, total }) => setModel((m) => ({ ...m, loaded, total })));
-    ready.current = sam.current.init().then((r) => {
-      setModel((m) => ({ ...m, state: 'ready', initMs: r.initMs, info: `${r.threads} hilo(s), init ${r.initMs} ms` }));
-    }).catch((e) => setModel({ state: 'error', loaded: 0, total: 0, info: e.message }));
+    if (!CON_SERVIDOR) ensureSam(); // con el servidor, MobileSAM se carga recién si el cliente ajusta a mano o el servidor falla
     return () => sam.current?.terminate();
   }, []);
 
@@ -254,15 +287,31 @@ export function Visualizer() {
       colorRef.current = null; setColor(null); setPhotoId(mySeq); // el color de la foto anterior no se arrastra (habilitaba Descargar sin nada pintado)
       setPoints([]); setSurfList([]); setActiveId(null); setHasPhoto(true); render();
 
-      setStatus(model.state === 'ready' ? 'Analizando la foto…' : 'Esperando que cargue el modelo…');
       const tAll = Date.now();
+      if (CON_SERVIDOR) { // la foto va directo al servidor: nada pesado en el teléfono
+        setStatus('Buscando paredes y techo…');
+        setProg({ stage: 'servidor', n: 0, t0: tAll, tAll });
+        const srv = await superficiesDelServidor(photo.current, urlServidor());
+        if (mySeq !== photoSeq.current) return;
+        if (srv) {
+          setProg(null); setDetMode('servidor');
+          setTiming((t) => ({ ...t, embedMs: 0, detectMs: srv.ms }));
+          autoCache.current = srv.found.map((f) => ({ name: f.name, kind: f.kind, area: f.area, mask: f.mask }));
+          applyAuto(null, '', 'servidor');
+          return;
+        }
+        setStatus('El servidor no respondió: analizo la foto en el teléfono…'); // plan B
+      }
+      ensureSam();
+      setStatus(model.state === 'ready' ? 'Analizando la foto…' : 'Esperando que cargue el modelo…');
       setProg({ stage: model.state === 'ready' ? 'embed' : 'wait', n: 0, t0: tAll, tAll });
-      await ready.current;
+      await ensureSam();
       if (mySeq !== photoSeq.current) return;
       setStatus('Analizando la foto…');
       setProg({ stage: 'embed', n: 0, t0: Date.now(), tAll });
       await yieldToUi(); // que se pinte la etapa antes de empezar el cálculo pesado
-      const r = await sam.current.embed(img.data.slice().buffer, width, height);
+      const r = await sam.current.embed(img.data.slice().buffer, width, height, false);
+      embedded.current = mySeq;
       setTiming((t) => ({ ...t, embedMs: r.embedMs }));
       if (mySeq !== photoSeq.current) return;
       setStatus('Buscando paredes y techo…');
@@ -270,7 +319,7 @@ export function Visualizer() {
       setProg({ stage: 'detect', n: 0, t0: Date.now(), tAll });
       // La detección corre en el Worker de SAM: la pantalla sigue respondiendo (antes se congelaba ~1 min). Solo llega el progreso y el resultado.
       sam.current.onDetectProgress = (n) => { if (mySeq === photoSeq.current) setProg((q) => (q && q.stage === 'detect' ? { ...q, n } : q)); };
-      const { found, mode: usedMode } = await sam.current.detect(); // 'auto': interior y, si no encuentra nada, fachada
+      const { found, mode: usedMode } = await sam.current.detect('auto', false); // 'auto': interior y, si no encuentra nada, fachada
       if (mySeq !== photoSeq.current) return; // mientras tanto eligió otra foto
       setProg(null); setDetMode(usedMode ?? 'interior');
       setTiming((t) => ({ ...t, detectMs: Math.round(performance.now() - t1) }));
@@ -334,7 +383,8 @@ export function Visualizer() {
     setStatus('Guardé ' + base + '.jpg y ' + base + '.labels.png en la carpeta de descargas.');
   };
   const redetect = async (m) => {
-    if (!sam.current || !photo.current || prog) return;
+    if (!photo.current || prog) return;
+    if (!CON_SERVIDOR && !sam.current) return;
     if (surfaces.current.some((x) => x.color) && typeof confirm === 'function' && !confirm('Detectar de nuevo descarta lo que ya pintaste. ¿Seguimos?')) return;
     const mySeq = photoSeq.current, t1 = performance.now(), tAll = Date.now();
     setStatus(m === 'fachada' ? 'Buscando paños de la fachada…' : 'Buscando paredes y techo…');
@@ -342,7 +392,13 @@ export function Visualizer() {
     sam.current.onDetectProgress = (n) => { if (mySeq === photoSeq.current) setProg((q) => (q && q.stage === 'detect' ? { ...q, n } : q)); };
     try {
       await yieldToUi();
-      const { found, mode: used } = await sam.current.detect(m);
+      if (CON_SERVIDOR) { // con el servidor, "detectar de nuevo" le vuelve a pedir la foto
+        const srv = await superficiesDelServidor(photo.current, urlServidor());
+        if (mySeq !== photoSeq.current) return;
+        if (srv) { setProg(null); setDetMode('servidor'); autoCache.current = srv.found; applyAuto(null, '', 'servidor'); return; }
+      }
+      await ensureEmbed();
+      const { found, mode: used } = await sam.current.detect(m, false);
       if (mySeq !== photoSeq.current) return;
       setProg(null); setDetMode(used);
       setTiming((t) => ({ ...t, detectMs: Math.round(performance.now() - t1) }));
@@ -361,11 +417,11 @@ export function Visualizer() {
     const i = Math.floor(pt.y) * p.width + Math.floor(pt.x);
     const hit = surfaces.current.find((x) => x.mask[i]);
     if (!hit) { setStatus('Tocá algo que esté pintado (o resaltado) y no sea pared.'); return; }
-    if (model.state !== 'ready') return;
+    try { await ensureEmbed(); } catch { return; }
     setStatus('Separando el objeto…');
     try {
       const r = await sam.current.segment([{ x: pt.x, y: pt.y, label: 1 }], true);
-      await sam.current.call('reset');
+      await sam.current?.call('reset');
       const m = cleanMask(r.mask, p.width, p.height);
       const cut = cutObjectFromSurface(hit.mask, m);
       if (!cut.ok) {
@@ -505,8 +561,7 @@ export function Visualizer() {
     if (mode === 'wand' || mode === 'wandx') return aplicarVarita(pt);
     if (mode === 'poly' || mode === 'polyx') { polyRef.current.push({ x: pt.x, y: pt.y }); render(); bump(); setStatus(`Polígono: ${polyRef.current.length} ${polyRef.current.length === 1 ? 'punto' : 'puntos'}. Seguí tocando las esquinas y después tocá "Cerrar y aplicar".`); return; }
     if (mode !== 'pos' && mode !== 'neg') return; // pincel, borrador y mover no marcan puntos de SAM
-    if (model.state !== 'ready') return;
-    try { await runSegment([...pointsRef.current, pt], pointsRef.current.length === 0); }
+    try { await ensureEmbed(); await runSegment([...pointsRef.current, pt], pointsRef.current.length === 0); }
     catch (err) { setStatus(`Error: ${err.message}`); }
   };
 
@@ -531,7 +586,7 @@ export function Visualizer() {
       return;
     }
     const pts = pointsRef.current.slice(0, -1);
-    if (!pts.length) { current.current = null; samMask.current = null; pointsRef.current = []; setPoints([]); await sam.current.call('reset'); repaint(); return; }
+    if (!pts.length) { current.current = null; samMask.current = null; pointsRef.current = []; setPoints([]); await sam.current?.call('reset'); repaint(); return; }
     await runSegment(pts, true);
   };
 
@@ -703,7 +758,7 @@ export function Visualizer() {
     const name = isCeiling ? 'Techo' : `Pared ${surfaces.current.filter((s) => /^Pared/.test(s.name)).length + 1}`;
     surfaces.current.push({ id: ++surfSeq.current, name, kind: isCeiling ? 'techo' : 'pared', mask: m, color: colorRef.current });
     current.current = null; samMask.current = null; strokes.current = []; pointsRef.current = []; setPoints([]); setActiveId(null); syncSurfaces();
-    await sam.current.call('reset');
+    await sam.current?.call('reset');
     setStatus(`${name} confirmada. Tocá otra superficie y elegí su color, o tocá una de la lista para cambiarle el color.`);
     repaint();
   };
@@ -715,7 +770,7 @@ export function Visualizer() {
     const keep = new Map(painted.filter((x) => x.autoIdx != null).map((x) => [x.autoIdx, x.color]));
     current.current = null; samMask.current = null; strokes.current = []; surfUndo.current = [];
     surfaces.current = []; surfSeq.current = 0; result.current = null; pointsRef.current = [];
-    setPoints([]); setSurfList([]); setActiveId(null); setWallPx(0); await sam.current.call('reset');
+    setPoints([]); setSurfList([]); setActiveId(null); setWallPx(0); await sam.current?.call('reset');
     if (autoCache.current.length) applyAuto(keep, keep.size ? `Volví a lo detectado y conservé el color de ${keep.size === 1 ? '1 superficie' : `${keep.size} superficies`}.` : ''); else render(); // vuelve a las superficies detectadas solas, sin recalcular
   };
   const selectSurface = (id) => {
@@ -820,12 +875,12 @@ export function Visualizer() {
 
         {!manual && surfList.length > 0 && (
           <div class="row">
-            <button class={cutMode ? 'on' : ''} onClick={() => { setCutMode(!cutMode); setStatus(cutMode ? 'Tocá una superficie en la foto o en la lista y elegí su color.' : 'Tocá lo que quedó pintado y no es pared (una tabla, un mueble, una puerta).'); }}>✂️ Sacar un objeto</button>
+            <button class={cutMode ? 'on' : ''} onClick={() => { if (!cutMode) ensureEmbed().catch(() => {}); setCutMode(!cutMode); setStatus(cutMode ? 'Tocá una superficie en la foto o en la lista y elegí su color.' : 'Tocá lo que quedó pintado y no es pared (una tabla, un mueble, una puerta).'); }}>✂️ Sacar un objeto</button>
             <button onClick={undoCut} disabled={!surfUndo.current.length}>↩︎ Deshacer</button>
           </div>
         )}
         <div class="row">
-          <button class={manual ? 'on' : ''} onClick={() => { setCutMode(false); setManual(!manual); if (!manual) { setMode('pos'); setStatus('Ajuste manual: tocá la foto para marcar una pared (verde = es pared, rojo = no es pared) o usá el pincel y el borrador.'); } else { setMode('pos'); setStatus('Tocá una superficie en la foto o en la lista y elegí su color.'); } }}>
+          <button class={manual ? 'on' : ''} onClick={() => { if (!manual) ensureEmbed().catch(() => {}); setCutMode(false); setManual(!manual); if (!manual) { setMode('pos'); setStatus('Ajuste manual: tocá la foto para marcar una pared (verde = es pared, rojo = no es pared) o usá el pincel y el borrador.'); } else { setMode('pos'); setStatus('Tocá una superficie en la foto o en la lista y elegí su color.'); } }}>
             🛠️ {manual ? 'Listo, volver al modo automático' : 'Ajustar a mano'}
           </button>
         </div>
