@@ -6,7 +6,9 @@
 FROM pytorch/pytorch:2.5.1-cuda12.4-cudnn9-runtime
 WORKDIR /app
 RUN pip install --no-cache-dir "transformers==5.22.2" accelerate fastapi "uvicorn[standard]" python-multipart onnxruntime-gpu pillow runpod
-COPY app.py handler.py ./
+# Funciona con el contexto en la raíz del repo (RunPod desde GitHub) o dentro de servidor-sam3/ (docker build local).
+COPY . /src
+RUN if [ -f /src/servidor-sam3/app.py ]; then cp /src/servidor-sam3/app.py /src/servidor-sam3/handler.py /app/; else cp /src/app.py /src/handler.py /app/; fi && rm -rf /src
 ENV MODELO_R9=/runpod-volume/modelos/interior-seg-r9.onnx \
     MODELO_R9_URL=https://pintu.solucionesdev.online/models/interior-seg-r9.onnx \
     HF_HOME=/runpod-volume/hf \
