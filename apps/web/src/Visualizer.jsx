@@ -850,7 +850,9 @@ export function Visualizer() {
           <label class="btn primary">📷 Sacar foto<input type="file" accept="image/*" capture="environment" onChange={onFile} hidden /></label>
           <label class="btn">🖼️ Elegir de la galería<input type="file" accept="image/*" onChange={onFile} hidden /></label>
         </div>
-        <p class="muted small">🔒 Tu foto se procesa en tu dispositivo y no se sube ni se guarda.</p>
+        <p class="muted small">{CON_SERVIDOR
+          ? '🔒 Tu foto se envía a nuestro servidor solo para detectar las paredes; no la guardamos.'
+          : '🔒 Tu foto se procesa en tu dispositivo y no se sube ni se guarda.'}</p>
       </div>
 
       <div class={hasPhoto ? '' : 'hide'}>
@@ -926,7 +928,7 @@ export function Visualizer() {
           </div>
         )}
 
-        {hasPhoto && !prog && (
+        {hasPhoto && !prog && detMode !== 'servidor' && ( // con el servidor, interior y fachada se detectan igual: no hace falta elegir
           <p class="muted small redetect">
             {detMode === 'fachada' ? 'Detecté la foto como fachada.' : '¿La foto es una fachada o el exterior de una casa?'}{' '}
             <button onClick={() => redetect(detMode === 'fachada' ? 'interior' : 'fachada')}>{detMode === 'fachada' ? 'Detectar como interior' : 'Detectar como fachada'}</button>
