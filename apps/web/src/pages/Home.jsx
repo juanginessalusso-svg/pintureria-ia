@@ -78,23 +78,19 @@ const BLOBS = [
 
 export function Home({ tenant, branches = [] }) {
   const [selectedWallIdx, setSelectedWallIdx] = useState(2); // Salvia por defecto
-  const [selectedCity, setSelectedCity] = useState('all');
+  const [selectedCity, setSelectedCity] = useState('rio-cuarto');
   const wallColor = SWATCH_COLORS[selectedWallIdx].hex;
 
   const shopName = tenant?.name || 'Plaza Olmos';
   const accent = '#D9442B';
 
   const branchList = (branches && branches.length >= 7) ? branches : OFFICIAL_BRANCHES;
-  const filteredBranches = selectedCity === 'all'
-    ? branchList
-    : branchList.filter(b => {
-        const c = (b.city || '').toLowerCase();
-        if (selectedCity === 'rio-cuarto') return c.includes('cuarto');
-        if (selectedCity === 'chivilcoy') return c.includes('chivilcoy');
-        return true;
-      });
+  const filteredBranches = branchList.filter(b => {
+    const c = (b.city || '').toLowerCase();
+    if (selectedCity === 'chivilcoy') return c.includes('chivilcoy');
+    return c.includes('cuarto');
+  });
 
-  const totalCount = branchList.length;
   const rioCuartoCount = branchList.filter(b => (b.city || '').toLowerCase().includes('cuarto')).length;
   const chivilcoyCount = branchList.filter(b => (b.city || '').toLowerCase().includes('chivilcoy')).length;
 
@@ -340,21 +336,9 @@ export function Home({ tenant, branches = [] }) {
           <div className="branches-header">
             <span className="section-eyebrow">PUNTOS DE ATENCIÓN</span>
             <h2 className="branches-title">Nuestras Sucursales</h2>
-            <p className="branches-subtitle">
-              Atención personalizada y asesoramiento técnico profesional en Río Cuarto y Chivilcoy.
-            </p>
 
-            {/* Selector de Ciudad / Filtro compacto */}
+            {/* Selector de Ciudad: Río Cuarto o Chivilcoy */}
             <div className="branches-city-tabs" role="tablist" aria-label="Filtrar sucursales por ciudad">
-              <button
-                type="button"
-                role="tab"
-                aria-selected={selectedCity === 'all'}
-                className={`branches-city-tab ${selectedCity === 'all' ? 'active' : ''}`}
-                onClick={() => setSelectedCity('all')}
-              >
-                Todas ({totalCount})
-              </button>
               <button
                 type="button"
                 role="tab"
@@ -377,17 +361,17 @@ export function Home({ tenant, branches = [] }) {
               </button>
             </div>
 
-            {/* Tira informativa de horarios compartida (evita repetir en cada tarjeta) */}
+            {/* Tira informativa de horario */}
             <div className="branches-schedule-strip">
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                 <circle cx="12" cy="12" r="10" />
                 <polyline points="12 6 12 12 16 14" />
               </svg>
-              <span><strong>Horarios:</strong> Lun a Vie 8:00 a 12:30 y 15:30 a 19:30 · Sáb 8:30 a 13:00</span>
+              <span><strong>Horario:</strong> Lun a Vie de 8:00 a 17:00 hs</span>
             </div>
           </div>
 
-          <div className="branches-compact-grid">
+          <div className={`branches-compact-grid ${filteredBranches.length <= 2 ? 'few-cards' : ''}`}>
             {filteredBranches.map((b) => {
               const cleanWa = (b.whatsapp || b.phoneClean || b.phone || '').replace(/\D/g, '');
               const waUrl = cleanWa

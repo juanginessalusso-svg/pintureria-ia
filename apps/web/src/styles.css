@@ -1482,7 +1482,7 @@ select { font: inherit; padding: 8px; border: 1px solid var(--line); border-radi
 .branches-header {
   text-align: center;
   max-width: 720px;
-  margin: 0 auto 36px;
+  margin: 0 auto 28px;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -1492,14 +1492,8 @@ select { font: inherit; padding: 8px; border: 1px solid var(--line); border-radi
   font-size: clamp(28px, 3.8vw, 42px);
   font-weight: 900;
   color: #1E3A62;
-  margin: 8px 0 10px;
+  margin: 8px 0 18px;
   letter-spacing: -0.025em;
-}
-.branches-subtitle {
-  font-size: 16px;
-  color: #4A5A73;
-  line-height: 1.5;
-  margin: 0 0 22px;
 }
 
 /* Selector de Ciudad con Pills */
@@ -1576,8 +1570,13 @@ select { font: inherit; padding: 8px; border: 1px solid var(--line); border-radi
 /* Grid Compacto de Sucursales */
 .branches-compact-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(270px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
   gap: 16px;
+  width: 100%;
+}
+.branches-compact-grid.few-cards {
+  max-width: 680px;
+  margin: 0 auto;
 }
 
 /* Tarjeta Compacta de Sucursal */
@@ -1624,6 +1623,8 @@ select { font: inherit; padding: 8px; border: 1px solid var(--line); border-radi
   letter-spacing: 0.6px;
   padding: 3px 9px;
   border-radius: 999px;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 .theme-rc .bcc-city-tag {
   background: #EBF2FA;
@@ -1658,6 +1659,8 @@ select { font: inherit; padding: 8px; border: 1px solid var(--line); border-radi
   padding: 2px 7px;
   border-radius: 6px;
   transition: color 0.15s ease, background 0.15s ease;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 .bcc-phone-badge svg {
   color: #94A3B8;
