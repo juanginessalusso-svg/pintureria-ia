@@ -1,10 +1,10 @@
 import express, { Router } from 'express';
 import { catalog } from '../catalog.js';
 import { branches } from '../branches.js';
-import { crearLimitador, segmentarEnRunpod } from '../segmentador.js';
+import { crearLimitador, segmentarEnRunpod, despertarRunpod } from '../segmentador.js';
 
 /** Datos que ve el cliente final. Siempre filtrados por req.tenant (lo resuelve tenantMiddleware). `segmentarFn` es para tests. */
-export function publicRoutes(db, { segmentarFn, diagnostico = false } = {}) {
+export function publicRoutes(db, { segmentarFn, despertarFn, diagnostico = false } = {}) {
   const cat = catalog(db);
   const branchRepo = branches(db);
   const r = Router();
@@ -53,6 +53,17 @@ export function publicRoutes(db, { segmentarFn, diagnostico = false } = {}) {
       console.warn('[segmentador]', e?.message);
       res.status(503).json({ error: 'segmentador_no_disponible' });
     }
+  });
+
+  // Despertador: la app lo llama al abrir la página para que el servidor con GPU arranque mientras el cliente saca la foto
+  // (arranque en frío 20-80 s). No espera a RunPod: responde enseguida. Barato: ~US$0,01 por visita como máximo.
+  const limitadorDespertar = crearLimitador({ max: 10 });
+  r.post('/segmentar/despertar', (req, res) => {
+    const apiKey = process.env.RUNPOD_API_KEY, endpointId = process.env.RUNPOD_ENDPOINT_ID;
+    if (!apiKey || !endpointId) return res.status(503).json({ error: 'segmentador_no_configurado' });
+    if (!limitadorDespertar.permitir(req.ip)) return res.status(429).json({ error: 'demasiados_pedidos' });
+    (despertarFn ?? despertarRunpod)({ apiKey, endpointId }).catch((e) => console.warn('[despertar]', e?.message));
+    res.status(202).json({ ok: true });
   });
 
   // Diagnóstico (SOLO staging, mismo interruptor que ?tenant=): puntajes de SAM 3 para textos arbitrarios, para probar reglas nuevas.

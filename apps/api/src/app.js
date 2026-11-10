@@ -27,7 +27,7 @@ export function crossOriginIsolationMode(value) {
   return false;
 }
 
-export function createApp({ db, webDir, modelsDir, uploadsDir, allowTenantParam = false, secureCookies = false, crossOriginIsolation = false, segmentarFn } = {}) {
+export function createApp({ db, webDir, modelsDir, uploadsDir, allowTenantParam = false, secureCookies = false, crossOriginIsolation = false, segmentarFn, despertarFn } = {}) {
   const app = express();
   app.disable('x-powered-by');
   // Nginx va adelante: confiamos en 1 proxy para leer la IP real del cliente.
@@ -53,7 +53,7 @@ export function createApp({ db, webDir, modelsDir, uploadsDir, allowTenantParam 
   });
 
   if (db) {
-    app.use('/api/public', tenantMiddleware(db, { allowTenantParam }), publicRoutes(db, { segmentarFn, diagnostico: allowTenantParam }));
+    app.use('/api/public', tenantMiddleware(db, { allowTenantParam }), publicRoutes(db, { segmentarFn, despertarFn, diagnostico: allowTenantParam }));
     app.use('/api/admin', adminRoutes(db, { secureCookies }));
   }
   app.use('/api', (_req, res) => res.status(404).json({ error: 'no_encontrado' }));

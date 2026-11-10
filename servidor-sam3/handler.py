@@ -10,6 +10,8 @@ import numpy as np
 
 
 def handler(job):
+    if job["input"].get("ping"):  # "despertador": la app lo manda al abrir la página; los modelos ya se cargaron al arrancar el worker
+        return {"pong": True}
     try:
         datos = base64.b64decode(job["input"]["imagen"])
         if len(datos) > 8 * 1024 * 1024:

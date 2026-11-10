@@ -85,3 +85,30 @@ test('diagnóstico: no existe si la API no está en modo staging', async () => {
   assert.equal(r.status, 404);
   s.close();
 });
+
+test('despertador: responde 202 enseguida y encola un ping; no repite dentro de 20 s', async () => {
+  const { despertarRunpod, _reiniciarDespertador } = await import('../src/segmentador.js');
+  _reiniciarDespertador();
+  const pedidos = [];
+  const fetchFn = async (url, init) => { pedidos.push({ url, body: JSON.parse(init.body) }); return { ok: true, json: async () => ({}) }; };
+  assert.equal(await despertarRunpod({ apiKey: 'k', endpointId: 'ep', fetchFn, ahora: 1000 }), true);
+  assert.equal(await despertarRunpod({ apiKey: 'k', endpointId: 'ep', fetchFn, ahora: 5000 }), false);
+  assert.equal(await despertarRunpod({ apiKey: 'k', endpointId: 'ep', fetchFn, ahora: 30_000 }), true);
+  assert.equal(pedidos.length, 2);
+  assert.equal(pedidos[0].url, 'https://api.runpod.ai/v2/ep/run');
+  assert.deepEqual(pedidos[0].body.input, { ping: true });
+});
+
+test('ruta /segmentar/despertar: 202 sin esperar al servidor', async () => {
+  process.env.RUNPOD_API_KEY = 'clave-falsa'; process.env.RUNPOD_ENDPOINT_ID = 'ep1';
+  const db = openDb(':memory:');
+  createTenant(db, { slug: 'a', name: 'A', domains: ['a.test'], username: 'admin', password: 'clave-de-prueba-A1' });
+  let llamado = 0;
+  const s = createApp({ db, allowTenantParam: true, despertarFn: async () => { llamado++; await new Promise((r) => setTimeout(r, 2000)); } }).listen(0);
+  const t0 = Date.now();
+  const r = await fetch(`http://127.0.0.1:${s.address().port}/api/public/segmentar/despertar?tenant=a`, { method: 'POST' });
+  assert.equal(r.status, 202);
+  assert.ok(Date.now() - t0 < 1000, 'no espera a RunPod');
+  assert.equal(llamado, 1);
+  s.close();
+});

@@ -21,6 +21,20 @@ export function crearLimitador({ max = 20, ventanaMs = 10 * 60_000, ahora = () =
 }
 
 /**
+ * "Despertador": encola un trabajo vacío (/run, sin esperar) para que RunPod arranque un worker mientras el cliente saca la foto.
+ * No despierta de nuevo si ya lo hizo hace menos de `cadaMs` (todas las visitas juntas): el worker queda prendido unos segundos igual.
+ */
+let ultimoDespertar = -Infinity;
+export async function despertarRunpod({ apiKey, endpointId, fetchFn = fetch, ahora = Date.now(), cadaMs = 20_000 } = {}) {
+  if (ahora - ultimoDespertar < cadaMs) return false;
+  ultimoDespertar = ahora;
+  const r = await fetchFn(`${BASE}/${endpointId}/run`, { method: 'POST', headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ input: { ping: true }, policy: { ttl: 120_000 } }), signal: AbortSignal.timeout(10_000) });
+  if (!r.ok) throw new Error(`runpod_http_${r.status}`);
+  return true;
+}
+export function _reiniciarDespertador() { ultimoDespertar = -Infinity; } // para tests
+
+/**
  * Manda la foto (Buffer jpeg/png) al endpoint de RunPod y devuelve { png: Buffer, ancho, alto, segundos }.
  * Usa /runsync y, si el trabajo sigue en cola (arranque en frío), consulta /status hasta `plazoMs`.
  */

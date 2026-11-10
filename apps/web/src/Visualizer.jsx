@@ -17,6 +17,9 @@ const mb = (n) => (n / 1048576).toFixed(0);
 const ANOTAR = new URLSearchParams(location.search).get('anotar') === '1'; // modo de anotación (herramienta interna): ver eval/visualizador/medir.mjs
 const MAX_ZOOM = 16;
 const CON_SERVIDOR = typeof location !== 'undefined' && urlServidor() !== null; // ?servidor=1: detecta el servidor con GPU; MobileSAM solo si hace falta
+// Herramientas manuales (ajustar a mano, sacar un objeto): el cliente no tiene que hacer nada más que la foto y los colores.
+// Quedan solo para el equipo con ?ajustes=1 (o ?dataset=1, que las necesita para corregir etiquetas).
+const AJUSTES = typeof location !== 'undefined' && ['ajustes', 'dataset'].some((k) => new URLSearchParams(location.search).get(k) === '1');
 const DATASET = typeof location !== 'undefined' && new URLSearchParams(location.search).get('dataset') === '1'; // modo recolección: tipo de cada superficie editable y botón de compartir
 const MAX_SURF_UNDO = 8;
 const DRAG_PX = 4; // cuánto hay que mover el dedo para que un toque pase a ser arrastre
@@ -153,6 +156,8 @@ export function Visualizer() {
     getJson('colors').then(setColors).catch(() => {});
     getJson('products').then(setProducts).catch(() => {});
     getJson('branches').then(setBranches).catch(() => {});
+    // Con el servidor: se lo despierta apenas se abre la página, así cuando llega la foto ya está prendido (si no, el arranque en frío tarda 20-80 s).
+    if (CON_SERVIDOR) fetch(`/api/public/segmentar/despertar${tenantQ()}`, { method: 'POST' }).catch(() => {});
     if (!CON_SERVIDOR) ensureSam(); // con el servidor, MobileSAM se carga recién si el cliente ajusta a mano o el servidor falla
     return () => sam.current?.terminate();
   }, []);
@@ -347,7 +352,8 @@ export function Visualizer() {
     setActiveId(first?.id ?? null);
     const fach = mode === 'fachada', n = found.length;
     setStatus(note || (!n
-      ? (fach ? 'No pude separar paños de pared en la fachada. Tocá "Ajustar a mano" y marcá la pared.' : 'No pude detectar paredes solas. Tocá "Ajustar a mano" y marcá una pared.')
+      ? (AJUSTES ? (fach ? 'No pude separar paños de pared en la fachada. Tocá "Ajustar a mano" y marcá la pared.' : 'No pude detectar paredes solas. Tocá "Ajustar a mano" y marcá una pared.')
+        : 'No encontré paredes en esta foto. Probá con otra foto, tomada de frente a la pared y con buena luz.')
       : first
         ? `Listo: detecté ${n} ${n === 1 ? 'superficie' : 'superficies'}${fach ? ' en la fachada (sin cielo, piso ni aberturas)' : ''}. Elegí un color para "${first.name}"; para pintar otra, tocala en la foto o en la lista.${found.some((f) => f.kind === 'ladrillo') ? ' El ladrillo o revoque rugoso queda sin color: tocalo si querés pintarlo.' : ''}`
         : 'Detecté solo superficies rugosas (ladrillo o similar), que quedan sin color. Tocá la que quieras pintar en la foto o en la lista.'));
@@ -555,7 +561,7 @@ export function Visualizer() {
       const x = Math.floor(pt.x), y = Math.floor(pt.y), i = y * p.width + x;
       const hit = surfaces.current.find((s) => s.mask[i]);
       if (hit) { setActiveId(hit.id); setStatus(`"${hit.name}" seleccionada: elegí su color.`); }
-      else setStatus('Ahí no detecté una superficie. Si falta una pared, usá "Ajustar a mano".');
+      else setStatus(AJUSTES ? 'Ahí no detecté una superficie. Si falta una pared, usá "Ajustar a mano".' : 'Ahí no detecté una pared. Tocá una de las superficies resaltadas o elegila en la lista.');
       return;
     }
     if (mode === 'wand' || mode === 'wandx') return aplicarVarita(pt);
@@ -875,17 +881,17 @@ export function Visualizer() {
         </div>
         {status && !prog && <p class="muted" role="status">{status}</p>}
 
-        {!manual && surfList.length > 0 && (
+        {AJUSTES && !manual && surfList.length > 0 && (
           <div class="row">
             <button class={cutMode ? 'on' : ''} onClick={() => { if (!cutMode) ensureEmbed().catch(() => {}); setCutMode(!cutMode); setStatus(cutMode ? 'Tocá una superficie en la foto o en la lista y elegí su color.' : 'Tocá lo que quedó pintado y no es pared (una tabla, un mueble, una puerta).'); }}>✂️ Sacar un objeto</button>
             <button onClick={undoCut} disabled={!surfUndo.current.length}>↩︎ Deshacer</button>
           </div>
         )}
-        <div class="row">
+        {AJUSTES && <div class="row">
           <button class={manual ? 'on' : ''} onClick={() => { if (!manual) ensureEmbed().catch(() => {}); setCutMode(false); setManual(!manual); if (!manual) { setMode('pos'); setStatus('Ajuste manual: tocá la foto para marcar una pared (verde = es pared, rojo = no es pared) o usá el pincel y el borrador.'); } else { setMode('pos'); setStatus('Tocá una superficie en la foto o en la lista y elegí su color.'); } }}>
             🛠️ {manual ? 'Listo, volver al modo automático' : 'Ajustar a mano'}
           </button>
-        </div>
+        </div>}
         {manual && (
           <div class="card manual">
             <div class="row">
