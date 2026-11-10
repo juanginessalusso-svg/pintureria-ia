@@ -96,15 +96,15 @@ for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) for (let j = 0;
 const outFile = path.join(outDir, `una-${name}.png`);
 fs.writeFileSync(outFile, PNG.sync.write(out));
 console.log('→', outFile);
-// PINTAR="#pared,#techo[;#pared2,#techo2...]": además deja pintado-<foto>-<k>.png pintado como en la app (modo 'luz', balance de blancos al 50 %, borde suavizado)
+// PINTAR="#pared[|#pared2|...],#techo[;...]" (con | un color por pared): además deja pintado-<foto>-<k>.png pintado como en la app (modo 'luz', balance de blancos al 50 %, borde suavizado)
 if (process.env.PINTAR) {
   const { estimateWhiteBalance, featherMask, recolorWall, LUZ_WB_STRENGTH } = await import('@pintureria/core');
   const gains = estimateWhiteBalance(img).map((g) => 1 + (g - 1) * LUZ_WB_STRENGTH);
   process.env.PINTAR.split(';').forEach((par, k) => {
     const [hp, ht] = par.split(',');
-    let image = img;
+    let image = img, np = 0; const paredes = hp.split('|'); // "#a|#b|#c": un color por pared, en el orden de la lista
     for (const f of found) {
-      const hex = f.kind === 'techo' ? ht : f.kind === 'pared' ? hp : null; if (!hex) continue;
+      const hex = f.kind === 'techo' ? ht : f.kind === 'pared' ? paredes[np++ % paredes.length] : null; if (!hex) continue;
       const soft = featherMask(Float32Array.from(f.mask), width, height, Math.max(1, Math.round(width / 500)));
       image = recolorWall(image, soft, hex, { mode: 'luz', gains }).image;
     }
