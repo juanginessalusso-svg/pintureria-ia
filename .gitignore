@@ -13,3 +13,7 @@ eval/visualizador/salidas/
 # Datos de terceros (carta Tersuave): se generan con el script, no se versionan
 colores-tersuave*.json
 modelos/
+
+# Archivos de requerimientos y backups locales
+*.zip
+*.docx
