@@ -81,7 +81,7 @@ def clases(img: Image.Image):
     if max(img.size) > 1280:  # mismo tamaño de trabajo que la app
         img.thumbnail((1280, 1280))
     t0 = time.perf_counter()
-    R = mapas_sam(img, ["painted wall", "wall", "ceiling", "tile", "mirror", "stucco wall", "brick wall", "sky", "garage door", "pergola"])
+    R = mapas_sam(img, ["painted wall", "wall", "ceiling", "tile", "mirror", "wallpaper", "stucco wall", "brick wall", "sky", "garage door", "pergola"])
     (pw, ipw), (ww, iww), (pc, ipc) = R["painted wall"], R["wall"], R["ceiling"]
     m9 = clases_r9(img)
     p = np.zeros(pw.shape, np.uint8)
@@ -93,9 +93,11 @@ def clases(img: Image.Image):
         for mk, s in insts:
             if DUDA <= s < ALTO and mk.mean() >= 0.01 and np.mean(m9[mk] == clase) >= 0.5:
                 p[mk & (p == 0)] = clase
-    for texto in ("tile", "mirror"):  # regla 4: azulejos y espejos chicos afuera
+    for texto in ("tile", "mirror", "wallpaper"):  # regla 4: azulejos, espejos y papel tapiz afuera
         for mk, s in R[texto][1]:
-            if s >= RESTA and mk.mean() <= 0.05:
+            # chicos con score >= RESTA; grandes (una pared entera de azulejo) solo si SAM 3 está seguro (>= 0,6: en ex01 una pared
+            # lisa salía "tile" con 0,45). Examen interior: 0,967 -> 0,968 y pinta mal 0,3 % -> 0,2 %.
+            if s >= RESTA and (mk.mean() <= 0.05 or s >= 0.6):
                 p[mk] = 0
     # Fachadas (2026-11-10; en el examen interior no cambian nada: 0,967 / 0,3 %):
     p[(p == 0) & (R["stucco wall"][0] >= 0.5)] = 1  # regla 5: revoque exterior que "painted wall" no toma
