@@ -849,7 +849,7 @@ select { font: inherit; padding: 8px; border: 1px solid var(--line); border-radi
    ======================================================== */
 .renovation-section {
   background: #F7F4EE;
-  padding: 80px 24px 70px;
+  padding: 130px 24px 75px;
   border-bottom: 1px solid rgba(30, 58, 98, 0.08);
 }
 .renovation-container {
@@ -1282,8 +1282,33 @@ select { font: inherit; padding: 8px; border: 1px solid var(--line); border-radi
 }
 .assistant-detail-top {
   border-bottom: 1px solid #E2E8F0;
-  padding-bottom: 24px;
+  padding-bottom: 20px;
+  margin-bottom: 24px;
+}
+.assistant-detail-img-wrap {
+  width: 100%;
+  height: 280px;
+  border-radius: 16px;
+  overflow: hidden;
   margin-bottom: 28px;
+  box-shadow: 0 6px 18px rgba(30, 58, 98, 0.08);
+  border: 1px solid rgba(30, 58, 98, 0.08);
+  background: #E2E8F0;
+}
+.assistant-detail-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  transition: transform 0.3s ease;
+}
+.assistant-detail-img:hover {
+  transform: scale(1.02);
+}
+@media (max-width: 640px) {
+  .assistant-detail-img-wrap {
+    height: 190px;
+  }
 }
 .assistant-detail-title {
   font-family: Montserrat, sans-serif;
@@ -1438,6 +1463,302 @@ select { font: inherit; padding: 8px; border: 1px solid var(--line); border-radi
   }
   .assistant-detail-card {
     padding: 24px 20px;
+  }
+}
+
+/* ========================================================
+   SECCIÓN SUCURSALES (Compacta y con Identidad Plaza Olmos)
+   ======================================================== */
+.branches-section {
+  background: #FAF7F2;
+  padding: 64px 24px 72px;
+  border-top: 1px solid rgba(30, 58, 98, 0.08);
+  position: relative;
+}
+.branches-container {
+  max-width: 1200px;
+  margin: 0 auto;
+}
+.branches-header {
+  text-align: center;
+  max-width: 720px;
+  margin: 0 auto 36px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.branches-title {
+  font-family: Montserrat, sans-serif;
+  font-size: clamp(28px, 3.8vw, 42px);
+  font-weight: 900;
+  color: #1E3A62;
+  margin: 8px 0 10px;
+  letter-spacing: -0.025em;
+}
+.branches-subtitle {
+  font-size: 16px;
+  color: #4A5A73;
+  line-height: 1.5;
+  margin: 0 0 22px;
+}
+
+/* Selector de Ciudad con Pills */
+.branches-city-tabs {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  background: #EDE6DC;
+  padding: 4px;
+  border-radius: 999px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+  box-shadow: inset 0 1px 3px rgba(30, 58, 98, 0.06);
+}
+.branches-city-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  background: transparent;
+  border: none;
+  outline: none;
+  cursor: pointer;
+  padding: 8px 18px;
+  border-radius: 999px;
+  font-family: Montserrat, sans-serif;
+  font-size: 13.5px;
+  font-weight: 700;
+  color: #4A5A73;
+  transition: all 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.branches-city-tab:hover {
+  color: #1E3A62;
+  background: rgba(255, 255, 255, 0.6);
+}
+.branches-city-tab.active {
+  background: #1E3A62;
+  color: #FFFFFF;
+  box-shadow: 0 4px 12px rgba(30, 58, 98, 0.22);
+}
+.city-pill-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+}
+.city-pill-dot.blue {
+  background: #3B82F6;
+}
+.city-pill-dot.orange {
+  background: #D9442B;
+}
+
+/* Tira informativa de Horarios */
+.branches-schedule-strip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-size: 13px;
+  color: #52637D;
+  background: rgba(30, 58, 98, 0.05);
+  border: 1px solid rgba(30, 58, 98, 0.08);
+  padding: 6px 16px;
+  border-radius: 999px;
+  max-width: 100%;
+  line-height: 1.4;
+}
+.branches-schedule-strip svg {
+  color: #1E3A62;
+  flex-shrink: 0;
+}
+
+/* Grid Compacto de Sucursales */
+.branches-compact-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(270px, 1fr));
+  gap: 16px;
+}
+
+/* Tarjeta Compacta de Sucursal */
+.branch-card-compact {
+  background: #FFFFFF;
+  border-radius: 16px;
+  padding: 16px 18px;
+  border: 1.5px solid #EAE3D6;
+  box-shadow: 0 4px 14px rgba(30, 58, 98, 0.04);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 12px;
+  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+  position: relative;
+}
+.branch-card-compact:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 8px 22px rgba(30, 58, 98, 0.09);
+  border-color: #D9442B;
+}
+.branch-card-compact.theme-rc {
+  border-top: 3.5px solid #1E3A62;
+}
+.branch-card-compact.theme-chivilcoy {
+  border-top: 3.5px solid #D9442B;
+}
+
+/* Barra superior de la tarjeta */
+.bcc-top-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.bcc-city-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: Montserrat, sans-serif;
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  padding: 3px 9px;
+  border-radius: 999px;
+}
+.theme-rc .bcc-city-tag {
+  background: #EBF2FA;
+  color: #1E3A62;
+}
+.theme-chivilcoy .bcc-city-tag {
+  background: #FDF0ED;
+  color: #D9442B;
+}
+.bcc-indicator {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  display: inline-block;
+}
+.theme-rc .bcc-indicator {
+  background: #1E3A62;
+}
+.theme-chivilcoy .bcc-indicator {
+  background: #D9442B;
+}
+
+.bcc-phone-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: 'Nunito Sans', sans-serif;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: #64748B;
+  text-decoration: none;
+  padding: 2px 7px;
+  border-radius: 6px;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+.bcc-phone-badge svg {
+  color: #94A3B8;
+  transition: color 0.15s ease;
+}
+.bcc-phone-badge:hover {
+  color: #1E3A62;
+  background: rgba(30, 58, 98, 0.06);
+}
+.bcc-phone-badge:hover svg {
+  color: #1E3A62;
+}
+
+/* Dirección */
+.bcc-main-info {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 1px 0;
+}
+.bcc-pin-icon {
+  color: #D9442B;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+.bcc-address-text {
+  font-family: Montserrat, sans-serif;
+  font-size: 15px;
+  font-weight: 800;
+  color: #1E3A62;
+  line-height: 1.35;
+  margin: 0;
+}
+
+/* Botones de acción */
+.bcc-actions-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px dashed #EDE5D8;
+  margin-top: auto;
+}
+.btn-bcc-whatsapp {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  background: #128C7E;
+  color: #FFFFFF !important;
+  font-family: Montserrat, sans-serif;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 7px 12px;
+  border-radius: 999px;
+  text-decoration: none;
+  transition: all 0.18s ease;
+  box-shadow: 0 2px 8px rgba(18, 140, 126, 0.22);
+}
+.btn-bcc-whatsapp:hover {
+  background: #0d7064;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(18, 140, 126, 0.32);
+}
+.btn-bcc-maps {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  background: transparent;
+  color: #1E3A62 !important;
+  border: 1.5px solid rgba(30, 58, 98, 0.16);
+  font-family: Montserrat, sans-serif;
+  font-size: 11.5px;
+  font-weight: 700;
+  padding: 6px 11px;
+  border-radius: 999px;
+  text-decoration: none;
+  transition: all 0.18s ease;
+}
+.btn-bcc-maps:hover {
+  border-color: #1E3A62;
+  background: rgba(30, 58, 98, 0.05);
+}
+
+@media (max-width: 640px) {
+  .branches-section {
+    padding: 48px 16px 56px;
+  }
+  .branches-compact-grid {
+    grid-template-columns: 1fr;
+  }
+  .branches-city-tabs {
+    width: 100%;
+  }
+  .branches-city-tab {
+    flex: 1;
+    justify-content: center;
+    padding: 7px 12px;
+    font-size: 12.5px;
   }
 }
 
