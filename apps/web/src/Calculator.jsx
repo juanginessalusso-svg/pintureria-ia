@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from 'preact/hooks';
 import { areaM2, litersNeeded, suggestCans, DEFAULT_MARGIN, buildBudgetMessage, whatsappUrl, cleanWhatsapp, pesos } from '@pintureria/core';
+import { useCart } from './cartState.js';
+import { tenantHref } from './tenant.js';
 
 const ars = pesos; // formato argentino; muestra centavos solo si los hay
 const fmt = (n, d = 1) => n.toLocaleString('es-AR', { minimumFractionDigits: d, maximumFractionDigits: d });
@@ -16,6 +18,8 @@ const PRESETS = [
  *  - litros = m² × manos ÷ rendimiento × 1,10;  latas: menor costo que cubra los litros.
  */
 export function Calculator({ wallPx, calib, products, branches = [], tenant, color, surfaceColors = [], getImageBlob, onStartCalib, onResetCalib }) {
+  const { add } = useCart();
+  const [addedNotice, setAddedNotice] = useState(false);
   const [branchId, setBranchId] = useState(null);
   const [copied, setCopied] = useState(false);
   const [shareMsg, setShareMsg] = useState('');
@@ -67,6 +71,22 @@ export function Calculator({ wallPx, calib, products, branches = [], tenant, col
       await navigator.share({ files: [file], text: message });
       setShareMsg('');
     } catch (e) { if (e?.name !== 'AbortError') setShareMsg('No se pudo compartir la imagen.'); }
+  };
+
+  const handleAddCansToCart = () => {
+    if (!calc?.cans?.items?.length || !product) return;
+    for (const item of calc.cans.items) {
+      add({
+        sku: product.sku,
+        name: product.name,
+        liters: item.liters,
+        unit_price_cents: item.unit_price_cents,
+        qty: item.qty,
+        color: color ? { name: color.name, code: color.code, hex: color.hex } : null,
+      });
+    }
+    setAddedNotice(true);
+    setTimeout(() => setAddedNotice(false), 3500);
   };
 
   return (
@@ -156,12 +176,22 @@ export function Calculator({ wallPx, calib, products, branches = [], tenant, col
           {branches.length === 1 && <p class="muted small">Sucursal: <strong>{branches[0].name}</strong>{branches[0].address ? ` — ${branches[0].address}` : ''}</p>}
 
           <div class="row wa-row">
+            {calc.cans?.items?.length > 0 && (
+              <button type="button" class="btn primary" onClick={handleAddCansToCart}>
+                🛒 Agregar estas latas al carrito
+              </button>
+            )}
             {needsBranch
               ? <button class="btn wa" disabled title="Elegí una sucursal">💬 Enviar presupuesto por WhatsApp</button>
               : <a class="btn wa" href={whatsappUrl(number, message)} target="_blank" rel="noopener noreferrer">💬 Enviar presupuesto por WhatsApp</a>}
             <button onClick={copy}>{copied ? '✓ Copiado' : 'Copiar texto'}</button>
             {canShareImage && color && <button onClick={shareImage}>🖼️ Compartir con la imagen</button>}
           </div>
+          {addedNotice && (
+            <p class="ok small" style={{ marginTop: '8px' }}>
+              ✓ ¡Latas agregadas al carrito! <a href={tenantHref('/carrito')} style={{ fontWeight: 'bold', textDecoration: 'underline' }}>Ver carrito →</a>
+            </p>
+          )}
           {needsBranch && <p class="muted small">Elegí la sucursal para habilitar el envío.</p>}
           {!needsBranch && !hasNumber && <p class="muted small">Esta pinturería no cargó su número: WhatsApp te va a dejar elegir a quién enviarlo.</p>}
           {shareMsg && <p class="err small">{shareMsg}</p>}

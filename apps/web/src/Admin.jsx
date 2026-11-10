@@ -2,10 +2,105 @@ import { useEffect, useState } from 'preact/hooks';
 import { CSV_TEMPLATE, decodeCsvBytes, pesos } from '@pintureria/core';
 import { api, mensaje, setCsrf } from './api.js';
 
+/* ---- Iconos SVG limpios y modernos ---- */
+function PaletteIcon({ className = 'admin-nav-icon' }) {
+  return (
+    <svg class={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="13.5" cy="6.5" r=".5" fill="currentColor" />
+      <circle cx="17.5" cy="10.5" r=".5" fill="currentColor" />
+      <circle cx="8.5" cy="7.5" r=".5" fill="currentColor" />
+      <circle cx="6.5" cy="12.5" r=".5" fill="currentColor" />
+      <path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.563-2.512 5.563-5.563C22 6.5 17.5 2 12 2z" />
+    </svg>
+  );
+}
 
+function BoxIcon({ className = 'admin-nav-icon' }) {
+  return (
+    <svg class={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="m7.5 4.27 9 5.15" />
+      <path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z" />
+      <path d="m3.3 7 8.7 5 8.7-5" />
+      <path d="M12 22V12" />
+    </svg>
+  );
+}
+
+function StoreIcon({ className = 'admin-nav-icon' }) {
+  return (
+    <svg class={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="m2 7 4.41-4.41A2 2 0 0 1 7.83 2h8.34a2 2 0 0 1 1.42.59L22 7" />
+      <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8" />
+      <path d="M15 22v-4a2 2 0 0 0-2-2h-2a2 2 0 0 0-2 2v4" />
+      <path d="M2 7h20" />
+      <path d="M22 7a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2" />
+    </svg>
+  );
+}
+
+function SettingsIcon({ className = 'admin-nav-icon' }) {
+  return (
+    <svg class={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
+      <circle cx="12" cy="12" r="3" />
+    </svg>
+  );
+}
+
+function UserShieldIcon({ className = 'admin-nav-icon' }) {
+  return (
+    <svg class={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2" />
+      <circle cx="12" cy="7" r="4" />
+    </svg>
+  );
+}
+
+function LogoutIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+      <polyline points="16 17 21 12 16 7" />
+      <line x1="21" y1="12" x2="9" y2="12" />
+    </svg>
+  );
+}
+
+function ExternalIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+      <polyline points="15 3 21 3 21 9" />
+      <line x1="10" y1="14" x2="21" y2="3" />
+    </svg>
+  );
+}
+
+function MenuIcon() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <line x1="4" x2="20" y1="12" y2="12" />
+      <line x1="4" x2="20" y1="6" y2="6" />
+      <line x1="4" x2="20" y1="18" y2="18" />
+    </svg>
+  );
+}
+
+function CloseIcon() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <line x1="18" y1="6" x2="6" y2="18" />
+      <line x1="6" y1="6" x2="18" y2="18" />
+    </svg>
+  );
+}
+
+
+/* ---- Componente Principal Admin con Layout Dashboard y Sidebar ---- */
 export function Admin() {
   const [me, setMe] = useState(undefined); // undefined = cargando, null = sin sesión
   const [tab, setTab] = useState('colores');
+  const [mobileOpen, setMobileOpen] = useState(false);
 
   useEffect(() => {
     api('/admin/me')
@@ -13,30 +108,127 @@ export function Admin() {
       .catch(() => setMe(null));
   }, []);
 
-  if (me === undefined) return <main class="wrap"><p class="muted">Cargando…</p></main>;
-  if (!me) return <Login onLogin={(m) => { setCsrf(m.csrf); api('/admin/me').then(setMe); }} />;
+  if (me === undefined) {
+    return (
+      <div class="admin-login-wrap">
+        <p class="muted">Cargando panel de administración…</p>
+      </div>
+    );
+  }
 
-  const salir = async () => { await api('/admin/logout', { method: 'POST' }); setCsrf(''); setMe(null); };
+  if (!me) {
+    return <Login onLogin={(m) => { setCsrf(m.csrf); api('/admin/me').then(setMe); }} />;
+  }
+
+  const salir = async () => {
+    await api('/admin/logout', { method: 'POST' });
+    setCsrf('');
+    setMe(null);
+  };
+
+  const navItems = [
+    { id: 'colores', label: 'Colores', icon: PaletteIcon, desc: 'Catálogo de colores para simulador y cartas' },
+    { id: 'productos', label: 'Productos', icon: BoxIcon, desc: 'Gestión de productos, rendimiento, precios y presentaciones' },
+    { id: 'sucursales', label: 'Sucursales', icon: StoreIcon, desc: 'Puntos de venta físicos y líneas de WhatsApp' },
+    { id: 'ajustes', label: 'Ajustes', icon: SettingsIcon, desc: 'Configuración general de la pinturería y marca' },
+    { id: 'cuenta', label: 'Cuenta', icon: UserShieldIcon, desc: 'Seguridad y contraseña de acceso' },
+  ];
+
+  const currentTab = navItems.find((n) => n.id === tab) || navItems[0];
+
   return (
-    <main class="wrap">
-      <header class="bar">
-        <h1>{me.tenant.name}</h1>
-        <span class="muted">{me.username} · <button class="link" onClick={salir}>Salir</button></span>
-      </header>
-      <nav class="tabs">
-        {['colores', 'productos', 'sucursales', 'ajustes', 'cuenta'].map((t) => (
-          <button class={tab === t ? 'on' : ''} onClick={() => setTab(t)}>{t[0].toUpperCase() + t.slice(1)}</button>
-        ))}
-      </nav>
-      {tab === 'colores' && <Colors />}
-      {tab === 'productos' && <Products />}
-      {tab === 'sucursales' && <Branches />}
-      {tab === 'ajustes' && <Settings />}
-      {tab === 'cuenta' && <Account />}
-    </main>
+    <div class="admin-body">
+      {/* Header móvil */}
+      <div class="admin-mobile-header">
+        <button class="admin-mobile-toggle" onClick={() => setMobileOpen(!mobileOpen)} aria-label="Menú">
+          {mobileOpen ? <CloseIcon /> : <MenuIcon />}
+        </button>
+        <span class="admin-brand-name">{me.tenant.name}</span>
+        <button class="admin-logout-btn" onClick={salir} title="Cerrar sesión">
+          <LogoutIcon /> Salir
+        </button>
+      </div>
+
+      <div class="admin-layout">
+        {/* Backdrop para mobile */}
+        <div class={`admin-backdrop ${mobileOpen ? 'open' : ''}`} onClick={() => setMobileOpen(false)} />
+
+        {/* Barra Lateral (Sidebar) */}
+        <aside class={`admin-sidebar ${mobileOpen ? 'open' : ''}`}>
+          <div class="admin-sidebar-brand">
+            <div class="admin-brand-icon">
+              <PaletteIcon className="w-5 h-5 text-white" />
+            </div>
+            <div class="admin-brand-info">
+              <span class="admin-brand-name" title={me.tenant.name}>{me.tenant.name}</span>
+              <span class="admin-brand-badge">Panel Admin</span>
+            </div>
+          </div>
+
+          <nav class="admin-nav">
+            {navItems.map((item) => {
+              const Icon = item.icon;
+              const isActive = tab === item.id;
+              return (
+                <button
+                  key={item.id}
+                  class={`admin-nav-item ${isActive ? 'active' : ''}`}
+                  onClick={() => {
+                    setTab(item.id);
+                    setMobileOpen(false);
+                  }}
+                >
+                  <Icon />
+                  <span>{item.label}</span>
+                </button>
+              );
+            })}
+          </nav>
+
+          <div class="admin-sidebar-footer">
+            <a href="/" target="_blank" rel="noopener noreferrer" class="admin-store-link">
+              <ExternalIcon />
+              <span>Ver tienda online</span>
+            </a>
+
+            <div class="admin-user-card">
+              <div class="admin-user-details">
+                <div class="admin-user-avatar">
+                  {me.username ? me.username.slice(0, 1).toUpperCase() : 'A'}
+                </div>
+                <span class="admin-user-name" title={me.username}>{me.username}</span>
+              </div>
+              <button class="admin-logout-btn" onClick={salir} title="Cerrar sesión">
+                <LogoutIcon />
+                <span>Salir</span>
+              </button>
+            </div>
+          </div>
+        </aside>
+
+        {/* Contenido Principal */}
+        <main class="admin-main">
+          <header class="admin-header">
+            <div>
+              <h1 class="admin-header-title">{currentTab.label}</h1>
+              <p class="admin-header-desc">{currentTab.desc}</p>
+            </div>
+          </header>
+
+          <div class="admin-content-area">
+            {tab === 'colores' && <Colors />}
+            {tab === 'productos' && <Products />}
+            {tab === 'sucursales' && <Branches />}
+            {tab === 'ajustes' && <Settings />}
+            {tab === 'cuenta' && <Account />}
+          </div>
+        </main>
+      </div>
+    </div>
   );
 }
 
+/* ---- Pantalla de Login ---- */
 function Login({ onLogin }) {
   const [f, setF] = useState({ tenant: localStorage.getItem('tenant') ?? '', username: 'admin', password: '' });
   const [err, setErr] = useState('');
@@ -44,23 +236,46 @@ function Login({ onLogin }) {
   const enviar = async (e) => {
     e.preventDefault();
     setErr('');
+    const cleanTenant = f.tenant.trim().toLowerCase();
+    const cleanUsername = f.username.trim();
     try {
-      const m = await api('/admin/login', { method: 'POST', body: f });
-      localStorage.setItem('tenant', f.tenant);
+      const m = await api('/admin/login', {
+        method: 'POST',
+        body: { tenant: cleanTenant, username: cleanUsername, password: f.password },
+      });
+      localStorage.setItem('tenant', cleanTenant);
       onLogin(m);
     } catch (x) { setErr(mensaje(x)); }
   };
+
   return (
-    <main class="wrap narrow">
-      <h1>Panel de administración</h1>
-      <form onSubmit={enviar} class="card">
-        <label>Pinturería (código)<input value={f.tenant} onInput={set('tenant')} required /></label>
-        <label>Usuario<input value={f.username} onInput={set('username')} autocomplete="username" required /></label>
-        <label>Contraseña<input type="password" value={f.password} onInput={set('password')} autocomplete="current-password" required /></label>
-        {err && <p class="err">{err}</p>}
-        <button class="primary">Entrar</button>
-      </form>
-    </main>
+    <div class="admin-login-wrap">
+      <div class="admin-login-box">
+        <div class="admin-login-header">
+          <div class="admin-brand-icon" style={{ margin: '0 auto 12px' }}>
+            <PaletteIcon className="w-5 h-5 text-white" />
+          </div>
+          <h1>Panel de Administración</h1>
+          <p>Ingresá tus credenciales para gestionar el sistema</p>
+        </div>
+        <form onSubmit={enviar} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+          <label class="admin-field">
+            Pinturería (código)
+            <input class="admin-input" value={f.tenant} onInput={set('tenant')} required />
+          </label>
+          <label class="admin-field">
+            Usuario
+            <input class="admin-input" value={f.username} onInput={set('username')} autocomplete="username" required />
+          </label>
+          <label class="admin-field">
+            Contraseña
+            <input class="admin-input" type="password" value={f.password} onInput={set('password')} autocomplete="current-password" required />
+          </label>
+          {err && <div class="admin-notice-err">{err}</div>}
+          <button class="admin-btn admin-btn-primary" style={{ width: '100%', marginTop: '6px' }}>Entrar al Panel</button>
+        </form>
+      </div>
+    </div>
   );
 }
 
@@ -73,6 +288,9 @@ function useList(path) {
   return { rows, err, setErr, reload };
 }
 
+/* ==========================================================================
+   SECCIÓN: COLORES
+   ========================================================================== */
 const EMPTY_COLOR = { code: '', name: '', family: '', hex: '#cccccc', active: true };
 
 function Colors() {
@@ -103,45 +321,82 @@ function Colors() {
 
   return (
     <section>
-      <form onSubmit={guardar} class="card grid">
-        <label>Código<input value={f.code} onInput={set('code')} required /></label>
-        <label>Nombre<input value={f.name} onInput={set('name')} required /></label>
-        <label>Familia<input value={f.family} onInput={set('family')} placeholder="Blancos, Grises…" /></label>
-        <label>Color
-          <span class="row"><input type="color" value={f.hex} onInput={set('hex')} /><input value={f.hex} onInput={set('hex')} /></span>
-        </label>
-        <label class="check"><input type="checkbox" checked={f.active} onChange={(e) => setF({ ...f, active: e.target.checked })} /> Visible para clientes</label>
-        <div class="row">
-          <button class="primary">{editing ? 'Guardar cambios' : 'Agregar color'}</button>
-          {editing && <button type="button" onClick={() => { setEditing(null); setF(EMPTY_COLOR); }}>Cancelar</button>}
-        </div>
-      </form>
-      {err && <p class="err">{err}</p>}
+      <div class="admin-card-box">
+        <h3>{editing ? 'Editar color' : 'Agregar nuevo color'}</h3>
+        <form onSubmit={guardar} class="admin-grid-form">
+          <label class="admin-field">Código<input value={f.code} onInput={set('code')} required /></label>
+          <label class="admin-field">Nombre<input value={f.name} onInput={set('name')} required /></label>
+          <label class="admin-field">Familia<input value={f.family} onInput={set('family')} placeholder="Blancos, Grises…" /></label>
+          <label class="admin-field">
+            Color
+            <div class="admin-color-picker-group">
+              <input class="admin-color-swatch-input" type="color" value={f.hex} onInput={set('hex')} />
+              <input value={f.hex} onInput={set('hex')} placeholder="#ffffff" />
+            </div>
+          </label>
+          <div class="admin-col-full" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '12px', marginTop: '4px' }}>
+            <label class="admin-checkbox-label">
+              <input type="checkbox" checked={f.active} onChange={(e) => setF({ ...f, active: e.target.checked })} />
+              Visible para clientes
+            </label>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <button class="admin-btn admin-btn-primary">{editing ? 'Guardar cambios' : 'Agregar color'}</button>
+              {editing && <button type="button" class="admin-btn admin-btn-secondary" onClick={() => { setEditing(null); setF(EMPTY_COLOR); }}>Cancelar</button>}
+            </div>
+          </div>
+        </form>
+      </div>
+
+      {err && <div class="admin-notice-err">{err}</div>}
+
       {(rows?.length ?? 0) > 20 && (
-        <div class="row">
-          <input class="search" type="search" placeholder="Buscar por nombre, código o familia" value={q} onInput={(e) => setQ(e.target.value)} />
+        <div class="admin-search-bar">
+          <input class="admin-input admin-search-input" type="search" placeholder="Buscar por nombre, código o familia…" value={q} onInput={(e) => setQ(e.target.value)} />
           <span class="muted small">{filtered(rows).length} de {rows.length}{filtered(rows).length > 200 ? ' (mostrando 200)' : ''}</span>
         </div>
       )}
-      <table>
-        <thead><tr><th></th><th>Código</th><th>Nombre</th><th>Familia</th><th>Hex</th><th>LAB</th><th></th></tr></thead>
-        <tbody>
-          {filtered(rows).slice(0, 200).map((c) => (
-            <tr class={c.active ? '' : 'off'}>
-              <td><span class="sw" style={{ background: c.hex }} /></td>
-              <td>{c.code}</td><td>{c.name}</td><td>{c.family}</td><td>{c.hex}</td>
-              <td class="muted">{c.lab_l.toFixed(0)} / {c.lab_a.toFixed(0)} / {c.lab_b.toFixed(0)}</td>
-              <td class="row"><button onClick={() => editar(c)}>Editar</button><button onClick={() => borrar(c)}>Borrar</button></td>
+
+      <div class="admin-table-wrapper">
+        <table class="admin-data-table">
+          <thead>
+            <tr>
+              <th style={{ width: '48px' }}>Color</th>
+              <th>Código</th>
+              <th>Nombre</th>
+              <th>Familia</th>
+              <th>Hex</th>
+              <th>LAB</th>
+              <th style={{ textAlign: 'right' }}>Acciones</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
-      {rows?.length === 0 && <p class="muted">Todavía no cargaste colores.</p>}
+          </thead>
+          <tbody>
+            {filtered(rows).slice(0, 200).map((c) => (
+              <tr class={c.active ? '' : 'off'}>
+                <td><span class="admin-color-preview-chip" style={{ background: c.hex }} /></td>
+                <td><strong>{c.code}</strong></td>
+                <td>{c.name}</td>
+                <td>{c.family}</td>
+                <td><code>{c.hex}</code></td>
+                <td class="muted">{c.lab_l.toFixed(0)} / {c.lab_a.toFixed(0)} / {c.lab_b.toFixed(0)}</td>
+                <td style={{ textAlign: 'right' }}>
+                  <div style={{ display: 'inline-flex', gap: '6px' }}>
+                    <button class="admin-btn-edit-outline" onClick={() => editar(c)}>Editar</button>
+                    <button class="admin-btn-danger-outline" onClick={() => borrar(c)}>Borrar</button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {rows?.length === 0 && <div class="admin-empty-state">Todavía no cargaste colores.</div>}
+      </div>
     </section>
   );
 }
 
-/** Importar productos desde un CSV (Excel): vista previa con errores por línea y recién después se aplica. */
+/* ==========================================================================
+   SECCIÓN: IMPORTADOR CSV DE PRODUCTOS
+   ========================================================================== */
 function ProductImport({ onDone }) {
   const [open, setOpen] = useState(false);
   const [csv, setCsv] = useState('');
@@ -191,58 +446,67 @@ function ProductImport({ onDone }) {
 
   const s = res?.summary;
   return (
-    <div class="card">
-      <div class="row">
-        <strong>Importar productos desde Excel / CSV</strong>
-        <button onClick={() => setOpen(!open)}>{open ? 'Cerrar' : 'Abrir'}</button>
+    <div class="admin-card-box" style={{ background: '#f8fafc', borderColor: '#cbd5e1' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
+        <div>
+          <strong style={{ fontSize: '0.95rem', color: '#1e293b' }}>Importar productos desde Excel / CSV</strong>
+          <p style={{ margin: '2px 0 0 0', fontSize: '0.82rem', color: '#64748b' }}>Carga masiva o actualización de precios por planilla</p>
+        </div>
+        <button class="admin-btn admin-btn-secondary" onClick={() => setOpen(!open)}>{open ? 'Cerrar importador' : 'Abrir importador'}</button>
       </div>
       {open && (
-        <>
-          <p class="muted small">
+        <div style={{ marginTop: '16px', paddingTop: '16px', borderTop: '1px solid #e2e8f0' }}>
+          <p class="muted small" style={{ marginTop: 0 }}>
             Una fila por <strong>presentación</strong>: repetí el SKU y cambiá litros y precio. Obligatorias: <em>sku, nombre, rendimiento</em> (m² por litro y por mano).
             Acepta separador <code>;</code> o <code>,</code>, coma decimal y precios como <code>$ 48.000,50</code>. Si el SKU ya existe se actualiza.
           </p>
-          <div class="row">
-            <button onClick={plantilla}>⬇︎ Descargar plantilla</button>
-            <label class="btn primary">📄 Elegir archivo CSV<input type="file" accept=".csv,.txt,text/csv" onChange={elegir} hidden /></label>
-            {fileName && <span class="muted small">{fileName}</span>}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap', margin: '14px 0' }}>
+            <button class="admin-btn admin-btn-secondary" onClick={plantilla}>⬇︎ Descargar plantilla CSV</button>
+            <label class="admin-btn admin-btn-primary" style={{ cursor: 'pointer' }}>
+              📄 Elegir archivo CSV
+              <input type="file" accept=".csv,.txt,text/csv" onChange={elegir} hidden />
+            </label>
+            {fileName && <span class="muted small" style={{ fontWeight: 600 }}>{fileName}</span>}
           </div>
-          {busy && <p class="muted">Procesando…</p>}
+          {busy && <p class="muted small">Procesando archivo…</p>}
           {s && (
-            <div class="result">
-              <p>
+            <div class="result" style={{ marginTop: '12px' }}>
+              <p style={{ margin: 0 }}>
                 {s.products} productos ({s.sizes} presentaciones): <strong>{s.create} nuevos</strong>, <strong>{s.update} se actualizan</strong>
                 {replace && <>, <strong class="err">{s.remove} se borran</strong>{s.remove ? ` (${s.removeNames.join(', ')}${s.remove > s.removeNames.length ? '…' : ''})` : ''}</>}.
               </p>
               {res.errors.length > 0 && (
-                <>
+                <div style={{ marginTop: '10px' }}>
                   <p class="err"><strong>Corregí {res.errors.length} {res.errors.length === 1 ? 'error' : 'errores'} y volvé a elegir el archivo (no se importó nada):</strong></p>
-                  <ul class="small">{res.errors.slice(0, 30).map((e) => <li><strong>Línea {e.line}:</strong> {e.message}</li>)}</ul>
+                  <ul class="small" style={{ margin: '6px 0', paddingLeft: '20px' }}>{res.errors.slice(0, 30).map((e) => <li><strong>Línea {e.line}:</strong> {e.message}</li>)}</ul>
                   {res.errors.length > 30 && <p class="muted small">…y {res.errors.length - 30} más.</p>}
-                </>
+                </div>
               )}
               {res.warnings.length > 0 && (
-                <details><summary class="muted small">{res.warnings.length} {res.warnings.length === 1 ? 'aviso' : 'avisos'}</summary>
-                  <ul class="small">{res.warnings.slice(0, 30).map((w) => <li>Línea {w.line}: {w.message}</li>)}</ul>
+                <details style={{ marginTop: '8px' }}><summary class="muted small">{res.warnings.length} {res.warnings.length === 1 ? 'aviso' : 'avisos'}</summary>
+                  <ul class="small" style={{ margin: '6px 0', paddingLeft: '20px' }}>{res.warnings.slice(0, 30).map((w) => <li>Línea {w.line}: {w.message}</li>)}</ul>
                 </details>
               )}
-              {res.ignoredColumns?.length > 0 && <p class="muted small">Columnas que no se usan: {res.ignoredColumns.join(', ')}.</p>}
+              {res.ignoredColumns?.length > 0 && <p class="muted small" style={{ marginTop: '6px' }}>Columnas que no se usan: {res.ignoredColumns.join(', ')}.</p>}
               {res.ok && (
-                <>
-                  <label class="check"><input type="checkbox" checked={replace} onChange={(e) => cambiarModo(e.target.checked)} /> Reemplazar todo: borrar los productos que no estén en el archivo</label>
-                  <button class="primary" onClick={importar} disabled={busy}>Importar {s.products} productos</button>
-                </>
+                <div style={{ marginTop: '14px', display: 'flex', flexDirection: 'column', gap: '10px', alignItems: 'flex-start' }}>
+                  <label class="admin-checkbox-label"><input type="checkbox" checked={replace} onChange={(e) => cambiarModo(e.target.checked)} /> Reemplazar todo: borrar los productos que no estén en el archivo</label>
+                  <button class="admin-btn admin-btn-primary" onClick={importar} disabled={busy}>Importar {s.products} productos</button>
+                </div>
               )}
             </div>
           )}
-        </>
+        </div>
       )}
-      {msg.ok && <p class="ok">{msg.ok}</p>}
-      {msg.err && <p class="err">{msg.err}</p>}
+      {msg.ok && <div class="admin-notice-ok">{msg.ok}</div>}
+      {msg.err && <div class="admin-notice-err">{msg.err}</div>}
     </div>
   );
 }
 
+/* ==========================================================================
+   SECCIÓN: PRODUCTOS
+   ========================================================================== */
 const EMPTY_PRODUCT = { sku: '', name: '', category: '', description: '', coats: 2, yield_m2_per_l: 10, tech_sheet: '', active: true, sizes: [{ liters: 4, price: '' }] };
 
 function Products() {
@@ -278,51 +542,86 @@ function Products() {
   return (
     <section>
       <ProductImport onDone={reload} />
-      <form onSubmit={guardar} class="card grid">
-        <label>SKU<input value={f.sku} onInput={set('sku')} required /></label>
-        <label>Nombre<input value={f.name} onInput={set('name')} required /></label>
-        <label>Categoría<input value={f.category} onInput={set('category')} placeholder="interior, exterior, humedad…" /></label>
-        <label>Manos recomendadas<input type="number" min="1" max="4" value={f.coats} onInput={set('coats')} /></label>
-        <label>Rendimiento por mano (m²/L)<input type="number" step="0.1" min="0.1" value={f.yield_m2_per_l} onInput={set('yield_m2_per_l')} required /></label>
-        <label class="wide">Descripción<textarea rows="2" value={f.description} onInput={set('description')} /></label>
-        <label class="wide">Ficha técnica (pasos de aplicación, preparación, advertencias)
-          <textarea rows="5" value={f.tech_sheet} onInput={set('tech_sheet')} />
-        </label>
-        <div class="wide">
-          <strong>Presentaciones y precios (ARS)</strong>
-          {f.sizes.map((s, i) => (
-            <div class="row">
-              <input type="number" step="0.5" min="0.5" placeholder="Litros" value={s.liters} onInput={(e) => setSize(i, 'liters', e.target.value)} />
-              <input type="number" step="1" min="0" placeholder="Precio $" value={s.price} onInput={(e) => setSize(i, 'price', e.target.value)} />
-              <button type="button" onClick={() => setF({ ...f, sizes: f.sizes.filter((_, j) => j !== i) })}>Quitar</button>
+
+      <div class="admin-card-box">
+        <h3>{editing ? 'Editar producto' : 'Agregar nuevo producto'}</h3>
+        <form onSubmit={guardar} class="admin-grid-form">
+          <label class="admin-field">SKU<input value={f.sku} onInput={set('sku')} placeholder="PINT-01" required /></label>
+          <label class="admin-field">Nombre<input value={f.name} onInput={set('name')} placeholder="Látex Interior Mate" required /></label>
+          <label class="admin-field">Categoría<input value={f.category} onInput={set('category')} placeholder="interior, exterior, humedad…" /></label>
+          <label class="admin-field">Manos recomendadas<input type="number" min="1" max="4" value={f.coats} onInput={set('coats')} /></label>
+          <label class="admin-field">Rendimiento por mano (m²/L)<input type="number" step="0.1" min="0.1" value={f.yield_m2_per_l} onInput={set('yield_m2_per_l')} required /></label>
+          <label class="admin-field admin-col-full">Descripción<textarea rows="2" value={f.description} onInput={set('description')} placeholder="Breve resumen del producto…" /></label>
+          <label class="admin-field admin-col-full">Ficha técnica (pasos de aplicación, preparación, advertencias)
+            <textarea rows="4" value={f.tech_sheet} onInput={set('tech_sheet')} placeholder="Superficies recomendadas, tiempo de secado, dilución…" />
+          </label>
+          <div class="admin-col-full">
+            <span style={{ fontSize: '0.82rem', fontWeight: 600, color: '#334155', display: 'block', marginBottom: '8px' }}>Presentaciones y precios (ARS)</span>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              {f.sizes.map((s, i) => (
+                <div key={i} style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                  <input style={{ maxWidth: '140px' }} type="number" step="0.5" min="0.5" placeholder="Litros (ej: 4)" value={s.liters} onInput={(e) => setSize(i, 'liters', e.target.value)} />
+                  <input style={{ maxWidth: '180px' }} type="number" step="1" min="0" placeholder="Precio $ ARS" value={s.price} onInput={(e) => setSize(i, 'price', e.target.value)} />
+                  <button type="button" class="admin-btn-danger-outline" onClick={() => setF({ ...f, sizes: f.sizes.filter((_, j) => j !== i) })}>Quitar</button>
+                </div>
+              ))}
             </div>
-          ))}
-          <button type="button" onClick={() => setF({ ...f, sizes: [...f.sizes, { liters: '', price: '' }] })}>+ Presentación</button>
-        </div>
-        <label class="check"><input type="checkbox" checked={f.active} onChange={(e) => setF({ ...f, active: e.target.checked })} /> Visible para clientes</label>
-        <div class="row">
-          <button class="primary">{editing ? 'Guardar cambios' : 'Agregar producto'}</button>
-          {editing && <button type="button" onClick={() => { setEditing(null); setF(EMPTY_PRODUCT); }}>Cancelar</button>}
-        </div>
-      </form>
-      {err && <p class="err">{err}</p>}
-      <table>
-        <thead><tr><th>SKU</th><th>Nombre</th><th>Categoría</th><th>Rend.</th><th>Presentaciones</th><th></th></tr></thead>
-        <tbody>
-          {(rows ?? []).map((p) => (
-            <tr class={p.active ? '' : 'off'}>
-              <td>{p.sku}</td><td>{p.name}</td><td>{p.category}</td><td>{p.yield_m2_per_l} m²/L</td>
-              <td>{p.sizes.map((s) => `${s.liters} L ${pesos(s.price_cents)}`).join(' · ')}</td>
-              <td class="row"><button onClick={() => editar(p)}>Editar</button><button onClick={() => borrar(p)}>Borrar</button></td>
+            <button type="button" class="admin-btn admin-btn-secondary" style={{ marginTop: '10px' }} onClick={() => setF({ ...f, sizes: [...f.sizes, { liters: '', price: '' }] })}>+ Agregar presentación</button>
+          </div>
+          <div class="admin-col-full" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '12px', marginTop: '6px' }}>
+            <label class="admin-checkbox-label">
+              <input type="checkbox" checked={f.active} onChange={(e) => setF({ ...f, active: e.target.checked })} />
+              Visible para clientes
+            </label>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <button class="admin-btn admin-btn-primary">{editing ? 'Guardar cambios' : 'Agregar producto'}</button>
+              {editing && <button type="button" class="admin-btn admin-btn-secondary" onClick={() => { setEditing(null); setF(EMPTY_PRODUCT); }}>Cancelar</button>}
+            </div>
+          </div>
+        </form>
+      </div>
+
+      {err && <div class="admin-notice-err">{err}</div>}
+
+      <div class="admin-table-wrapper">
+        <table class="admin-data-table">
+          <thead>
+            <tr>
+              <th>SKU</th>
+              <th>Nombre</th>
+              <th>Categoría</th>
+              <th>Rendimiento</th>
+              <th>Presentaciones</th>
+              <th style={{ textAlign: 'right' }}>Acciones</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
-      {rows?.length === 0 && <p class="muted">Todavía no cargaste productos.</p>}
+          </thead>
+          <tbody>
+            {(rows ?? []).map((p) => (
+              <tr class={p.active ? '' : 'off'}>
+                <td><strong>{p.sku}</strong></td>
+                <td>{p.name}</td>
+                <td>{p.category}</td>
+                <td>{p.yield_m2_per_l} m²/L</td>
+                <td>{p.sizes.map((s) => `${s.liters} L ${pesos(s.price_cents)}`).join(' · ')}</td>
+                <td style={{ textAlign: 'right' }}>
+                  <div style={{ display: 'inline-flex', gap: '6px' }}>
+                    <button class="admin-btn-edit-outline" onClick={() => editar(p)}>Editar</button>
+                    <button class="admin-btn-danger-outline" onClick={() => borrar(p)}>Borrar</button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {rows?.length === 0 && <div class="admin-empty-state">Todavía no cargaste productos.</div>}
+      </div>
     </section>
   );
 }
 
+/* ==========================================================================
+   SECCIÓN: SUCURSALES
+   ========================================================================== */
 const EMPTY_BRANCH = { name: '', address: '', whatsapp: '', active: true, position: 0 };
 
 function Branches() {
@@ -346,38 +645,70 @@ function Branches() {
 
   return (
     <section>
-      <p class="muted small">
+      <div style={{ background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '10px', padding: '12px 16px', marginBottom: '18px', fontSize: '0.84rem', color: '#1e40af' }}>
         Cada sucursal puede tener su propio WhatsApp. Si cargás 2 o más, el cliente elige a cuál le manda el presupuesto.
         Si una sucursal no tiene número propio, se usa el de "Ajustes". Con una sola sucursal se usa directamente.
-      </p>
-      <form onSubmit={guardar} class="card grid">
-        <label>Nombre<input value={f.name} onInput={set('name')} placeholder="Río Cuarto - Centro" required /></label>
-        <label>Dirección<input value={f.address} onInput={set('address')} /></label>
-        <label>WhatsApp<input value={f.whatsapp} onInput={set('whatsapp')} placeholder="5493584907406" inputmode="tel" /></label>
-        <label>Orden<input type="number" min="0" max="999" value={f.position} onInput={set('position')} /></label>
-        <label class="check"><input type="checkbox" checked={f.active} onChange={(e) => setF({ ...f, active: e.target.checked })} /> Visible para clientes</label>
-        <div class="row">
-          <button class="primary">{editing ? 'Guardar cambios' : 'Agregar sucursal'}</button>
-          {editing && <button type="button" onClick={() => { setEditing(null); setF(EMPTY_BRANCH); }}>Cancelar</button>}
-        </div>
-      </form>
-      {err && <p class="err">{err}</p>}
-      <table>
-        <thead><tr><th>Orden</th><th>Nombre</th><th>Dirección</th><th>WhatsApp</th><th></th></tr></thead>
-        <tbody>
-          {(rows ?? []).map((b) => (
-            <tr class={b.active ? '' : 'off'}>
-              <td>{b.position}</td><td>{b.name}</td><td>{b.address}</td><td>{b.whatsapp || <span class="muted">usa el de Ajustes</span>}</td>
-              <td class="row"><button onClick={() => editar(b)}>Editar</button><button onClick={() => borrar(b)}>Borrar</button></td>
+      </div>
+
+      <div class="admin-card-box">
+        <h3>{editing ? 'Editar sucursal' : 'Agregar nueva sucursal'}</h3>
+        <form onSubmit={guardar} class="admin-grid-form">
+          <label class="admin-field">Nombre<input value={f.name} onInput={set('name')} placeholder="Río Cuarto - Centro" required /></label>
+          <label class="admin-field">Dirección<input value={f.address} onInput={set('address')} placeholder="San Martín 450" /></label>
+          <label class="admin-field">WhatsApp<input value={f.whatsapp} onInput={set('whatsapp')} placeholder="5493584907406" inputmode="tel" /></label>
+          <label class="admin-field">Orden<input type="number" min="0" max="999" value={f.position} onInput={set('position')} /></label>
+          <div class="admin-col-full" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '12px', marginTop: '4px' }}>
+            <label class="admin-checkbox-label">
+              <input type="checkbox" checked={f.active} onChange={(e) => setF({ ...f, active: e.target.checked })} />
+              Visible para clientes
+            </label>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <button class="admin-btn admin-btn-primary">{editing ? 'Guardar cambios' : 'Agregar sucursal'}</button>
+              {editing && <button type="button" class="admin-btn admin-btn-secondary" onClick={() => { setEditing(null); setF(EMPTY_BRANCH); }}>Cancelar</button>}
+            </div>
+          </div>
+        </form>
+      </div>
+
+      {err && <div class="admin-notice-err">{err}</div>}
+
+      <div class="admin-table-wrapper">
+        <table class="admin-data-table">
+          <thead>
+            <tr>
+              <th style={{ width: '60px' }}>Orden</th>
+              <th>Nombre</th>
+              <th>Dirección</th>
+              <th>WhatsApp</th>
+              <th style={{ textAlign: 'right' }}>Acciones</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
-      {rows?.length === 0 && <p class="muted">Todavía no cargaste sucursales.</p>}
+          </thead>
+          <tbody>
+            {(rows ?? []).map((b) => (
+              <tr class={b.active ? '' : 'off'}>
+                <td><strong>{b.position}</strong></td>
+                <td>{b.name}</td>
+                <td>{b.address}</td>
+                <td>{b.whatsapp || <span class="muted">usa el de Ajustes</span>}</td>
+                <td style={{ textAlign: 'right' }}>
+                  <div style={{ display: 'inline-flex', gap: '6px' }}>
+                    <button class="admin-btn-edit-outline" onClick={() => editar(b)}>Editar</button>
+                    <button class="admin-btn-danger-outline" onClick={() => borrar(b)}>Borrar</button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {rows?.length === 0 && <div class="admin-empty-state">Todavía no cargaste sucursales.</div>}
+      </div>
     </section>
   );
 }
 
+/* ==========================================================================
+   SECCIÓN: AJUSTES
+   ========================================================================== */
 function Settings() {
   const [f, setF] = useState(null);
   const [msg, setMsg] = useState({ ok: '', err: '' });
@@ -386,22 +717,37 @@ function Settings() {
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
   const guardar = async (e) => {
     e.preventDefault();
-    try { await api('/admin/settings', { method: 'PUT', body: f }); setMsg({ ok: 'Guardado.', err: '' }); }
+    try { await api('/admin/settings', { method: 'PUT', body: f }); setMsg({ ok: 'Ajustes guardados con éxito.', err: '' }); }
     catch (x) { setMsg({ ok: '', err: mensaje(x) }); }
   };
+
   return (
-    <form onSubmit={guardar} class="card grid">
-      <label>Nombre del negocio<input value={f.name} onInput={set('name')} required /></label>
-      <label>WhatsApp para presupuestos<input value={f.whatsapp} onInput={set('whatsapp')} placeholder="5491112345678" /></label>
-      <label>Logo (URL https)<input value={f.logo_url} onInput={set('logo_url')} /></label>
-      <label>Color de marca<span class="row"><input type="color" value={f.primary_color} onInput={set('primary_color')} /><input value={f.primary_color} onInput={set('primary_color')} /></span></label>
-      <div><button class="primary">Guardar</button></div>
-      {msg.ok && <p class="ok">{msg.ok}</p>}
-      {msg.err && <p class="err">{msg.err}</p>}
-    </form>
+    <div class="admin-card-box" style={{ maxWidth: '720px' }}>
+      <h3>Ajustes Generales del Negocio</h3>
+      <form onSubmit={guardar} class="admin-grid-form">
+        <label class="admin-field admin-col-full">Nombre del negocio<input value={f.name} onInput={set('name')} required /></label>
+        <label class="admin-field admin-col-full">WhatsApp para presupuestos<input value={f.whatsapp} onInput={set('whatsapp')} placeholder="5491112345678" /></label>
+        <label class="admin-field admin-col-full">Logo (URL https)<input value={f.logo_url} onInput={set('logo_url')} placeholder="https://..." /></label>
+        <label class="admin-field admin-col-full">
+          Color de marca
+          <div class="admin-color-picker-group">
+            <input class="admin-color-swatch-input" type="color" value={f.primary_color} onInput={set('primary_color')} />
+            <input value={f.primary_color} onInput={set('primary_color')} placeholder="#1f6feb" />
+          </div>
+        </label>
+        <div class="admin-col-full" style={{ marginTop: '8px' }}>
+          <button class="admin-btn admin-btn-primary">Guardar ajustes</button>
+        </div>
+        {msg.ok && <div class="admin-col-full admin-notice-ok">{msg.ok}</div>}
+        {msg.err && <div class="admin-col-full admin-notice-err">{msg.err}</div>}
+      </form>
+    </div>
   );
 }
 
+/* ==========================================================================
+   SECCIÓN: CUENTA Y SEGURIDAD
+   ========================================================================== */
 function Account() {
   const [f, setF] = useState({ current: '', next: '' });
   const [msg, setMsg] = useState({ ok: '', err: '' });
@@ -410,16 +756,28 @@ function Account() {
     e.preventDefault();
     try {
       await api('/admin/password', { method: 'POST', body: f });
-      setF({ current: '', next: '' }); setMsg({ ok: 'Contraseña cambiada.', err: '' });
+      setF({ current: '', next: '' }); setMsg({ ok: 'Contraseña actualizada con éxito.', err: '' });
     } catch (x) { setMsg({ ok: '', err: mensaje(x) }); }
   };
+
   return (
-    <form onSubmit={guardar} class="card narrow">
-      <label>Contraseña actual<input type="password" value={f.current} onInput={set('current')} autocomplete="current-password" required /></label>
-      <label>Contraseña nueva (mínimo 10 caracteres)<input type="password" value={f.next} onInput={set('next')} minlength="10" autocomplete="new-password" required /></label>
-      <button class="primary">Cambiar contraseña</button>
-      {msg.ok && <p class="ok">{msg.ok}</p>}
-      {msg.err && <p class="err">{msg.err}</p>}
-    </form>
+    <div class="admin-card-box" style={{ maxWidth: '480px' }}>
+      <h3>Seguridad y Contraseña</h3>
+      <form onSubmit={guardar} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+        <label class="admin-field">
+          Contraseña actual
+          <input class="admin-input" type="password" value={f.current} onInput={set('current')} autocomplete="current-password" required />
+        </label>
+        <label class="admin-field">
+          Contraseña nueva (mínimo 10 caracteres)
+          <input class="admin-input" type="password" value={f.next} onInput={set('next')} minlength="10" autocomplete="new-password" required />
+        </label>
+        <div style={{ marginTop: '6px' }}>
+          <button class="admin-btn admin-btn-primary">Cambiar contraseña</button>
+        </div>
+        {msg.ok && <div class="admin-notice-ok">{msg.ok}</div>}
+        {msg.err && <div class="admin-notice-err">{msg.err}</div>}
+      </form>
+    </div>
   );
 }
