@@ -5,7 +5,8 @@ Los modelos se cargan UNA vez al arrancar el worker (import de app); cada pedido
 import base64, io
 import runpod
 from PIL import Image, ImageOps
-from app import clases, png
+from app import clases, png, mapas_sam
+import numpy as np
 
 
 def handler(job):
@@ -16,6 +17,14 @@ def handler(job):
         img = ImageOps.exif_transpose(Image.open(io.BytesIO(datos))).convert("RGB")
     except Exception as e:  # noqa: BLE001 - foto ilegible
         return {"error": f"foto_invalida: {e}"}
+    textos = job["input"].get("textos")
+    if textos:  # diagnóstico (solo staging): mapa de puntaje 0-255 por cada texto, para probar reglas nuevas sin rehacer la imagen
+        if not isinstance(textos, list) or len(textos) > 12 or not all(isinstance(t, str) and 0 < len(t) <= 40 for t in textos):
+            return {"error": "textos_invalidos"}
+        if max(img.size) > 1280:
+            img.thumbnail((1280, 1280))
+        R = mapas_sam(img, textos)
+        return {"mapas": {t: base64.b64encode(png((R[t][0] * 255).astype(np.uint8))).decode() for t in textos}, "ancho": img.size[0], "alto": img.size[1]}
     p, seg = clases(img)
     return {"png": base64.b64encode(png(p)).decode(), "ancho": int(p.shape[1]), "alto": int(p.shape[0]), "segundos": round(seg, 2)}
 

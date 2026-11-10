@@ -53,7 +53,7 @@ export function createApp({ db, webDir, modelsDir, uploadsDir, allowTenantParam 
   });
 
   if (db) {
-    app.use('/api/public', tenantMiddleware(db, { allowTenantParam }), publicRoutes(db, { segmentarFn }));
+    app.use('/api/public', tenantMiddleware(db, { allowTenantParam }), publicRoutes(db, { segmentarFn, diagnostico: allowTenantParam }));
     app.use('/api/admin', adminRoutes(db, { secureCookies }));
   }
   app.use('/api', (_req, res) => res.status(404).json({ error: 'no_encontrado' }));

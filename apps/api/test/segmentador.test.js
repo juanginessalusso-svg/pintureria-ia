@@ -69,3 +69,19 @@ test('segmentarEnRunpod: un error del worker se propaga', async () => {
   const fetchFn = async () => ({ ok: true, json: async () => ({ id: 'j', status: 'COMPLETED', output: { error: 'foto_invalida' } }) });
   await assert.rejects(segmentarEnRunpod(FOTO, { apiKey: 'k', endpointId: 'ep', fetchFn }), /foto_invalida/);
 });
+
+test('diagnóstico (solo staging): pasa los textos al segmentador y devuelve sus mapas', async () => {
+  process.env.RUNPOD_API_KEY = 'clave-falsa'; process.env.RUNPOD_ENDPOINT_ID = 'ep1';
+  const r = await fetch(`${base}/api/public/segmentar/diag?tenant=a&textos=brick%20wall,sky`, { method: 'POST', headers: { 'content-type': 'image/jpeg' }, body: FOTO });
+  assert.equal(r.status, 200);
+  assert.deepEqual(llamadas.at(-1).opts.textos, ['brick wall', 'sky']);
+});
+
+test('diagnóstico: no existe si la API no está en modo staging', async () => {
+  const db = openDb(':memory:');
+  createTenant(db, { slug: 'a', name: 'A', domains: ['a.test'], username: 'admin', password: 'clave-de-prueba-A1' });
+  const s = createApp({ db, segmentarFn: async () => ({}) }).listen(0);
+  const r = await fetch(`http://127.0.0.1:${s.address().port}/api/public/segmentar/diag?textos=x`, { method: 'POST', headers: { 'content-type': 'image/jpeg', host: 'a.test' }, body: FOTO });
+  assert.equal(r.status, 404);
+  s.close();
+});

@@ -4,7 +4,7 @@ import { branches } from '../branches.js';
 import { crearLimitador, segmentarEnRunpod } from '../segmentador.js';
 
 /** Datos que ve el cliente final. Siempre filtrados por req.tenant (lo resuelve tenantMiddleware). `segmentarFn` es para tests. */
-export function publicRoutes(db, { segmentarFn } = {}) {
+export function publicRoutes(db, { segmentarFn, diagnostico = false } = {}) {
   const cat = catalog(db);
   const branchRepo = branches(db);
   const r = Router();
@@ -54,6 +54,19 @@ export function publicRoutes(db, { segmentarFn } = {}) {
       res.status(503).json({ error: 'segmentador_no_disponible' });
     }
   });
+
+  // Diagnóstico (SOLO staging, mismo interruptor que ?tenant=): puntajes de SAM 3 para textos arbitrarios, para probar reglas nuevas.
+  if (diagnostico) {
+    r.post('/segmentar/diag', express.raw({ type: ['image/jpeg', 'image/png'], limit: '4mb' }), async (req, res) => {
+      const apiKey = process.env.RUNPOD_API_KEY, endpointId = process.env.RUNPOD_ENDPOINT_ID;
+      if (!apiKey || !endpointId) return res.status(503).json({ error: 'segmentador_no_configurado' });
+      const textos = String(req.query.textos ?? '').split(',').map((t) => t.trim()).filter(Boolean);
+      if (!textos.length || textos.length > 12 || !Buffer.isBuffer(req.body) || req.body.length < 100) return res.status(400).json({ error: 'pedido_invalido' });
+      if (!limitador.permitir(req.ip)) return res.status(429).json({ error: 'demasiadas_fotos' });
+      try { res.json(await (segmentarFn ?? segmentarEnRunpod)(req.body, { apiKey, endpointId, textos, plazoMs: 55_000 })); }
+      catch (e) { console.warn('[segmentador diag]', e?.message); res.status(503).json({ error: 'segmentador_no_disponible' }); }
+    });
+  }
 
   return r;
 }

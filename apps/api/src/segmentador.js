@@ -24,10 +24,10 @@ export function crearLimitador({ max = 20, ventanaMs = 10 * 60_000, ahora = () =
  * Manda la foto (Buffer jpeg/png) al endpoint de RunPod y devuelve { png: Buffer, ancho, alto, segundos }.
  * Usa /runsync y, si el trabajo sigue en cola (arranque en frío), consulta /status hasta `plazoMs`.
  */
-export async function segmentarEnRunpod(foto, { apiKey, endpointId, fetchFn = fetch, plazoMs = 120_000, esperaMs = 1500, dormir = (ms) => new Promise((r) => setTimeout(r, ms)) } = {}) {
+export async function segmentarEnRunpod(foto, { apiKey, endpointId, textos = null, fetchFn = fetch, plazoMs = 120_000, esperaMs = 1500, dormir = (ms) => new Promise((r) => setTimeout(r, ms)) } = {}) {
   const headers = { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' };
   const t0 = Date.now();
-  let r = await fetchFn(`${BASE}/${endpointId}/runsync`, { method: 'POST', headers, body: JSON.stringify({ input: { imagen: foto.toString('base64') } }), signal: AbortSignal.timeout(plazoMs) });
+  let r = await fetchFn(`${BASE}/${endpointId}/runsync`, { method: 'POST', headers, body: JSON.stringify({ input: { imagen: foto.toString('base64'), ...(textos ? { textos } : {}) } }), signal: AbortSignal.timeout(plazoMs) });
   if (!r.ok) throw new Error(`runpod_http_${r.status}`);
   let job = await r.json();
   while (job.status === 'IN_QUEUE' || job.status === 'IN_PROGRESS') {
@@ -39,6 +39,8 @@ export async function segmentarEnRunpod(foto, { apiKey, endpointId, fetchFn = fe
   }
   if (job.status !== 'COMPLETED') throw new Error(`runpod_${String(job.status ?? 'sin_estado').toLowerCase()}`);
   const out = job.output ?? {};
-  if (out.error || !out.png) throw new Error(`segmentador: ${out.error ?? 'sin_png'}`);
+  if (out.error) throw new Error(`segmentador: ${out.error}`);
+  if (textos) return out; // diagnóstico: { mapas: { texto: png base64 }, ancho, alto }
+  if (!out.png) throw new Error('segmentador: sin_png');
   return { png: Buffer.from(out.png, 'base64'), ancho: out.ancho, alto: out.alto, segundos: out.segundos };
 }
