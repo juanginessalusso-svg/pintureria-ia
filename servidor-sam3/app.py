@@ -81,7 +81,7 @@ def clases(img: Image.Image):
     if max(img.size) > 1280:  # mismo tamaño de trabajo que la app
         img.thumbnail((1280, 1280))
     t0 = time.perf_counter()
-    R = mapas_sam(img, ["painted wall", "wall", "ceiling", "tile", "tiled wall", "mirror", "wallpaper", "stucco wall", "brick wall", "sky", "garage door", "pergola"])
+    R = mapas_sam(img, ["painted wall", "wall", "ceiling", "tile", "tiled wall", "mirror", "wallpaper", "stucco wall", "brick wall", "sky", "garage door", "pergola", "facade"])
     (pw, ipw), (ww, iww), (pc, ipc) = R["painted wall"], R["wall"], R["ceiling"]
     m9 = clases_r9(img)
     p = np.zeros(pw.shape, np.uint8)
@@ -92,6 +92,10 @@ def clases(img: Image.Image):
     for insts, clase in ((ipw, 1), (iww, 1), (ipc, 2)):  # regla 3: instancias dudosas que r9 confirma
         for mk, s in insts:
             if DUDA <= s < ALTO and mk.mean() >= 0.01 and np.mean(m9[mk] == clase) >= 0.5:
+                p[mk & (p == 0)] = clase
+            # 3b: en exteriores r9 (entrenado con interiores) no confirma; ahí confirma "facade" >= 0,8 (zócalo rojo de w57).
+            # El examen interior no cambia ni con 0,6.
+            elif clase == 1 and DUDA <= s < ALTO and mk.mean() >= 0.01 and R["facade"][0][mk].mean() >= 0.8:
                 p[mk & (p == 0)] = clase
     for texto in ("tile", "mirror", "wallpaper"):  # regla 4: azulejos, espejos y papel tapiz afuera
         for mk, s in R[texto][1]:
