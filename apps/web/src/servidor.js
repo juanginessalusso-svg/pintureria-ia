@@ -1,17 +1,18 @@
 // Detección en el servidor con GPU (SAM 3 + r9) SIN usar nada pesado en el celular: se manda la foto, vuelve el mapa
 // (PNG RGB: R = clase 0 otro / 1 pared / 2 techo, G = número de pared) y las superficies salen directo de él.
 // Con esto el cliente no espera la descarga de ~45 MB de MobileSAM ni el análisis en el teléfono: foto -> ~3 s -> elegir colores.
-import { superficiesDesdeMapa, rellenarBordes } from '@pintureria/core';
+import { superficiesDesdeMapa, rellenarBordes, marcarZocalos } from '@pintureria/core';
 
 /** Lee un PNG de mapa (Blob) al tamaño de la foto: { map, inst|null }. Nearest (sin mezclar clases en los bordes). */
 async function leerMapa(blob, width, height) {
   const bmp = await createImageBitmap(blob);
   const c = new OffscreenCanvas(width, height), ctx = c.getContext('2d', { willReadFrequently: true });
   ctx.imageSmoothingEnabled = false; ctx.drawImage(bmp, 0, 0, width, height); bmp.close?.();
-  const px = ctx.getImageData(0, 0, width, height).data, N = width * height, map = new Uint8Array(N), inst = new Uint8Array(N);
+  const px = ctx.getImageData(0, 0, width, height).data, N = width * height, map = new Uint8Array(N), inst = new Uint8Array(N), veto = new Uint8Array(N);
   let rgb = false;
-  for (let i = 0; i < N; i++) { map[i] = px[i * 4]; inst[i] = px[i * 4 + 1]; if (inst[i] !== map[i]) rgb = true; }
-  return { map, inst: rgb ? inst : null }; // un PNG gris (servidor viejo) trae G = R: sin números de pared
+  let hayVeto = false;
+  for (let i = 0; i < N; i++) { map[i] = px[i * 4]; inst[i] = px[i * 4 + 1]; if (inst[i] !== map[i]) rgb = true; if (px[i * 4 + 2] > 127 && px[i * 4 + 2] !== px[i * 4]) { veto[i] = 1; hayVeto = true; } }
+  return { map, inst: rgb ? inst : null, veto: hayVeto ? veto : null }; // B = 255: zona prohibida // un PNG gris (servidor viejo) trae G = R: sin números de pared
 }
 
 /**
@@ -26,9 +27,11 @@ export async function superficiesDelServidor(foto, url, { fetchFn = fetch } = {}
     c.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(data), width, height), 0, 0);
     const r = await fetchFn(url, { method: 'POST', headers: { 'Content-Type': 'image/jpeg' }, body: await c.convertToBlob({ type: 'image/jpeg', quality: 0.9 }) });
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    const { map, inst } = await leerMapa(await r.blob(), width, height);
+    const { map, inst, veto } = await leerMapa(await r.blob(), width, height);
     // rellenarBordes: cierra las franjas blancas que deja el mapa en aristas, esquinas y contornos (foto de Agustín, 2026-11-11)
-    const found = rellenarBordes(superficiesDesdeMapa(map, width, height, { instancias: inst }), { data: new Uint8ClampedArray(data), width, height });
+    const foto2 = { data: new Uint8ClampedArray(data), width, height };
+    // marcarZocalos: el zócalo de otro color queda como superficie propia, que no se pinta con la pared
+    const found = marcarZocalos(rellenarBordes(superficiesDesdeMapa(map, width, height, { instancias: inst }), foto2, { veto }), foto2);
     const ms = Math.round(performance.now() - t0), gpu = r.headers.get('X-Segundos');
     console.info(`[servidor] ${found.length} superficies en ${ms} ms (GPU ${gpu ?? '?'} s)`);
     return found.length ? { found, ms, gpu } : null;

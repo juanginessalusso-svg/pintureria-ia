@@ -81,10 +81,11 @@ def clases(img: Image.Image):
     if max(img.size) > 1280:  # mismo tamaño de trabajo que la app
         img.thumbnail((1280, 1280))
     t0 = time.perf_counter()
-    R = mapas_sam(img, ["painted wall", "wall", "ceiling", "tile", "tiled wall", "mirror", "wallpaper", "stucco wall", "brick wall", "sky", "garage door", "pergola", "facade"])
+    R = mapas_sam(img, ["painted wall", "wall", "ceiling", "tile", "tiled wall", "mirror", "wallpaper", "stucco wall", "brick wall", "sky", "garage door", "pergola", "facade", "baseboard", "skirting board"])
     (pw, ipw), (ww, iww), (pc, ipc) = R["painted wall"], R["wall"], R["ceiling"]
     m9 = clases_r9(img)
     p = np.zeros(pw.shape, np.uint8)
+    veto = np.zeros(pw.shape, bool)  # lo que una regla sacó a propósito (azulejo, zócalo, cielo...): la app no lo rellena
     p[(pw >= ALTO) & (pw >= pc)] = 1
     p[(pc >= ALTO) & (pc > pw)] = 2
     p[(p == 0) & (m9 == 1) & (np.maximum(pw, ww) >= BAJO)] = 1
@@ -102,16 +103,18 @@ def clases(img: Image.Image):
             # chicos con score >= RESTA; grandes (una pared entera de azulejo) solo si SAM 3 está seguro (>= 0,6: en ex01 una pared
             # lisa salía "tile" con 0,45). Examen interior: 0,967 -> 0,968 y pinta mal 0,3 % -> 0,2 %.
             if s >= RESTA and (mk.mean() <= 0.05 or s >= 0.6):
-                p[mk] = 0
+                p[mk] = 0; veto |= mk
     # regla 4b: pared de azulejo entera (baños/cocinas) que "tile" no toma: "tiled wall" >= 0,6 y más alto que "painted wall".
     # Arregla el azulejo blanco de w27 y el papel tapiz con dibujos de w29; el examen interior no cambia.
     tw = R["tiled wall"][0]
-    p[(tw >= 0.6) & (tw > pw)] = 0
+    m_ = (tw >= 0.6) & (tw > pw); p[m_] = 0; veto |= m_
     # Fachadas (2026-11-10; en el examen interior no cambian nada: 0,967 / 0,3 %):
     p[(p == 0) & (R["stucco wall"][0] >= 0.5)] = 1  # regla 5: revoque exterior que "painted wall" no toma
+    # regla 7: zócalo interior (madera/cerámica al pie de la pared) nunca se pinta; tampoco se le mete el borde. Examen sin cambios.
+    m_ = np.maximum(R["baseboard"][0], R["skirting board"][0]) >= 0.5; p[m_] = 0; veto |= m_
     for texto in ("sky", "garage door", "pergola", "brick wall"):  # regla 6: cielo, portón, pérgola y ladrillo visto nunca se pintan
-        p[R[texto][0] >= 0.5] = 0
-    return p, ids_pared(ipw + iww + R["stucco wall"][1], p == 1), time.perf_counter() - t0
+        m_ = R[texto][0] >= 0.5; p[m_] = 0; veto |= m_
+    return p, ids_pared(ipw + iww + R["stucco wall"][1], p == 1), veto, time.perf_counter() - t0
 
 
 def ids_pared(insts, pared, umbral=0.35, dup=0.5):
@@ -131,14 +134,14 @@ def ids_pared(insts, pared, umbral=0.35, dup=0.5):
     return ids
 
 
-def png(p: np.ndarray, ids: np.ndarray = None) -> bytes:
+def png(p: np.ndarray, ids: np.ndarray = None, veto: np.ndarray = None) -> bytes:
     """PNG: gris (solo clases) o RGB con R = clase (0 otro / 1 pared / 2 techo) y G = número de pared."""
-    a = p if ids is None else np.stack([p, ids, np.zeros_like(p)], axis=-1)
+    a = p if ids is None else np.stack([p, ids, (veto.astype(np.uint8) * 255) if veto is not None else np.zeros_like(p)], axis=-1)  # B = 255: prohibido
     buf = io.BytesIO(); Image.fromarray(a).save(buf, "PNG", optimize=True); return buf.getvalue()
 
 
 @app.post("/segmentar")
 async def segmentar(foto: UploadFile = File(...)):
     img = Image.open(io.BytesIO(await foto.read())).convert("RGB")
-    p, ids, seg = clases(img)
-    return Response(png(p, ids), media_type="image/png", headers={"X-Tamano": f"{p.shape[1]}x{p.shape[0]}", "X-Segundos": f"{seg:.2f}"})
+    p, ids, veto, seg = clases(img)
+    return Response(png(p, ids, veto), media_type="image/png", headers={"X-Tamano": f"{p.shape[1]}x{p.shape[0]}", "X-Segundos": f"{seg:.2f}"})

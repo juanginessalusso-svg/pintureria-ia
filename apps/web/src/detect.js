@@ -1,7 +1,7 @@
 // Corre la detección automática de superficies (JS pesado: ~35-50 % del análisis). Está pensado para ejecutarse DENTRO del
 // Worker de SAM: así la interfaz no se congela y cada decodificación es una llamada directa (sin mensajes de ida y vuelta).
 // Es puro (sin DOM ni Worker) para poder probarlo con `node --test`.
-import { cleanMask, detectSurfaces, detectFacade, detectSurfacesSemantico, hibridar, vetarConModelo, completarConModelo, recortarObjetos, superficiesDesdeMapa, rellenarBordes } from '@pintureria/core';
+import { cleanMask, detectSurfaces, detectFacade, detectSurfacesSemantico, hibridar, vetarConModelo, completarConModelo, recortarObjetos, superficiesDesdeMapa, rellenarBordes, marcarZocalos } from '@pintureria/core';
 
 export class DetectCancelled extends Error {
   constructor() {
@@ -22,7 +22,7 @@ export class DetectCancelled extends Error {
  * Devuelve { found: [{ name, kind, area, mask }], decodes, mode: 'interior'|'fachada' }
  *   kind 'ladrillo' = superficie rugosa: la app NO le pone color por defecto.
  */
-export async function runDetect({ image, segment, onProgress = () => {}, isCancelled = () => false, opts = {}, mode = 'auto', mergeTecho = false, classMap = null, instancias = null }) {
+export async function runDetect({ image, segment, onProgress = () => {}, isCancelled = () => false, opts = {}, mode = 'auto', mergeTecho = false, classMap = null, instancias = null, veto = null }) {
   const { width, height } = image;
   let n = 0;
   const seg = async (pts) => {
@@ -37,7 +37,8 @@ export async function runDetect({ image, segment, onProgress = () => {}, isCance
   // de él sin pedirle nada a SAM (más fiel y sin los 10-40 s de decodificaciones en el celular). Interior y fachada por igual.
   if (classMap && opts.semantico?.directo) {
     found = superficiesDesdeMapa(classMap, width, height, { ...opts.semantico, instancias });
-    if (!opts.semantico.sinBordes) found = rellenarBordes(found, image); // sinBordes: solo para comparar en eval
+    if (!opts.semantico.sinBordes) found = rellenarBordes(found, image, { veto }); // sinBordes: solo para comparar en eval
+    if (!opts.semantico.sinZocalo) found = marcarZocalos(found, image);
     if (found.length) return { found, decodes: 0, mode: 'servidor' };
   }
   if (mode !== 'fachada' && classMap) {

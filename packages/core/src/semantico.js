@@ -375,7 +375,7 @@ function zonasPorInstancia(pared, ids, w, h, minFrac) {
  * así se cierran las uniones sin comerse una estufa o un mueble de otro color. Lo que está entre dos superficies queda para la más cercana.
  * img: { data RGBA, width, height }. Devuelve superficies nuevas (no modifica las de entrada).
  */
-export function rellenarBordes(found, img, { r = null, tolCroma = 0.035, luzMin = 0.55, luzMax = 1.6 } = {}) {
+export function rellenarBordes(found, img, { r = null, tolCroma = 0.035, luzMin = 0.55, luzMax = 1.6, veto = null } = {}) {
   const { data, width: w, height: h } = img, N = w * h;
   if (!found.length) return found;
   const R = r ?? Math.max(2, Math.round(0.01 * Math.max(w, h)));
@@ -397,7 +397,7 @@ export function rellenarBordes(found, img, { r = null, tolCroma = 0.035, luzMin 
     if (d >= R) continue;
     const x = i % w;
     for (const j of [x > 0 ? i - 1 : -1, x < w - 1 ? i + 1 : -1, i - w, i + w]) {
-      if (j < 0 || j >= N || lab[j]) continue;
+      if (j < 0 || j >= N || lab[j] || (veto && veto[j])) continue; // veto: lo que el servidor sacó a propósito (zócalo, azulejo, cielo...)
       const q = ref[k - 1], p0 = data[j * 4], p1 = data[j * 4 + 1], p2 = data[j * 4 + 2], s = p0 + p1 + p2 + 1;
       if (Math.abs(p0 / s - q.cr) > tolCroma || Math.abs(p1 / s - q.cg) > tolCroma) continue;
       const luz = s / q.s; if (luz < luzMin || luz > luzMax) continue;
