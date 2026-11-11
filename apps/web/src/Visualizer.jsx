@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { varita, LUZ_WB_STRENGTH, estimateWhiteBalance, whiteBalanceFor, featherMask, recolorWall, cleanMask, pxPerMeter, wallPixels, paintStroke, maskCount, encodeMask, cutObjectFromSurface } from '@pintureria/core';
+import { varita, LUZ_WB_STRENGTH, estimateWhiteBalance, whiteBalanceFor, featherMask, featherCapas, recolorWall, cleanMask, pxPerMeter, wallPixels, paintStroke, maskCount, encodeMask, cutObjectFromSurface } from '@pintureria/core';
 import { SamClient, urlServidor } from './samClient.js';
 import { superficiesDelServidor } from './servidor.js';
 import { workingSize } from './sam.js';
@@ -254,8 +254,10 @@ export function Visualizer() {
     if (!layers.length) { result.current = null; render(); return; }
     const t0 = performance.now();
     let image = p;
-    for (const L of layers) {
-      const soft = featherMask(Float32Array.from(L.mask), p.width, p.height, Math.max(1, Math.round(p.width / 500)));
+    // featherCapas: sin línea sin pintar en la unión de dos superficies (cada una se suaviza solo contra lo que no se pinta)
+    const softs = featherCapas(layers.map((L) => L.mask), p.width, p.height, Math.max(1, Math.round(p.width / 500)));
+    for (const [k, L] of layers.entries()) {
+      const soft = softs[k];
       image = recolorWall(image, soft, L.hex, {
         mode: opts.lum ?? lum, intensity: opts.intensity ?? intensity, gains: (opts.wb ?? wb) ? ((opts.lum ?? lum) === 'luz' ? gains.current.map((g) => 1 + (g - 1) * LUZ_WB_STRENGTH) : gains.current) : [1, 1, 1],
       }).image;

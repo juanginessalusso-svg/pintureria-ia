@@ -17,3 +17,4 @@ export * from './sombras.js';
 export * from './semantico.js';
 export * from './varita.js';
 export * from './zocalo.js';
+export * from './limites.js';
