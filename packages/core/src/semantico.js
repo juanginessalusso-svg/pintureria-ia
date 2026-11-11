@@ -367,3 +367,46 @@ function zonasPorInstancia(pared, ids, w, h, minFrac) {
   for (let i = 0; i < N; i++) if (lab[i]) { const z = res[lab[i] - 1]; z.mask[i] = 1; z.area++; }
   return res.filter((z) => z.area > 0);
 }
+
+/**
+ * Cierra los bordes blancos que deja el mapa del servidor: SAM 3 termina cada superficie unos píxeles antes de la arista (pared-techo,
+ * esquinas, contorno de muebles) y el mapa llega agrandado (1280 -> 1600 px, con escalones). Cada superficie crece por BFS hasta `r` px
+ * hacia lo que quedó SIN asignar, solo si el píxel se parece al color original de esa superficie (misma cromaticidad y luz parecida):
+ * así se cierran las uniones sin comerse una estufa o un mueble de otro color. Lo que está entre dos superficies queda para la más cercana.
+ * img: { data RGBA, width, height }. Devuelve superficies nuevas (no modifica las de entrada).
+ */
+export function rellenarBordes(found, img, { r = null, tolCroma = 0.035, luzMin = 0.55, luzMax = 1.6 } = {}) {
+  const { data, width: w, height: h } = img, N = w * h;
+  if (!found.length) return found;
+  const R = r ?? Math.max(2, Math.round(0.01 * Math.max(w, h)));
+  const lab = new Int32Array(N), dist = new Uint16Array(N);
+  const ref = found.map(() => ({ s: 0, cr: 0, cg: 0, n: 0 }));
+  found.forEach((f, k) => {
+    const q = ref[k];
+    for (let i = 0; i < N; i++) if (f.mask[i] && !lab[i]) {
+      lab[i] = k + 1;
+      if ((i & 7) === 0) { const a = data[i * 4], b = data[i * 4 + 1], c = data[i * 4 + 2], s = a + b + c + 1; q.s += s; q.cr += a / s; q.cg += b / s; q.n++; }
+    }
+  });
+  for (const q of ref) { const n = Math.max(1, q.n); q.s /= n; q.cr /= n; q.cg /= n; }
+  const cola = new Int32Array(N); let a = 0, b = 0;
+  for (let i = 0; i < N; i++) if (lab[i]) cola[b++] = i;
+  const agregado = new Uint8Array(N);
+  while (a < b) {
+    const i = cola[a++], k = lab[i], d = dist[i];
+    if (d >= R) continue;
+    const x = i % w;
+    for (const j of [x > 0 ? i - 1 : -1, x < w - 1 ? i + 1 : -1, i - w, i + w]) {
+      if (j < 0 || j >= N || lab[j]) continue;
+      const q = ref[k - 1], p0 = data[j * 4], p1 = data[j * 4 + 1], p2 = data[j * 4 + 2], s = p0 + p1 + p2 + 1;
+      if (Math.abs(p0 / s - q.cr) > tolCroma || Math.abs(p1 / s - q.cg) > tolCroma) continue;
+      const luz = s / q.s; if (luz < luzMin || luz > luzMax) continue;
+      lab[j] = k; dist[j] = d + 1; agregado[j] = 1; cola[b++] = j;
+    }
+  }
+  return found.map((f, k) => {
+    const m = f.mask.slice(); let n = 0;
+    for (let i = 0; i < N; i++) { if (agregado[i] && lab[i] === k + 1) m[i] = 1; if (m[i]) n++; }
+    return { ...f, mask: m, area: n / N };
+  });
+}

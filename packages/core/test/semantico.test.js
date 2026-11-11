@@ -185,3 +185,23 @@ test('superficiesDesdeMapa con instancias: dos paredes que se tocan salen separa
   assert.equal(izq.mask[75 * w + 42], 1, 'el relleno sin número quedó con la pared vecina');
   assert.equal(s.slice(0, 2).reduce((a, x) => a + x.area, 0).toFixed(4), ((65 * 100) / N).toFixed(4), 'no se pierde pared');
 });
+
+test('rellenarBordes: cierra la franja blanca entre dos paredes y contra el techo, sin comerse un objeto de otro color', async () => {
+  const { rellenarBordes } = await import('../src/semantico.js');
+  const w = 100, h = 80, N = w * h, data = new Uint8ClampedArray(N * 4);
+  for (let i = 0; i < N; i++) { data[i * 4] = 235; data[i * 4 + 1] = 232; data[i * 4 + 2] = 225; data[i * 4 + 3] = 255; } // pared y techo blancos
+  const rojo = (x, y) => x >= 10 && x < 30 && y >= 60; // un mueble rojo abajo a la izquierda
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (rojo(x, y)) { const i = y * w + x; data[i * 4] = 180; data[i * 4 + 1] = 40; data[i * 4 + 2] = 40; }
+  const m1 = new Uint8Array(N), m2 = new Uint8Array(N), t = new Uint8Array(N);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const i = y * w + x;
+    if (y < 15) t[i] = 1;
+    else if (y >= 18 && x < 48 && !(x >= 7 && x < 33 && y >= 57)) m1[i] = 1; // pared 1: franja de 3 px contra el techo y 4 px contra la pared 2; aire alrededor del mueble
+    else if (y >= 18 && x >= 52) m2[i] = 1;
+  }
+  const s = rellenarBordes([{ kind: 'pared', mask: m1 }, { kind: 'pared', mask: m2 }, { kind: 'techo', mask: t }], { data, width: w, height: h }, { r: 4 });
+  const cub = (x, y) => s.some((f) => f.mask[y * w + x]);
+  assert.ok(cub(50, 40) && cub(49, 40) && cub(30, 16), 'se cerraron las uniones');
+  assert.equal(cub(20, 70), false, 'el mueble rojo no se pinta');
+  assert.ok(cub(8, 58), 'el aire blanco alrededor del mueble sí');
+});

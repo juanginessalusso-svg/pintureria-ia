@@ -1,7 +1,7 @@
 // Detección en el servidor con GPU (SAM 3 + r9) SIN usar nada pesado en el celular: se manda la foto, vuelve el mapa
 // (PNG RGB: R = clase 0 otro / 1 pared / 2 techo, G = número de pared) y las superficies salen directo de él.
 // Con esto el cliente no espera la descarga de ~45 MB de MobileSAM ni el análisis en el teléfono: foto -> ~3 s -> elegir colores.
-import { superficiesDesdeMapa } from '@pintureria/core';
+import { superficiesDesdeMapa, rellenarBordes } from '@pintureria/core';
 
 /** Lee un PNG de mapa (Blob) al tamaño de la foto: { map, inst|null }. Nearest (sin mezclar clases en los bordes). */
 async function leerMapa(blob, width, height) {
@@ -27,7 +27,8 @@ export async function superficiesDelServidor(foto, url, { fetchFn = fetch } = {}
     const r = await fetchFn(url, { method: 'POST', headers: { 'Content-Type': 'image/jpeg' }, body: await c.convertToBlob({ type: 'image/jpeg', quality: 0.9 }) });
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const { map, inst } = await leerMapa(await r.blob(), width, height);
-    const found = superficiesDesdeMapa(map, width, height, { instancias: inst });
+    // rellenarBordes: cierra las franjas blancas que deja el mapa en aristas, esquinas y contornos (foto de Agustín, 2026-11-11)
+    const found = rellenarBordes(superficiesDesdeMapa(map, width, height, { instancias: inst }), { data: new Uint8ClampedArray(data), width, height });
     const ms = Math.round(performance.now() - t0), gpu = r.headers.get('X-Segundos');
     console.info(`[servidor] ${found.length} superficies en ${ms} ms (GPU ${gpu ?? '?'} s)`);
     return found.length ? { found, ms, gpu } : null;
