@@ -205,3 +205,16 @@ test('rellenarBordes: cierra la franja blanca entre dos paredes y contra el tech
   assert.equal(cub(20, 70), false, 'el mueble rojo no se pinta');
   assert.ok(cub(8, 58), 'el aire blanco alrededor del mueble sí');
 });
+
+test('rellenarBordes: una llave de luz blanca como la pared (hueco encerrado) no se rellena, pero el margen liso alrededor sí', async () => {
+  const { rellenarBordes } = await import('../src/semantico.js');
+  const w = 200, h = 200, N = w * h, data = new Uint8ClampedArray(N * 4), mask = new Uint8Array(N);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const i = y * w + x, tapa = x >= 90 && x < 110 && y >= 85 && y < 115, contorno = !tapa && x >= 89 && x <= 110 && y >= 84 && y <= 115;
+    const v = contorno ? 150 : 225; data[i * 4] = data[i * 4 + 1] = data[i * 4 + 2] = v; data[i * 4 + 3] = 255; // tapa blanca con un contorno gris
+    if (!(x >= 84 && x < 116 && y >= 79 && y < 121)) mask[i] = 1; // el servidor deja un hueco algo más grande que la tapa
+  }
+  const [p] = rellenarBordes([{ kind: 'pared', mask, area: 0 }], { data, width: w, height: h }, { r: 8 });
+  assert.equal(p.mask[100 * w + 91], 0, 'la tapa no se pinta'); // a 8 px del hueco: sin la regla de huecos se pintaba
+  assert.equal(p.mask[100 * w + 86], 1, 'el margen liso entre la pared y la tapa sí');
+});

@@ -375,7 +375,7 @@ function zonasPorInstancia(pared, ids, w, h, minFrac) {
  * así se cierran las uniones sin comerse una estufa o un mueble de otro color. Lo que está entre dos superficies queda para la más cercana.
  * img: { data RGBA, width, height }. Devuelve superficies nuevas (no modifica las de entrada).
  */
-export function rellenarBordes(found, img, { r = null, tolCroma = 0.035, luzMin = 0.55, luzMax = 1.6, veto = null } = {}) {
+export function rellenarBordes(found, img, { r = null, tolCroma = 0.035, luzMin = 0.55, luzMax = 1.6, veto = null, huecoMin = 0.0003, pasoHueco = 12 } = {}) {
   const { data, width: w, height: h } = img, N = w * h;
   if (!found.length) return found;
   const R = r ?? Math.max(2, Math.round(0.01 * Math.max(w, h)));
@@ -389,9 +389,28 @@ export function rellenarBordes(found, img, { r = null, tolCroma = 0.035, luzMin 
     }
   });
   for (const q of ref) { const n = Math.max(1, q.n); q.s /= n; q.cr /= n; q.cg /= n; }
+  // Huecos = objetos (llave de luz, tablero, cuadro): lo sin asignar que queda ENCERRADO por una sola superficie, sin tocar el borde de la
+  // foto y con grosor de objeto, no se rellena aunque sea blanco como la pared (prueba de Ginés: la tapa de la llave salía pintada).
+  const hueco = new Uint8Array(N);
+  if (huecoMin > 0) {
+    const libre = new Uint8Array(N); for (let i = 0; i < N; i++) if (!lab[i]) libre[i] = 1;
+    const G = Math.max(w, h);
+    for (const c of componentes(libre, w, h).comps) {
+      if (c.area < huecoMin * N) continue;
+      let x0 = w, x1 = -1, y0 = h, y1 = -1, borde = false; const vecinas = new Set();
+      for (const i of c.pixels) {
+        const x = i % w, y = (i - x) / w;
+        if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+        if (x === 0 || y === 0 || x === w - 1 || y === h - 1) { borde = true; break; }
+        for (const j of [i - 1, i + 1, i - w, i + w]) if (lab[j]) vecinas.add(lab[j]);
+      }
+      if (borde || vecinas.size !== 1 || Math.min(x1 - x0, y1 - y0) + 1 < 0.006 * G) continue;
+      for (const i of c.pixels) hueco[i] = 1;
+    }
+  }
   const cola = new Int32Array(N); let a = 0, b = 0;
   for (let i = 0; i < N; i++) if (lab[i]) cola[b++] = i;
-  const agregado = new Uint8Array(N);
+  const agregado = new Uint8Array(N), orig = new Int32Array(N).fill(-1);
   while (a < b) {
     const i = cola[a++], k = lab[i], d = dist[i];
     if (d >= R) continue;
@@ -401,7 +420,15 @@ export function rellenarBordes(found, img, { r = null, tolCroma = 0.035, luzMin 
       const q = ref[k - 1], p0 = data[j * 4], p1 = data[j * 4 + 1], p2 = data[j * 4 + 2], s = p0 + p1 + p2 + 1;
       if (Math.abs(p0 / s - q.cr) > tolCroma || Math.abs(p1 / s - q.cg) > tolCroma) continue;
       const luz = s / q.s; if (luz < luzMin || luz > luzMax) continue;
-      lab[j] = k; dist[j] = d + 1; agregado[j] = 1; cola[b++] = j;
+      // dentro de un hueco (objeto claro como la pared): avanza solo mientras el color no salta de un píxel al otro NI se aleja del de la
+      // pared por donde entró (orig), así frena en el contorno del objeto aunque el borde sea difuso
+      const o = orig[i] >= 0 ? orig[i] : i;
+      if (hueco[j]) {
+        const pi = i * 4, po = o * 4;
+        if (Math.abs(p0 - data[pi]) + Math.abs(p1 - data[pi + 1]) + Math.abs(p2 - data[pi + 2]) > pasoHueco) continue;
+        if (Math.abs(p0 - data[po]) + Math.abs(p1 - data[po + 1]) + Math.abs(p2 - data[po + 2]) > 2 * pasoHueco) continue;
+      }
+      lab[j] = k; dist[j] = d + 1; agregado[j] = 1; orig[j] = hueco[j] ? o : -1; cola[b++] = j;
     }
   }
   return found.map((f, k) => {
