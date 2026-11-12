@@ -93,6 +93,13 @@ found.forEach((f, k) => {
 });
 for (const r of found.rechazadas ?? res.rechazadas ?? []) console.log(`  x descartada: ${r.why ?? JSON.stringify(r)}`);
 for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) for (let j = 0; j < 4; j++) { out.data[(y * width * 2 + x) * 4 + j] = img.data[(y * width + x) * 4 + j]; out.data[(y * width * 2 + width + x) * 4 + j] = j === 3 ? 255 : over[(y * width + x) * 4 + j]; }
+// MASCARA=1: además deja mascara-<foto>.png (gris: 80 pared, 160 techo, 240 zócalo/otra) para medir contra una etiqueta a mano
+if (process.env.MASCARA) {
+  const mk = new PNG({ width, height }); const niv = { pared: 80, techo: 160 };
+  for (const f of found) { const v = niv[f.kind] ?? 240; for (let i = 0; i < f.mask.length; i++) if (f.mask[i]) { mk.data[i * 4] = mk.data[i * 4 + 1] = mk.data[i * 4 + 2] = v; } }
+  for (let i = 3; i < mk.data.length; i += 4) mk.data[i] = 255;
+  fs.writeFileSync(path.join(outDir, `mascara-${name}.png`), PNG.sync.write(mk));
+}
 const outFile = path.join(outDir, `una-${name}.png`);
 fs.writeFileSync(outFile, PNG.sync.write(out));
 console.log('→', outFile);
