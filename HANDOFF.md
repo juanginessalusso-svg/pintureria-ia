@@ -3,6 +3,26 @@
 Estado al **2026-11-12**. Lo escribió la sesión que trabajó desde la cuenta de Claude de Agustín para que Ginés siga **desde su propia cuenta**.
 La versión anterior de este archivo (2026-11-04) está en el historial de git.
 
+## Actualización 2026-11-12 (sesión de Ginés, desde su cuenta)
+Desplegado ese día: app en staging + servidor **sam3-v11**. Medido con `eval/regresion` (20 fotos con etiqueta usable): pinta mal
+**3,17 % -> 0,77 %** de la foto, cubre 98,8 -> 98,7 %. Hojas: `regresion/salidas/resumen-noche/`, página en claude.ai (Ginés la tiene).
+- **App** (`packages/core`, en este orden en `servidor.js` y `detect.js`): `rellenarBordes` (+ pared encerrada por un cable, + esquina en
+  sombra) → `afinarLimites` → `enderezarTechoPared` (rectas.js: sin escalones) → `marcarZocalos` → `quitarCornisas` (enderezar.js: moldura
+  entre techo y pared no se pinta) → `enderezarBordes` (borde recto contra moldura/marco) → `marcarOSB` (madera.js: OSB sin color) →
+  `separarMadera` (machimbre del servidor sin color). Probado y DESCARTADO: recorte de halos por envolvente convexa; relleno alrededor de
+  objetos (`alrededor`, apagado: pintaba el tubo blanco de un portero no reconocido).
+- **Servidor v11** (`servidor-sam3/app.py`, reglas 8-10): moldura ("crown molding") no se pinta; machimbre ("wood paneling",
+  "wooden ceiling" >= 0,6) va en B = 100; objetos (campana, portero, cable, llave, tablero, enchufe, tapa, cuadro) salen y van en B = 200.
+  Canal B ahora es un código: 255 regla · 200 objeto · 100 madera. La app vieja lee B > 127 como prohibido (compatible para los dos lados).
+- **Medición** (`eval/regresion/medir.py`): `etiq/techo-sin-marcar.txt` (etiquetas que no marcan techo liso) y `etiq/excluir.txt`
+  (etiquetas con error conocido). OJO: p…195408 y p…195725 tienen techo de OSB (la etiqueta sin techo es correcta).
+- **Reglas de Ginés**: el machimbre no se pinta (igual que OSB, cornisas, espejos).
+- **Atribución de errores** (servidor vs app): SAM 3 0,07 % · r9+reglas del servidor 0,10 % · app 0,62 % (bandas finas en bordes, parte es
+  imprecisión de etiqueta). El r9 NO es el cuello de botella.
+- Pendiente: halo fino en llaves/tablero, pared en sombra bajo alero (w58), baños de techo bajo, asesor de color (carta Tersuave ya en
+  `/api/public/colors`, 1.617 colores con LAB; propuesta en `Comunicacion Digital Avanzada/PROPUESTA-ASESOR-COLOR.md`).
+- Probar textos nuevos de SAM 3 sin Release: `POST /api/public/segmentar/diag?tenant=plazaolmos&textos=a,b,c` (máx. 12 textos, 20 fotos/10 min).
+
 ## Qué es
 Web/PWA para pinturerías (multi-cliente). Cliente real: **Plaza Olmos Pinturerías** (Río Cuarto/Chivilcoy, representantes de Tersuave).
 - **Tienda** (catálogo + carrito + panel admin) hecha por **Tomás** (rama `frontend`, guía en `docs/FRONTEND-TOMAS.md`), ya integrada en `main`.

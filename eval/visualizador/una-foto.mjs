@@ -74,7 +74,7 @@ if (process.env.CLASSMAP_PNG) {
   const p = PNG.sync.read(fs.readFileSync(process.env.CLASSMAP_PNG)); classMap = new Uint8Array(width * height); instancias = new Uint8Array(width * height); veto = new Uint8Array(width * height);
   for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
     const sx = Math.min(p.width - 1, Math.floor((x + 0.5) * p.width / width)), sy = Math.min(p.height - 1, Math.floor((y + 0.5) * p.height / height));
-    classMap[y * width + x] = p.data[(sy * p.width + sx) * 4]; instancias[y * width + x] = p.data[(sy * p.width + sx) * 4 + 1]; const bz = p.data[(sy * p.width + sx) * 4 + 2]; if (bz > 127 && bz !== classMap[y * width + x]) veto[y * width + x] = 1; // G = número de pared (PNG RGB del servidor)
+    classMap[y * width + x] = p.data[(sy * p.width + sx) * 4]; instancias[y * width + x] = p.data[(sy * p.width + sx) * 4 + 1]; const bz = p.data[(sy * p.width + sx) * 4 + 2]; if (bz > 127 && bz !== classMap[y * width + x]) veto[y * width + x] = bz >= 150 && bz <= 230 ? 2 : 1; else if (bz >= 90 && bz <= 110) veto[y * width + x] = 3; // G = número de pared (PNG RGB del servidor)
   }
   if (!instancias.some((v, i) => v !== classMap[i])) instancias = null; // PNG gris: no trae instancias
 }

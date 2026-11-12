@@ -13,6 +13,8 @@ export * from './whitebalance.js';
 export * from './facade.js';
 export * from './bordes.js';
 export * from './rectas.js';
+export * from './enderezar.js';
+export * from './madera.js';
 export * from './sombras.js';
 export * from './semantico.js';
 export * from './varita.js';

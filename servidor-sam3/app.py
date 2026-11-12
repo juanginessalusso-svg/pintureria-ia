@@ -76,12 +76,19 @@ def salud():
     return {"ok": True, "gpu": torch.cuda.get_device_name(0) if DEV == "cuda" else None, "alto": ALTO, "bajo": BAJO, "duda": DUDA}
 
 
+# Objetos que el servidor reconoce para que la app no los pinte (regla 10). "cable" da manchas anchas con puntaje bajo en cordones de
+# cortina (0,63 en p…223108): se le pide 0,75; "intercom" a veces da 0,40 con el aparato bien marcado (p…181544): 0,35.
+OBJETOS = ["range hood", "intercom", "cable", "light switch", "electrical panel", "power outlet", "wall plate", "picture frame"]
+UMBRAL_OBJETO = {"cable": 0.75, "intercom": 0.35}
+
+
 def clases(img: Image.Image):
     """Foto -> mapa de clases (uint8: 0 otro / 1 pared / 2 techo) del tamaño de trabajo (lado mayor <= 1280) y los segundos que tardó."""
     if max(img.size) > 1280:  # mismo tamaño de trabajo que la app
         img.thumbnail((1280, 1280))
     t0 = time.perf_counter()
-    R = mapas_sam(img, ["painted wall", "wall", "ceiling", "tile", "tiled wall", "mirror", "wallpaper", "stucco wall", "brick wall", "sky", "garage door", "pergola", "facade", "baseboard", "skirting board"])
+    R = mapas_sam(img, ["painted wall", "wall", "ceiling", "tile", "tiled wall", "mirror", "wallpaper", "stucco wall", "brick wall", "sky", "garage door", "pergola", "facade", "baseboard", "skirting board"]
+                  + OBJETOS + ["crown molding", "wood paneling", "wooden ceiling"])
     (pw, ipw), (ww, iww), (pc, ipc) = R["painted wall"], R["wall"], R["ceiling"]
     m9 = clases_r9(img)
     p = np.zeros(pw.shape, np.uint8)
@@ -114,7 +121,22 @@ def clases(img: Image.Image):
     m_ = np.maximum(R["baseboard"][0], R["skirting board"][0]) >= 0.5; p[m_] = 0; veto |= m_
     for texto in ("sky", "garage door", "pergola", "brick wall"):  # regla 6: cielo, portón, pérgola y ladrillo visto nunca se pintan
         m_ = R[texto][0] >= 0.5; p[m_] = 0; veto |= m_
-    return p, ids_pared(ipw + iww + R["stucco wall"][1], p == 1), veto, time.perf_counter() - t0
+    # Reglas 8-10 (2026-11-12, revisión foto por foto con Ginés; medidas con eval/regresion simulando este servidor: pinta mal 0,80 -> 0,77 %
+    # sobre la app de esa noche, 3,17 % en staging). El canal B pasa de "prohibido sí/no" a un código:
+    #   255 = regla (no se pinta ni se rellena) · 200 = objeto conocido (la app lo respeta y sabe qué es) · 100 = madera (sigue siendo
+    #   pared/techo; la app la separa como superficie "Madera" sin color). La app vieja lee B > 127 como prohibido: 200 también; 100 lo ignora.
+    sup = (p == 1) | (p == 2)
+    m_ = (R["crown molding"][0] >= 0.5) & sup; p[m_] = 0; veto |= m_  # regla 8: la moldura entre techo y pared no se pinta
+    mad = (np.maximum(R["wood paneling"][0], R["wooden ceiling"][0]) >= 0.6) & sup  # regla 9: machimbre (en pared lisa da <= 0,35)
+    obj = np.zeros(p.shape, bool)  # regla 10: objetos (campana, portero, cable, llave, tablero, enchufe, tapa, cuadro)
+    for texto in OBJETOS:
+        obj |= R[texto][0] >= UMBRAL_OBJETO.get(texto, 0.5)
+    obj &= ~veto
+    p[obj] = 0
+    b = veto.astype(np.uint8) * 255
+    b[mad & (b == 0) & ~obj] = 100
+    b[obj] = 200
+    return p, ids_pared(ipw + iww + R["stucco wall"][1], p == 1), b, time.perf_counter() - t0
 
 
 def ids_pared(insts, pared, umbral=0.35, dup=0.5):
@@ -135,8 +157,9 @@ def ids_pared(insts, pared, umbral=0.35, dup=0.5):
 
 
 def png(p: np.ndarray, ids: np.ndarray = None, veto: np.ndarray = None) -> bytes:
-    """PNG: gris (solo clases) o RGB con R = clase (0 otro / 1 pared / 2 techo) y G = número de pared."""
-    a = p if ids is None else np.stack([p, ids, (veto.astype(np.uint8) * 255) if veto is not None else np.zeros_like(p)], axis=-1)  # B = 255: prohibido
+    """PNG: gris (solo clases) o RGB con R = clase (0 otro / 1 pared / 2 techo), G = número de pared y B = código (ver clases())."""
+    bb = np.zeros_like(p) if veto is None else (veto.astype(np.uint8) * 255 if veto.dtype == bool else veto.astype(np.uint8))
+    a = p if ids is None else np.stack([p, ids, bb], axis=-1)
     buf = io.BytesIO(); Image.fromarray(a).save(buf, "PNG", optimize=True); return buf.getvalue()
 
 

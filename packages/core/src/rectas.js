@@ -99,3 +99,19 @@ export function straightenBoundaries(surfaces, w, h, opts = {}) {
   }
   return info;
 }
+
+/**
+ * Para el modo servidor: endereza solo las uniones TECHO-PARED (las de pared con pared ya las pone afinarLimites sobre la arista).
+ * El mapa del servidor llega a 1280 px y se agranda con vecino más cercano: la unión techo/pared sale en escalones (revisión 2026-11-12,
+ * foto "puerta"). Devuelve superficies nuevas.
+ */
+export function enderezarTechoPared(found, w, h, opts = {}) {
+  const masks = found.map((f) => f.mask.slice());
+  for (let a = 0; a < found.length; a++) for (let b = 0; b < found.length; b++) {
+    if (found[a].kind !== 'techo' || found[b].kind !== 'pared') continue;
+    const r = straightenPair(masks[a], masks[b], w, h, opts);
+    if (r && globalThis.process?.env?.DEBUG_RECTAS) console.error('techo-pared', JSON.stringify(r));
+  }
+  const N = w * h;
+  return found.map((f, k) => { let n = 0; for (let i = 0; i < N; i++) if (masks[k][i]) n++; return { ...f, mask: masks[k], area: n / N }; });
+}

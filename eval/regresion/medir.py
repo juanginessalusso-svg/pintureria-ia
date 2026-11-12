@@ -19,6 +19,11 @@ def mascara(d, n):
     return np.asarray(Image.open(p).convert("L")) if os.path.exists(p) else None
 
 names = sorted(f[8:-4] for f in os.listdir(DB) if f.startswith("mascara-"))
+# etiquetas que no marcan el techo (ver etiq/techo-sin-marcar.txt): ahí el techo que pinta la app no cuenta como "mal"
+_sm = os.path.join(REG, "etiq", "techo-sin-marcar.txt")
+_ex = os.path.join(REG, "etiq", "excluir.txt")  # etiquetas con un error conocido: se muestran pero no entran en el promedio
+EXCLUIR = {l.split("#")[0].strip() for l in open(_ex, encoding="utf8") if l.split("#")[0].strip()} if os.path.exists(_ex) else set()
+SIN_TECHO = {l.strip() for l in open(_sm, encoding="utf8") if l.strip() and not l.startswith("#")} if os.path.exists(_sm) else set()
 tot = {"a": [], "b": []}; rows = []
 print(f"{'foto':22} {'pintado':>15} {'cubre (etiq)':>15} {'mal (etiq)':>15}")
 for n in names:
@@ -31,10 +36,14 @@ for n in names:
         lab = np.asarray(Image.open(e).convert("L").resize((ma.shape[1], ma.shape[0]), Image.NEAREST)) > 0
         r = []
         for k, p in (("a", pa), ("b", pb)):
-            cubre, mal = (p & lab).sum() / max(1, lab.sum()), (p & ~lab).mean()
-            tot[k].append((cubre, mal)); r.append((cubre, mal))
+            m = ma if k == "a" else mb
+            cubre, mal = (p & lab).sum() / max(1, lab.sum()), (p & ~lab & ~((m == 160) & (n in SIN_TECHO))).mean()
+            if n not in EXCLUIR: tot[k].append((cubre, mal))
+            r.append((cubre, mal))
         linea += f" {r[0][0]*100:6.1f} -> {r[1][0]*100:5.1f} {r[0][1]*100:6.2f} -> {r[1][1]*100:5.2f}"
         if r[1][1] - r[0][1] > 0.003 or r[0][0] - r[1][0] > 0.01: linea += "  <-- PEOR"
+    if n in SIN_TECHO and os.path.exists(e): linea += "  (techo sin etiquetar)"
+    if n in EXCLUIR and os.path.exists(e): linea += "  (etiqueta con error: fuera del promedio)"
     print(linea)
     # hoja
     fa = os.path.join(DA, f"pintado-{n}-1.png"); fb = os.path.join(DB, f"pintado-{n}-1.png")

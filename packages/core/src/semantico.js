@@ -369,13 +369,129 @@ function zonasPorInstancia(pared, ids, w, h, minFrac) {
 }
 
 /**
+ * Margen alrededor de un objeto CONOCIDO (veto 2 = el servidor reconoció el objeto con SAM 3: campana, portero, cable, llave, tablero,
+ * enchufe, tapa, cuadro). El mapa deja sin asignar un margen ancho y serruchado alrededor (halo blanco); como ahora sabemos exactamente
+ * dónde está el objeto, todo lo demás del hueco que tenga el color de la pared que lo rodea se pinta. Idea del HANDOFF 2026-11-12.
+ * Hueco = mancha sin asignar (incluye el objeto) que no toca el borde de la foto, rodeada casi toda por una superficie y que contiene
+ * objeto conocido. No se pinta el objeto (dilatado `margenObj` px), ni lo vetado por regla (veto 1), ni lo que no tiene color de pared.
+ * APAGADO por defecto (opts.alrededor): en p…181544 pintaba el tubo blanco del portero, que SAM 3 no reconoció (0,40) y tiene tan poco
+ * contraste con la pared que ningún freno por bordes lo separa. Prender cuando el servidor marque todos los objetos del hueco.
+ * El relleno crece desde el borde del hueco y no cruza bordes marcados de la foto: si en el mismo hueco hay otro objeto blanco que el
+ * servidor no reconoció (el tubo del portero en p…181544), su contorno lo frena.
+ */
+function rellenarAlrededorDeObjetos(data, w, h, lab, agregado, veto, { maxFrac = 0.04, margenObj = 2, minObj = 0.03, tolCroma = 0.035, luzMin = 0.6, luzMax = 1.35, dominio = 0.85, gradMax = 8 } = {}) {
+  const N = w * h;
+  // gradiente de la luz suavizada (3x3), calculado solo donde se pide
+  const L3 = (i) => { const x = i % w, y = (i - x) / w; let t = 0, n = 0; for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const xx = x + dx, yy = y + dy; if (xx < 0 || yy < 0 || xx >= w || yy >= h) continue; const q = (yy * w + xx) * 4; t += data[q] + data[q + 1] + data[q + 2]; n++; } return t / n / 3; };
+  const G = (i) => { const x = i % w; if (x < 2 || x >= w - 2 || i < 2 * w || i >= N - 2 * w) return 0; return Math.hypot(L3(i + 1) - L3(i - 1), L3(i + w) - L3(i - w)) / 2; };
+  // objeto dilatado
+  let obj = new Uint8Array(N); let hay = false; for (let i = 0; i < N; i++) if (veto[i] === 2) { obj[i] = 1; hay = true; }
+  if (!hay) return;
+  for (let k = 0; k < margenObj; k++) { const o2 = obj.slice(); for (let i = w; i < N - w; i++) if (!obj[i] && (obj[i - 1] || obj[i + 1] || obj[i - w] || obj[i + w])) o2[i] = 1; obj = o2; }
+  const libre = new Uint8Array(N); for (let i = 0; i < N; i++) if (!lab[i] && veto[i] !== 1) libre[i] = 1;
+  for (const c of componentes(libre, w, h).comps) {
+    const dbg = globalThis.process?.env?.DEBUG_ENC && c.area > 2000 ? (m) => console.error('alrededor', c.bbox.join(','), c.area, m) : () => {};
+    if (c.area > maxFrac * N) { dbg('grande'); continue; }
+    const [x0, y0, x1, y1] = c.bbox; if (x0 <= 0 || y0 <= 0 || x1 >= w - 1 || y1 >= h - 1) { dbg('borde'); continue; }
+    let nObj = 0; for (const i of c.pixels) if (veto[i] === 2) nObj++;
+    if (nObj < minObj * c.area) { dbg('sin objeto ' + nObj); continue; }
+    const votos = new Map(); let sS = 0, sR = 0, sG = 0, nR = 0;
+    for (const i of c.pixels) for (const j of [i - 1, i + 1, i - w, i + w]) { const k = lab[j]; if (!k) continue; votos.set(k, (votos.get(k) ?? 0) + 1); const q = j * 4, sm = data[q] + data[q + 1] + data[q + 2] + 1; sS += sm; sR += data[q] / sm; sG += data[q + 1] / sm; nR++; }
+    if (nR < 20) continue;
+    let mejor = 0, nm = 0; for (const [k, v] of votos) if (v > nm) { mejor = k; nm = v; }
+    if (nm < dominio * nR) { dbg('dominio ' + (nm / nR).toFixed(2)); continue; }
+    sS /= nR; sR /= nR; sG /= nR; dbg('rellena'); let puestos = 0, rl = 0, rc = 0;
+    const ok = (i) => {
+      if (obj[i] || lab[i] || veto[i] === 1) return false;
+      const q = i * 4, sm = data[q] + data[q + 1] + data[q + 2] + 1, luz = sm / sS;
+      if (luz < luzMin || luz > luzMax) { rl++; return false; }
+      if (Math.abs(data[q] / sm - sR) > tolCroma || Math.abs(data[q + 1] / sm - sG) > tolCroma) { rc++; return false; }
+      return G(i) < gradMax; // no cruza el contorno de un objeto que el servidor no reconoció (tubo blanco del portero en p…181544)
+    };
+    // crece desde el borde del hueco (lo pegado a la superficie) sin cruzar bordes de la foto
+    const cola = [];
+    for (const i of c.pixels) if ((lab[i - 1] === mejor || lab[i + 1] === mejor || lab[i - w] === mejor || lab[i + w] === mejor) && ok(i)) { lab[i] = mejor; agregado[i] = 1; puestos++; cola.push(i); }
+    for (let a = 0; a < cola.length; a++) { const i = cola[a]; for (const j of [i - 1, i + 1, i - w, i + w]) if (j >= 0 && j < N && ok(j)) { lab[j] = mejor; agregado[j] = 1; puestos++; cola.push(j); } }
+    dbg('puestos ' + puestos + ' rechazados luz ' + rl + ' croma ' + rc);
+  }
+}
+
+/**
+ * Pared ENCERRADA por un objeto fino (prueba de Ginés 2026-11-12: la pared dentro del rulo del cable del portero quedaba blanca).
+ * Lo sin asignar se parte en zonas LISAS (gradiente de luz < gradMax: los contornos de los objetos cortan). Una zona se pinta con la
+ * superficie que la rodea si tiene el color de esa pared (cromaticidad ±tolCroma; luz entre luzMin y luzMax de la pared a `pad` px),
+ * mide entre minFrac y maxFrac de la foto, no toca el borde de la foto y no es una tira finita (grosorMin px).
+ * Medido en el set de regresión (2026-11-12): la pared dentro del rulo queda ~1 % MÁS OSCURA (sombra del cable); lo que sobresale de la
+ * pared y es del mismo blanco (tapas, machimbre, molduras, frente del aparato) queda 1,5-5 % MÁS CLARO: por eso luzMax es 1,01.
+ * El marco de una ventana toca el borde de la foto; una moldura es una tira de ~10 px. La zona tiene que ser una parte chica de su
+ * hueco (parteMax: pared vista a través de un cable o una silla, no un cuadro entero) y no mucho más lisa que la pared (texMin: una caja
+ * sobre revoque). DEBUG_ENC=1 en Node imprime cada zona aceptada. Modifica lab/agregado en el lugar.
+ */
+function rellenarEncerrados(data, w, h, lab, agregado, veto, { gradMax = 4, luzMin = 0.965, luzMax = 1.01, tolCroma = 0.012, minFrac = 0.001, maxFrac = 0.02, grosorMin = 8, parteMax = 0.5, texMin = 0.45, pad = 15, dominio = 0.8 } = {}) {
+  const N = w * h, L = new Float32Array(N), Ls = new Float32Array(N);
+  for (let i = 0; i < N; i++) L[i] = (data[i * 4] + data[i * 4 + 1] + data[i * 4 + 2]) / 3;
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    let t = 0, n = 0;
+    for (let dy = -1; dy <= 1; dy++) { const yy = y + dy; if (yy < 0 || yy >= h) continue; for (let dx = -1; dx <= 1; dx++) { const xx = x + dx; if (xx < 0 || xx >= w) continue; t += L[yy * w + xx]; n++; } }
+    Ls[y * w + x] = t / n;
+  }
+  const libre = new Uint8Array(N), liso = new Uint8Array(N);
+  for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++) {
+    const i = y * w + x;
+    const gx = (Ls[i - w + 1] + 2 * Ls[i + 1] + Ls[i + w + 1]) - (Ls[i - w - 1] + 2 * Ls[i - 1] + Ls[i + w - 1]);
+    const gy = (Ls[i + w - 1] + 2 * Ls[i + w] + Ls[i + w + 1]) - (Ls[i - w - 1] + 2 * Ls[i - w] + Ls[i - w + 1]);
+    if (Math.hypot(gx, gy) / 8 >= gradMax) continue;
+    liso[i] = 1; if (!lab[i] && !(veto && veto[i])) libre[i] = 1;
+  }
+  // hueco = cada mancha conexa de lo sin asignar (objeto + su margen); la zona lisa tiene que ser una parte chica de él
+  const sinAsignar = new Uint8Array(N); for (let i = 0; i < N; i++) if (!lab[i] && !(veto && veto[i] && veto[i] !== 2)) sinAsignar[i] = 1; // el objeto conocido (veto 2) es parte del hueco
+  const huecos = componentes(sinAsignar, w, h), areaHueco = (i) => huecos.comps[huecos.lab[i]].area;
+  const cr = (i) => data[i * 4] / (data[i * 4] + data[i * 4 + 1] + data[i * 4 + 2] + 1), cg = (i) => data[i * 4 + 1] / (data[i * 4] + data[i * 4 + 1] + data[i * 4 + 2] + 1);
+  for (const c of componentes(libre, w, h).comps) {
+    if (c.area < minFrac * N || c.area > maxFrac * N) continue;
+    const [bx0, by0, bx1, by1] = c.bbox;
+    if (bx0 <= 1 || by0 <= 1 || bx1 >= w - 2 || by1 >= h - 2) continue; // toca el borde de la foto: no está encerrada (marco de ventana)
+    if (c.area / (Math.max(bx1 - bx0, by1 - by0) + 1) < grosorMin) continue; // tira finita: moldura, varilla
+    // anillo = píxeles de superficie a <= pad px de la zona (dilatación separable dentro de la caja agrandada)
+    const [x0, y0, x1, y1] = c.bbox, X0 = Math.max(0, x0 - pad), Y0 = Math.max(0, y0 - pad), X1 = Math.min(w - 1, x1 + pad), Y1 = Math.min(h - 1, y1 + pad);
+    const bw = X1 - X0 + 1, bh = Y1 - Y0 + 1, cerca = new Uint8Array(bw * bh), fila = new Uint8Array(bw * bh), dil = new Uint8Array(bw * bh);
+    for (const i of c.pixels) { const x = i % w, y = (i - x) / w; cerca[(y - Y0) * bw + (x - X0)] = 1; }
+    for (let y = 0; y < bh; y++) {
+      let u = -1e9; for (let x = 0; x < bw; x++) { if (cerca[y * bw + x]) u = x; if (x - u <= pad) fila[y * bw + x] = 1; }
+      u = 1e9; for (let x = bw - 1; x >= 0; x--) { if (cerca[y * bw + x]) u = x; if (u - x <= pad) fila[y * bw + x] = 1; }
+    }
+    for (let x = 0; x < bw; x++) {
+      let u = -1e9; for (let y = 0; y < bh; y++) { if (fila[y * bw + x]) u = y; if (y - u <= pad) dil[y * bw + x] = 1; }
+      u = 1e9; for (let y = bh - 1; y >= 0; y--) { if (fila[y * bw + x]) u = y; if (u - y <= pad) dil[y * bw + x] = 1; }
+    }
+    const votos = new Map(); let sL = 0, sR = 0, sG = 0, sT = 0, nT = 0, nR = 0;
+    for (let y = 0; y < bh; y++) for (let x = 0; x < bw; x++) {
+      if (!dil[y * bw + x] || cerca[y * bw + x]) continue;
+      const i = (y + Y0) * w + (x + X0), k = lab[i]; if (!k) continue;
+      votos.set(k, (votos.get(k) ?? 0) + 1); sL += Ls[i]; sR += cr(i); sG += cg(i); if (liso[i]) { sT += Math.abs(L[i] - Ls[i]); nT++; } nR++;
+    }
+    if (nR < 20) continue;
+    let mejor = 0, nm = 0; for (const [k, v] of votos) if (v > nm) { mejor = k; nm = v; }
+    if (nm < dominio * nR) continue; // rodeada por más de una superficie: no se sabe de cuál es
+    let zL = 0, zR = 0, zG = 0, zT = 0; for (const i of c.pixels) { zL += Ls[i]; zR += cr(i); zG += cg(i); zT += Math.abs(L[i] - Ls[i]); }
+    zL /= c.area; zR /= c.area; zG /= c.area; zT /= c.area;
+    const rl = zL / (sL / nR);
+    if (rl < luzMin || rl > luzMax || Math.abs(zR - sR / nR) + Math.abs(zG - sG / nR) > tolCroma) continue;
+    if (c.area > parteMax * areaHueco(c.pixels[0])) continue; // la zona lisa es casi todo el objeto (cuadro, tapa): no es pared vista a través
+    if (nT && zT < texMin * (sT / nT)) continue; // mucho más lisa que la pared (frente de una caja sobre revoque)
+    if (globalThis.process?.env?.DEBUG_ENC) { const [a0, b0, a1, b1] = c.bbox; console.error(`enc ${a0},${b0} ${a1 - a0 + 1}x${b1 - b0 + 1} area ${c.area} parte ${(c.area / areaHueco(c.pixels[0])).toFixed(2)} tex ${zT.toFixed(2)}/${(sT / Math.max(1, nT)).toFixed(2)} relleno ${(c.area / ((a1 - a0 + 1) * (b1 - b0 + 1))).toFixed(2)} luz ${(zL / (sL / nR)).toFixed(3)}`); }
+    for (const i of c.pixels) { lab[i] = mejor; agregado[i] = 1; }
+  }
+}
+
+/**
  * Cierra los bordes blancos que deja el mapa del servidor: SAM 3 termina cada superficie unos píxeles antes de la arista (pared-techo,
  * esquinas, contorno de muebles) y el mapa llega agrandado (1280 -> 1600 px, con escalones). Cada superficie crece por BFS hasta `r` px
  * hacia lo que quedó SIN asignar, solo si el píxel se parece al color original de esa superficie (misma cromaticidad y luz parecida):
  * así se cierran las uniones sin comerse una estufa o un mueble de otro color. Lo que está entre dos superficies queda para la más cercana.
  * img: { data RGBA, width, height }. Devuelve superficies nuevas (no modifica las de entrada).
  */
-export function rellenarBordes(found, img, { r = null, tolCroma = 0.035, luzMin = 0.55, luzMax = 1.6, veto = null, huecoMin = 0.0003, pasoHueco = 12 } = {}) {
+export function rellenarBordes(found, img, { r = null, tolCroma = 0.035, luzMin = 0.55, luzMax = 1.6, veto = null, huecoMin = 0.0003, pasoHueco = 12, encerrados = true, sombra = true, alrededor = false } = {}) {
   const { data, width: w, height: h } = img, N = w * h;
   if (!found.length) return found;
   const R = r ?? Math.max(2, Math.round(0.01 * Math.max(w, h)));
@@ -410,7 +526,25 @@ export function rellenarBordes(found, img, { r = null, tolCroma = 0.035, luzMin 
   }
   const cola = new Int32Array(N); let a = 0, b = 0;
   for (let i = 0; i < N; i++) if (lab[i]) cola[b++] = i;
-  const agregado = new Uint8Array(N), orig = new Int32Array(N).fill(-1);
+  const agregado = new Uint8Array(N), orig = new Int32Array(N).fill(-1), ent = new Int32Array(N).fill(-1);
+  // luz local (r+g+b promedio 5x5) del píxel de la superficie por donde entró el relleno
+  const luzLocal = (i) => { const x = i % w, y = (i - x) / w; let t = 0, n = 0; for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) { const xx = x + dx, yy = y + dy; if (xx < 0 || yy < 0 || xx >= w || yy >= h) continue; const q = (yy * w + xx) * 4; t += data[q] + data[q + 1] + data[q + 2] + 1; n++; } return t / n; };
+  // entre: píxel sin asignar con superficie a los DOS lados (izq. y der., o arriba y abajo) a <= 2R px: un hueco finito como la arista de
+  // una esquina en sombra. El borde de un mueble oscuro tiene pared de un solo lado.
+  const entre = new Uint8Array(N);
+  if (sombra) {
+    const W = 2 * R;
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      const i = y * w + x; if (lab[i]) continue;
+      let l = false, r2 = false, u = false, dn = false;
+      for (let t = 1; t <= W && !(l && r2); t++) { if (!l && x - t >= 0 && lab[i - t]) l = true; if (!r2 && x + t < w && lab[i + t]) r2 = true; }
+      if (l && r2) { entre[i] = 1; continue; }
+      for (let t = 1; t <= W && !(u && dn); t++) { if (!u && y - t >= 0 && lab[i - t * w]) u = true; if (!dn && y + t < h && lab[i + t * w]) dn = true; }
+      if (u && dn) entre[i] = 1;
+    }
+  }
+  const l3 = new Float32Array(N).fill(-1);
+  const luz3 = (i) => { if (l3[i] < 0) { const x = i % w, y = (i - x) / w; let t = 0, n = 0; for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const xx = x + dx, yy = y + dy; if (xx < 0 || yy < 0 || xx >= w || yy >= h) continue; const q = (yy * w + xx) * 4; t += data[q] + data[q + 1] + data[q + 2]; n++; } l3[i] = t / n; } return l3[i]; };
   while (a < b) {
     const i = cola[a++], k = lab[i], d = dist[i];
     if (d >= R) continue;
@@ -418,8 +552,18 @@ export function rellenarBordes(found, img, { r = null, tolCroma = 0.035, luzMin 
     for (const j of [x > 0 ? i - 1 : -1, x < w - 1 ? i + 1 : -1, i - w, i + w]) {
       if (j < 0 || j >= N || lab[j] || (veto && veto[j])) continue; // veto: lo que el servidor sacó a propósito (zócalo, azulejo, cielo...)
       const q = ref[k - 1], p0 = data[j * 4], p1 = data[j * 4 + 1], p2 = data[j * 4 + 2], s = p0 + p1 + p2 + 1;
-      if (Math.abs(p0 / s - q.cr) > tolCroma || Math.abs(p1 / s - q.cg) > tolCroma) continue;
-      const luz = s / q.s; if (luz < luzMin || luz > luzMax) continue;
+      const luz = s / q.s, e = ent[i] >= 0 ? ent[i] : i;
+      const cromaOk = Math.abs(p0 / s - q.cr) <= tolCroma && Math.abs(p1 / s - q.cg) <= tolCroma;
+      if (!cromaOk || luz < luzMin || luz > luzMax) {
+        // pared en sombra (esquina detrás de la campana, c02): luz y color se comparan con la pared PEGADA por donde entró, no con el
+        // promedio de toda la superficie (la sombra puede ser menos de la mitad y en lo oscuro el tono se corre). Sin saltar más de ±25 %.
+        if (!sombra || luz < 0.25 || !entre[j]) continue;
+        const ll = s / luzLocal(e); if (ll < 0.8 || ll > 1.25) continue;
+        // sin saltos (un borde de mueble o un cable es un salto; la sombra de una esquina es gradual) y color casi igual
+        const qe = e * 4, se = data[qe] + data[qe + 1] + data[qe + 2] + 1; // color del píxel de pared por donde entró
+        if (Math.abs(p0 / s - data[qe] / se) > tolCroma * 0.5 || Math.abs(p1 / s - data[qe + 1] / se) > tolCroma * 0.5) continue;
+        if (Math.abs(luz3(j) - luz3(i)) > 0.08 * luz3(i) + 4) continue;
+      }
       // dentro de un hueco (objeto claro como la pared): avanza solo mientras el color no salta de un píxel al otro NI se aleja del de la
       // pared por donde entró (orig), así frena en el contorno del objeto aunque el borde sea difuso
       const o = orig[i] >= 0 ? orig[i] : i;
@@ -428,9 +572,11 @@ export function rellenarBordes(found, img, { r = null, tolCroma = 0.035, luzMin 
         if (Math.abs(p0 - data[pi]) + Math.abs(p1 - data[pi + 1]) + Math.abs(p2 - data[pi + 2]) > pasoHueco) continue;
         if (Math.abs(p0 - data[po]) + Math.abs(p1 - data[po + 1]) + Math.abs(p2 - data[po + 2]) > 2 * pasoHueco) continue;
       }
-      lab[j] = k; dist[j] = d + 1; agregado[j] = 1; orig[j] = hueco[j] ? o : -1; cola[b++] = j;
+      lab[j] = k; dist[j] = d + 1; agregado[j] = 1; orig[j] = hueco[j] ? o : -1; ent[j] = e; cola[b++] = j;
     }
   }
+  if (alrededor && veto) rellenarAlrededorDeObjetos(data, w, h, lab, agregado, veto, alrededor === true ? {} : alrededor);
+  if (encerrados) rellenarEncerrados(data, w, h, lab, agregado, veto, encerrados === true ? {} : encerrados);
   return found.map((f, k) => {
     const m = f.mask.slice(); let n = 0;
     for (let i = 0; i < N; i++) { if (agregado[i] && lab[i] === k + 1) m[i] = 1; if (m[i]) n++; }
