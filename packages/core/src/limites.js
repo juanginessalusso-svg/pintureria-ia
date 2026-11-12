@@ -64,12 +64,13 @@ export function afinarLimites(found, img, { banda = null, kinds = ['pared', 'tec
 /**
  * Suaviza el borde de varias capas que se pintan una encima de otra sin dejar línea en la unión: cada capa se estira `radius` px sobre
  * las capas vecinas antes de suavizar (así llega a 1 en su propio borde) y después se recorta donde manda la vecina. El suavizado queda
- * solo contra lo que NO se pinta (puerta, mueble, piso). masks: [Uint8Array] en orden de pintado. Devuelve [Float32Array].
+ * solo contra lo que NO se pinta (puerta, mueble, piso); en la unión entre dos capas los pesos se reparten (antialias). masks: [Uint8Array].
+ * Devuelve [Float32Array] de pesos finales: usar con pintarCapas().
  */
 export function featherCapas(masks, width, height, radius = 2) {
   const N = width * height, todas = new Uint8Array(N);
   for (const m of masks) for (let i = 0; i < N; i++) if (m[i]) todas[i]++;
-  return masks.map((m) => {
+  const softs = masks.map((m) => {
     if (radius <= 0) return Float32Array.from(m);
     const cerca = featherMask(Float32Array.from(m), width, height, radius), ext = new Float32Array(N);
     for (let i = 0; i < N; i++) ext[i] = m[i] || (cerca[i] > 0 && todas[i]) ? 1 : 0; // propia + lo de otras capas que está al lado
@@ -77,4 +78,16 @@ export function featherCapas(masks, width, height, radius = 2) {
     for (let i = 0; i < N; i++) if (!m[i] && todas[i]) soft[i] = 0; // donde manda otra capa, esta no se mete
     return soft;
   });
+  if (radius <= 0 || masks.length < 2) return softs;
+  // Antialias en la UNIÓN de dos capas (pedido de Ginés 2026-11-12: la línea techo/pared se veía escalonada con zoom): cada píxel de la
+  // unión reparte su peso entre las capas según cuánto de cada una tiene alrededor (b_k = máscara suavizada, normalizada a suma 1: no
+  // queda línea sin pintar). Los pesos son FINALES: pintar con pintarCapas() (cada color desde la foto original), no capa sobre capa.
+  const b = masks.map((m) => featherMask(Float32Array.from(m), width, height, radius));
+  for (let i = 0; i < N; i++) {
+    if (!todas[i]) continue;
+    let n = 0, t = 0; for (let k = 0; k < masks.length; k++) if (b[k][i] > 0.001) { n++; t += b[k][i]; }
+    if (n < 2) continue;
+    for (let k = 0; k < masks.length; k++) softs[k][i] = b[k][i] / t;
+  }
+  return softs;
 }

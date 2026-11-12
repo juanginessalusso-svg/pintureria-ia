@@ -21,6 +21,11 @@ Desplegado ese día: app en staging + servidor **sam3-v11**. Medido con `eval/re
   imprecisión de etiqueta). El r9 NO es el cuello de botella.
 - Pendiente: halo fino en llaves/tablero, pared en sombra bajo alero (w58), baños de techo bajo, asesor de color (carta Tersuave ya en
   `/api/public/colors`, 1.617 colores con LAB; propuesta en `Comunicacion Digital Avanzada/PROPUESTA-ASESOR-COLOR.md`).
+- **Tarde 2026-11-12** (desplegado): antialias en la unión de dos superficies (`featherCapas` da pesos finales + `pintarCapas` en
+  recolor.js: cada color desde la foto original); `adoptarPedazos` en `superficiesDesdeMapa` (pared vista entre patas/marcos: pedazos
+  sueltos del mapa se suman a la pared cercana si tienen su color y no son una tira); `marcarZocalos` exige pared continua sobre el
+  zócalo. Medido con mapas v11 reales: cubre 99,1 %, pinta mal 0,77 %. DESCARTADOS (medidos): filtro guiado de bordes (igual resultado,
+  x3 tiempo) y SAM 3 por recortes 2x2 (+0,4 pts de cobertura, más error, x3-4 GPU).
 - Probar textos nuevos de SAM 3 sin Release: `POST /api/public/segmentar/diag?tenant=plazaolmos&textos=a,b,c` (máx. 12 textos, 20 fotos/10 min).
 
 ## Qué es

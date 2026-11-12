@@ -294,3 +294,22 @@ export function recolorWall(img, mask, targetHex, { mode = 'relative', gains = [
   }
   return { image: { data: out, width, height }, wallMeanL: meanL, targetL: target.L };
 }
+
+/**
+ * Pinta varias superficies a la vez: cada color se calcula desde la foto ORIGINAL (no desde la capa anterior ya pintada, que en la unión
+ * oscurecía el segundo color) y se suman los aportes según el peso de cada capa en cada píxel (softs de featherCapas: en la unión suman 1).
+ * capas: [{ soft: Float32Array, hex }]. opts: los de recolorWall. Devuelve { data, width, height }.
+ */
+export function pintarCapas(img, capas, opts = {}) {
+  const { data, width, height } = img;
+  if (!capas.length) return img;
+  if (capas.length === 1) return recolorWall(img, capas[0].soft, capas[0].hex, opts).image;
+  const acc = new Float32Array(data.length);
+  for (const c of capas) {
+    const r = recolorWall(img, c.soft, c.hex, opts).image.data;
+    for (let i = 0; i < data.length; i++) if ((i & 3) !== 3) acc[i] += r[i] - data[i];
+  }
+  const out = new Uint8ClampedArray(data.length);
+  for (let i = 0; i < data.length; i++) out[i] = (i & 3) === 3 ? data[i] : data[i] + acc[i];
+  return { data: out, width, height };
+}

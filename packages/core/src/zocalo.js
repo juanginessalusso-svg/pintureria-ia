@@ -59,7 +59,15 @@ export function marcarZocalos(found, img, { minDE = 20, minAlto = 0.08, maxAlto 
     if (mejor && mejor.d >= minDE) {
       const m = Math.max(2, Math.round(0.02 * H));
       const sup = labFilas(P, Math.max(bb.y0, mejor.yc - 3 * m), mejor.yc - m), inf = labFilas(P, mejor.yc + m, Math.min(bb.y1 + 1, mejor.yc + 3 * m));
-      if (sup && inf && dE(sup, inf) >= 0.6 * mejor.d) { // corte neto
+      // continuidad: en un zócalo la pared llega pegada a la pintura de abajo; si entre las dos hay un objeto (la tabla de un caballete,
+      // p…180754: la pared en sombra debajo de la mesa NO es un zócalo) la máscara se corta en la línea del corte
+      let cols = 0, cont = 0;
+      for (let x = bb.x0; x <= bb.x1; x += 2) {
+        if (!f.mask[Math.max(0, mejor.yc - 3 * m) * w + x] || !f.mask[Math.min(h - 1, mejor.yc + 3 * m) * w + x]) continue;
+        cols++; let ok = true; for (let y = mejor.yc - 3 * m; y <= mejor.yc + 3 * m; y++) if (!f.mask[y * w + x]) { ok = false; break; }
+        if (ok) cont++;
+      }
+      if (sup && inf && dE(sup, inf) >= 0.6 * mejor.d && cols && cont >= 0.5 * cols) { // corte neto y pared continua sobre el zócalo
         const pared = new Uint8Array(N), zoc = new Uint8Array(N); let np = 0, nz = 0;
         for (let i = 0; i < N; i++) if (f.mask[i]) {
           const y = (i / w) | 0;

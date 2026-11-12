@@ -316,21 +316,64 @@ export function hibridar(found, clasico, classMap, w, h, { minTechoModelo = 0.4,
  * y tardaba 10-40 s en el celular; esto es instantáneo.
  * Devuelve [{ name, kind, area, mask }] (paredes de mayor a menor, después el techo).
  */
-export function superficiesDesdeMapa(classMap, w, h, { minFrac = 0.01, islaMin = 0.002, instancias = null } = {}) {
+export function superficiesDesdeMapa(classMap, w, h, { minFrac = 0.01, islaMin = 0.002, instancias = null, pedazoMin = 0.0003, adopcion = 0.1, img = null } = {}) {
   const N = w * h, out = [];
   for (const [kind, cls] of [['pared', CLASE.pared], ['techo', CLASE.techo]]) {
     let m = new Uint8Array(N);
     for (let i = 0; i < N; i++) if (classMap[i] === cls) m[i] = 1;
+    const completa = m;
     m = removeSmallIslands(m, w, h, Math.round(islaMin * N));
     let zonas;
     if (kind === 'pared' && instancias) zonas = zonasPorInstancia(m, instancias, w, h, minFrac);
     else zonas = componentes(m, w, h).comps.filter((c) => c.area >= minFrac * N).map((c) => { const z = new Uint8Array(N); for (const i of c.pixels) z[i] = 1; return { mask: z, area: c.area }; });
+    if (adopcion && img && zonas.length) adoptarPedazos(completa, zonas, w, h, Math.round(pedazoMin * N), Math.round(adopcion * Math.max(w, h)), img);
     zonas.sort((a, b) => b.area - a.area).forEach((z, k) => {
       const name = kind === 'techo' ? (zonas.length > 1 ? `Techo ${k + 1}` : 'Techo') : `Pared ${k + 1}`;
       out.push({ name, kind, area: z.area / N, mask: z.mask });
     });
   }
   return out;
+}
+
+/**
+ * Pedazos sueltos de pared/techo (revisión con Ginés 2026-11-12: la pared que se ve entre las patas de un caballete o dentro del marco de
+ * una silla de ruedas; el servidor SÍ la marca, pero queda partida en pedazos chicos y se tiraba por chica). Cada pedazo de al menos
+ * `minPx` que no quedó en ninguna zona se suma a la zona más cercana si está a <= `dist` px (BFS desde las zonas por toda la foto: la
+ * misma pared vista a través del objeto), no es una tira finita y tiene el color de esa zona (no la pared de otra habitación vista por la
+ * puerta, ni el listón de un friso). Necesita la foto (opts.img). Modifica las zonas en el lugar.
+ */
+function adoptarPedazos(completa, zonas, w, h, minPx, dist, img, { grosorMin = 15, tolCroma = 0.03, luzMin = 0.5, luzMax = 1.35 } = {}) {
+  const N = w * h, lab = new Int32Array(N), d = new Uint16Array(N);
+  zonas.forEach((z, k) => { for (let i = 0; i < N; i++) if (z.mask[i] && !lab[i]) lab[i] = k + 1; });
+  const resto = new Uint8Array(N); let hay = false;
+  for (let i = 0; i < N; i++) if (completa[i] && !lab[i]) { resto[i] = 1; hay = true; }
+  if (!hay) return;
+  const piezas = componentes(resto, w, h).comps.filter((c) => c.area >= minPx);
+  if (!piezas.length) return;
+  // distancia (en pasos 4-vecinos) a la zona más cercana, por toda la foto, hasta `dist`
+  const cola = new Int32Array(N); let a = 0, b = 0;
+  for (let i = 0; i < N; i++) if (lab[i]) cola[b++] = i;
+  while (a < b) {
+    const i = cola[a++]; if (d[i] >= dist) continue;
+    const x = i % w;
+    for (const j of [x > 0 ? i - 1 : -1, x < w - 1 ? i + 1 : -1, i - w, i + w]) if (j >= 0 && j < N && !lab[j]) { lab[j] = lab[i]; d[j] = d[i] + 1; cola[b++] = j; }
+  }
+  const dbg = globalThis.process?.env?.DEBUG_ADOP ? (c, m) => console.error('pieza', c.bbox.join(','), c.area, m) : () => {};
+  for (const c of piezas) {
+    const votos = new Map(); for (const i of c.pixels) if (lab[i]) votos.set(lab[i], (votos.get(lab[i]) ?? 0) + 1);
+    let mejor = 0, nm = 0; for (const [k, v] of votos) if (v > nm) { mejor = k; nm = v; }
+    if (!mejor || nm < 0.05 * c.area) { dbg(c, 'lejos'); continue; } // alcanza con que una parte esté cerca: una pieza alta entre dos patas tiene la punta de abajo lejos
+    const [x0, y0, x1, y1] = c.bbox, lado1 = Math.max(x1 - x0, y1 - y0) + 1, lado2 = Math.min(x1 - x0, y1 - y0) + 1;
+    const alBorde = x0 <= 1 || y0 <= 1 || x1 >= w - 2 || y1 >= h - 2; // una pared cortada por el encuadre puede quedar alta y angosta (p…225828)
+    if (c.area / lado1 < grosorMin || (lado1 > 8 * lado2 && !alBorde)) { dbg(c, 'tira'); continue; } // tira finita o cinta muy alargada (listón de un friso, moldura)
+    // mismo color que la zona que lo adopta (la pared de OTRA habitación vista por la puerta tiene otra luz y otro tono)
+    const z = zonas[mejor - 1], col = (idx) => { let s = 0, r = 0, g = 0, n = 0; for (const i of idx) { const q = i * 4, t = img.data[q] + img.data[q + 1] + img.data[q + 2] + 1; s += t; r += img.data[q] / t; g += img.data[q + 1] / t; n++; } return { s: s / n, r: r / n, g: g / n }; };
+    const muestra = []; for (let i = 0; i < N; i += 97) if (z.mask[i]) muestra.push(i);
+    if (muestra.length < 20) continue;
+    const a1 = col(c.pixels), a2 = col(muestra), luz = a1.s / a2.s;
+    if (luz < luzMin || luz > luzMax || Math.abs(a1.r - a2.r) > tolCroma || Math.abs(a1.g - a2.g) > tolCroma) { dbg(c, `color luz ${luz.toFixed(2)} dr ${(a1.r - a2.r).toFixed(3)} dg ${(a1.g - a2.g).toFixed(3)}`); continue; }
+    dbg(c, 'adoptada'); for (const i of c.pixels) z.mask[i] = 1; z.area += c.area;
+  }
 }
 
 /**

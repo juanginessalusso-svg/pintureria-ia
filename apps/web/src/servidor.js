@@ -31,7 +31,7 @@ export async function superficiesDelServidor(foto, url, { fetchFn = fetch } = {}
     // rellenarBordes: cierra las franjas blancas que deja el mapa en aristas, esquinas y contornos (foto de Agustín, 2026-11-11)
     const foto2 = { data: new Uint8ClampedArray(data), width, height };
     // marcarOSB: techo/pared de OSB queda sin color · quitarCornisas: la moldura pegada a la unión techo/pared no se pinta · enderezarBordes: el borde contra una moldura o un marco queda recto · marcarZocalos: el zócalo de otro color queda como superficie propia, que no se pinta con la pared
-    const found = separarMadera(marcarOSB(enderezarBordes(quitarCornisas(marcarZocalos(enderezarTechoPared(afinarLimites(rellenarBordes(superficiesDesdeMapa(map, width, height, { instancias: inst }), foto2, { veto }), foto2), width, height), foto2), foto2), foto2, { veto }), foto2), veto, width, height);
+    const found = separarMadera(marcarOSB(enderezarBordes(quitarCornisas(marcarZocalos(enderezarTechoPared(afinarLimites(rellenarBordes(superficiesDesdeMapa(map, width, height, { instancias: inst, img: foto2 }), foto2, { veto }), foto2), width, height), foto2), foto2), foto2, { veto }), foto2), veto, width, height);
     const ms = Math.round(performance.now() - t0), gpu = r.headers.get('X-Segundos');
     console.info(`[servidor] ${found.length} superficies en ${ms} ms (GPU ${gpu ?? '?'} s)`);
     return found.length ? { found, ms, gpu } : null;

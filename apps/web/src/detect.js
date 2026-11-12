@@ -36,7 +36,7 @@ export async function runDetect({ image, segment, onProgress = () => {}, isCance
   // directo (opts.semantico.directo): el mapa viene del servidor con GPU (SAM 3 + r9) con los bordes ya exactos; las superficies salen
   // de él sin pedirle nada a SAM (más fiel y sin los 10-40 s de decodificaciones en el celular). Interior y fachada por igual.
   if (classMap && opts.semantico?.directo) {
-    found = superficiesDesdeMapa(classMap, width, height, { ...opts.semantico, instancias });
+    found = superficiesDesdeMapa(classMap, width, height, { ...opts.semantico, instancias, img: image });
     if (!opts.semantico.sinBordes) found = rellenarBordes(found, image, { veto, ...(opts.semantico.bordes ?? {}) }); // sinBordes: solo para comparar en eval
     if (!opts.semantico.sinLimites) found = afinarLimites(found, image); // el límite entre dos muros va sobre la arista
     if (!opts.semantico.sinRectas) found = enderezarTechoPared(found, width, height); // la unión techo/pared sin escalones
