@@ -370,15 +370,18 @@ function zonasPorInstancia(pared, ids, w, h, minFrac) {
 
 /**
  * Cierra los bordes blancos que deja el mapa del servidor: SAM 3 termina cada superficie unos píxeles antes de la arista (pared-techo,
- * esquinas, contorno de muebles) y el mapa llega agrandado (1280 -> 1600 px, con escalones). Cada superficie crece por BFS hasta `r` px
- * hacia lo que quedó SIN asignar, solo si el píxel se parece al color original de esa superficie (misma cromaticidad y luz parecida):
- * así se cierran las uniones sin comerse una estufa o un mueble de otro color. Lo que está entre dos superficies queda para la más cercana.
- * img: { data RGBA, width, height }. Devuelve superficies nuevas (no modifica las de entrada).
+ * esquinas, contorno de muebles) y alrededor de los objetos deja un margen ancho (portero eléctrico, llave de luz, cable). Cada superficie
+ * crece por BFS hasta `r` px hacia lo SIN asignar, solo si:
+ *  - el píxel tiene la cromaticidad y una luz parecida a la de la superficie (no se come un mueble de otro color);
+ *  - el color no SALTA respecto del píxel anterior (`paso`): así frena en el contorno de un objeto aunque sea blanco como la pared;
+ *  - no es más CLARO que la pared por donde entró (`brillo`): una tapa o un aparato blanco con borde difuso no se pinta; una sombra sí.
+ * Lo que está entre dos superficies queda para la más cercana. img: { data RGBA, width, height }. Devuelve superficies nuevas.
+ * Pruebas de Ginés 2026-11-11: la tapa de la llave salía pintada; el portero quedaba con un halo blanco ancho alrededor.
  */
-export function rellenarBordes(found, img, { r = null, tolCroma = 0.035, luzMin = 0.55, luzMax = 1.6, veto = null, huecoMin = 0.0003, pasoHueco = 12 } = {}) {
+export function rellenarBordes(found, img, { r = null, tolCroma = 0.035, luzMin = 0.55, luzMax = 1.6, veto = null, paso = 12, brillo = 1.04 } = {}) {
   const { data, width: w, height: h } = img, N = w * h;
   if (!found.length) return found;
-  const R = r ?? Math.max(2, Math.round(0.01 * Math.max(w, h)));
+  const R = r ?? Math.max(2, Math.round(0.02 * Math.max(w, h)));
   const lab = new Int32Array(N), dist = new Uint16Array(N);
   const ref = found.map(() => ({ s: 0, cr: 0, cg: 0, n: 0 }));
   found.forEach((f, k) => {
@@ -389,46 +392,25 @@ export function rellenarBordes(found, img, { r = null, tolCroma = 0.035, luzMin 
     }
   });
   for (const q of ref) { const n = Math.max(1, q.n); q.s /= n; q.cr /= n; q.cg /= n; }
-  // Huecos = objetos (llave de luz, tablero, cuadro): lo sin asignar que queda ENCERRADO por una sola superficie, sin tocar el borde de la
-  // foto y con grosor de objeto, no se rellena aunque sea blanco como la pared (prueba de Ginés: la tapa de la llave salía pintada).
-  const hueco = new Uint8Array(N);
-  if (huecoMin > 0) {
-    const libre = new Uint8Array(N); for (let i = 0; i < N; i++) if (!lab[i]) libre[i] = 1;
-    const G = Math.max(w, h);
-    for (const c of componentes(libre, w, h).comps) {
-      if (c.area < huecoMin * N) continue;
-      let x0 = w, x1 = -1, y0 = h, y1 = -1, borde = false; const vecinas = new Set();
-      for (const i of c.pixels) {
-        const x = i % w, y = (i - x) / w;
-        if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
-        if (x === 0 || y === 0 || x === w - 1 || y === h - 1) { borde = true; break; }
-        for (const j of [i - 1, i + 1, i - w, i + w]) if (lab[j]) vecinas.add(lab[j]);
-      }
-      if (borde || vecinas.size !== 1 || Math.min(x1 - x0, y1 - y0) + 1 < 0.006 * G) continue;
-      for (const i of c.pixels) hueco[i] = 1;
-    }
-  }
+  // luz de la pared por donde entró cada píxel: promedio 5x5 del píxel de la superficie original (no un píxel suelto con ruido)
+  const luzEn = (i) => { const x = i % w, y = (i - x) / w; let t = 0, n = 0; for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) { const xx = x + dx, yy = y + dy; if (xx < 0 || yy < 0 || xx >= w || yy >= h) continue; const q = (yy * w + xx) * 4; t += data[q] + data[q + 1] + data[q + 2]; n++; } return t / n; };
+  const sv = new Float32Array(N).fill(-1);
+  const suave = (i) => { if (sv[i] < 0) { const x = i % w, y = (i - x) / w; let t = 0, n = 0; for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const xx = x + dx, yy = y + dy; if (xx < 0 || yy < 0 || xx >= w || yy >= h) continue; const q = (yy * w + xx) * 4; t += data[q] + data[q + 1] + data[q + 2]; n++; } sv[i] = t / n; } return sv[i]; };
   const cola = new Int32Array(N); let a = 0, b = 0;
   for (let i = 0; i < N; i++) if (lab[i]) cola[b++] = i;
-  const agregado = new Uint8Array(N), orig = new Int32Array(N).fill(-1);
+  const agregado = new Uint8Array(N), techo = new Float32Array(N); // techo: luz máxima permitida (la de la pared de origen)
   while (a < b) {
     const i = cola[a++], k = lab[i], d = dist[i];
     if (d >= R) continue;
-    const x = i % w;
+    const x = i % w, tope = agregado[i] ? techo[i] : luzEn(i) * brillo + 9;
     for (const j of [x > 0 ? i - 1 : -1, x < w - 1 ? i + 1 : -1, i - w, i + w]) {
       if (j < 0 || j >= N || lab[j] || (veto && veto[j])) continue; // veto: lo que el servidor sacó a propósito (zócalo, azulejo, cielo...)
       const q = ref[k - 1], p0 = data[j * 4], p1 = data[j * 4 + 1], p2 = data[j * 4 + 2], s = p0 + p1 + p2 + 1;
       if (Math.abs(p0 / s - q.cr) > tolCroma || Math.abs(p1 / s - q.cg) > tolCroma) continue;
       const luz = s / q.s; if (luz < luzMin || luz > luzMax) continue;
-      // dentro de un hueco (objeto claro como la pared): avanza solo mientras el color no salta de un píxel al otro NI se aleja del de la
-      // pared por donde entró (orig), así frena en el contorno del objeto aunque el borde sea difuso
-      const o = orig[i] >= 0 ? orig[i] : i;
-      if (hueco[j]) {
-        const pi = i * 4, po = o * 4;
-        if (Math.abs(p0 - data[pi]) + Math.abs(p1 - data[pi + 1]) + Math.abs(p2 - data[pi + 2]) > pasoHueco) continue;
-        if (Math.abs(p0 - data[po]) + Math.abs(p1 - data[po + 1]) + Math.abs(p2 - data[po + 2]) > 2 * pasoHueco) continue;
-      }
-      lab[j] = k; dist[j] = d + 1; agregado[j] = 1; orig[j] = hueco[j] ? o : -1; cola[b++] = j;
+      if (Math.abs(suave(j) - suave(i)) > paso) continue; // salto de luz (promedio 3x3, sin el ruido del JPEG): contorno de un objeto
+      if (suave(j) > tope) continue; // más claro que la pared de origen: objeto claro
+      lab[j] = k; dist[j] = d + 1; agregado[j] = 1; techo[j] = tope; cola[b++] = j;
     }
   }
   return found.map((f, k) => {
