@@ -89,7 +89,7 @@ def clases(img: Image.Image):
         img.thumbnail((1280, 1280))
     t0 = time.perf_counter()
     R = mapas_sam(img, ["painted wall", "wall", "ceiling", "tile", "tiled wall", "mirror", "wallpaper", "stucco wall", "brick wall", "sky", "garage door", "pergola", "facade", "baseboard", "skirting board"]
-                  + OBJETOS + ["crown molding", "wood paneling", "wooden ceiling"])
+                  + OBJETOS + ["crown molding", "wood paneling", "wooden ceiling", "open doorway"])
     (pw, ipw), (ww, iww), (pc, ipc) = R["painted wall"], R["wall"], R["ceiling"]
     m9 = clases_r9(img)
     p = np.zeros(pw.shape, np.uint8)
@@ -126,6 +126,7 @@ def clases(img: Image.Image):
     # sobre la app de esa noche, 3,17 % en staging). El canal B pasa de "prohibido sí/no" a un código:
     #   255 = regla (no se pinta ni se rellena) · 200 = objeto conocido (la app lo respeta y sabe qué es) · 100 = madera (sigue siendo
     #   pared/techo; la app la separa como superficie "Madera" sin color). La app vieja lee B > 127 como prohibido: 200 también; 100 lo ignora.
+#   50 = pared de otra habitación vista por una puerta abierta (regla 11, más abajo); la app vieja la ignora.
     sup = (p == 1) | (p == 2)
     m_ = (R["crown molding"][0] >= 0.5) & sup; p[m_] = 0; veto |= m_  # regla 8: la moldura entre techo y pared no se pinta
     mad = (np.maximum(R["wood paneling"][0], R["wooden ceiling"][0]) >= 0.6) & sup  # regla 9: machimbre (en pared lisa da <= 0,35)
@@ -137,7 +138,48 @@ def clases(img: Image.Image):
     b = veto.astype(np.uint8) * 255
     b[mad & (b == 0) & ~obj] = 100
     b[obj] = 200
-    return p, ids_pared(ipw + iww + R["stucco wall"][1], p == 1), b, time.perf_counter() - t0
+    ids = ids_pared(ipw + iww + R["stucco wall"][1], p == 1)
+    # regla 11 (2026-11-13, criterio de Ginés: se pinta la habitación donde está el cliente, no la de al lado): pared que queda >= 90 %
+    # adentro de una "open doorway" (puntaje >= 0,3) es de otra habitación vista por la puerta o el arco -> B = 50 (sigue siendo pared;
+    # la app la separa como "Pared del fondo" sin color). En el set (51 fotos) marca justo las 8 paredes de otra habitación; la
+    # pared del fondo de una cocina angosta (misma habitación, w63) queda afuera porque la puerta la cubre 79 %.
+    for mk, s in R["open doorway"][1]:
+        if s < 0.3: continue
+        for g in np.unique(ids[mk & (p == 1)]):
+            if not g: continue
+            w = (ids == g) & (p == 1)
+            if (w & mk).sum() >= 0.9 * w.sum(): b[w & (b == 0)] = 50
+    return p, ids, b, time.perf_counter() - t0
+
+
+_refinador = None
+
+
+def afinar(img: Image.Image, p: np.ndarray, ids: np.ndarray):
+    """PRUEBA (solo diagnóstico, 2026-11-13): afina el borde de pared y techo con CascadePSP (MIT, class-agnostic, hecho para
+    afinar contornos a alta resolución). Se carga recién en el primer pedido de diagnóstico: el pedido normal no lo usa.
+    Devuelve (clases afinadas, número de pared, segundos)."""
+    global _refinador
+    t0 = time.perf_counter()
+    if _refinador is None:
+        import segmentation_refinement as refine
+        carpeta = "/runpod-volume/psp" if os.path.isdir("/runpod-volume") else None
+        _refinador = refine.Refiner(device=DEV, model_folder=carpeta)
+    im = np.asarray(img.convert("RGB"))
+    probs = {c: _refinador.refine(im, (p == c).astype(np.uint8) * 255, fast=False, L=900) for c in (1, 2) if (p == c).mean() >= 0.002}
+    p2 = np.where((p == 1) | (p == 2), 0, p).astype(np.uint8)
+    if probs:
+        ks = list(probs); st = np.stack([probs[k] for k in ks]); mejor = st.argmax(0); mx = st.max(0)
+        for j, k in enumerate(ks): p2[(mejor == j) & (mx > 127)] = k
+    # número de pared: el de antes; lo que se agregó toma el de la pared vecina (hasta 12 px)
+    ids2 = np.where(p2 == 1, ids, 0).astype(np.uint8)
+    for _ in range(12):
+        falta = (p2 == 1) & (ids2 == 0)
+        if not falta.any(): break
+        v = np.zeros_like(ids2)
+        for dy, dx in ((1, 0), (-1, 0), (0, 1), (0, -1)): v = np.maximum(v, np.roll(np.roll(ids2, dy, 0), dx, 1))
+        ids2[falta] = v[falta]
+    return p2, ids2, time.perf_counter() - t0
 
 
 def ids_pared(insts, pared, umbral=0.35, dup=0.5):

@@ -5,7 +5,7 @@ Los modelos se cargan UNA vez al arrancar el worker (import de app); cada pedido
 import base64, io
 import runpod
 from PIL import Image, ImageOps
-from app import clases, png, mapas_sam
+from app import clases, png, mapas_sam, afinar
 import numpy as np
 
 
@@ -20,6 +20,11 @@ def handler(job):
     except Exception as e:  # noqa: BLE001 - foto ilegible
         return {"error": f"foto_invalida: {e}"}
     textos = job["input"].get("textos")
+    if textos == ["__afinar__"]:  # diagnóstico (2026-11-13): mapa normal y el mismo con los bordes afinados por CascadePSP, para comparar
+        p, ids, veto, seg = clases(img)
+        p2, ids2, t = afinar(img, p, ids)
+        return {"mapas": {"base": base64.b64encode(png(p, ids, veto)).decode(), "afinado": base64.b64encode(png(p2, ids2, veto)).decode()},
+                "ancho": int(p.shape[1]), "alto": int(p.shape[0]), "segundos": round(seg, 2), "segundos_afinar": round(t, 2)}
     if textos:  # diagnóstico (solo staging): mapa de puntaje 0-255 por cada texto, para probar reglas nuevas sin rehacer la imagen
         if not isinstance(textos, list) or len(textos) > 12 or not all(isinstance(t, str) and 0 < len(t) <= 40 for t in textos):
             return {"error": "textos_invalidos"}
