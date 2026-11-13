@@ -105,10 +105,13 @@ export function straightenBoundaries(surfaces, w, h, opts = {}) {
  * El mapa del servidor llega a 1280 px y se agranda con vecino más cercano: la unión techo/pared sale en escalones (revisión 2026-11-12,
  * foto "puerta"). Devuelve superficies nuevas.
  */
-export function enderezarTechoPared(found, w, h, opts = {}) {
+export function enderezarTechoPared(found, w, h, { paredPared = true, ...opts } = {}) {
   const masks = found.map((f) => f.mask.slice());
   for (let a = 0; a < found.length; a++) for (let b = 0; b < found.length; b++) {
-    if (found[a].kind !== 'techo' || found[b].kind !== 'pared') continue;
+    const tp = found[a].kind === 'techo' && found[b].kind === 'pared';
+    // pared con pared (la arista de una columna, 2026-11-13: el corte por color zigzagueaba cuando las dos caras son del mismo blanco)
+    const pp = paredPared && a < b && found[a].kind === 'pared' && found[b].kind === 'pared';
+    if (!tp && !pp) continue;
     const r = straightenPair(masks[a], masks[b], w, h, opts);
     if (r && globalThis.process?.env?.DEBUG_RECTAS) console.error('techo-pared', JSON.stringify(r));
   }
