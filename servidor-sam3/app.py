@@ -78,7 +78,8 @@ def salud():
 
 # Objetos que el servidor reconoce para que la app no los pinte (regla 10). "cable" da manchas anchas con puntaje bajo en cordones de
 # cortina (0,63 en p…223108): se le pide 0,75; "intercom" a veces da 0,40 con el aparato bien marcado (p…181544): 0,35.
-OBJETOS = ["range hood", "intercom", "cable", "light switch", "electrical panel", "power outlet", "wall plate", "picture frame"]
+# v12: "door frame" (el contramarco blanco se pintaba con la pared): pinta mal 0,77 -> 0,66 % simulado, cubre igual (99,1 %).
+OBJETOS = ["range hood", "intercom", "cable", "light switch", "electrical panel", "power outlet", "wall plate", "picture frame", "door frame"]
 UMBRAL_OBJETO = {"cable": 0.75, "intercom": 0.35}
 
 
