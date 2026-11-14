@@ -104,3 +104,17 @@ test('unirCarasChicas: la cara chica de la columna se suma a la pared vecina', a
   assert.equal(out.length, 2);
   assert.equal(out[0].mask[61], 1);
 });
+
+test('nombrarPorPosicion: pared partida por una moldura -> (arriba) y (abajo)', async () => {
+  const { nombrarPorPosicion } = await import('../src/nombres.js');
+  const w = 20, h = 20, m = (y0, y1) => { const a = new Uint8Array(w * h); for (let i = 0; i < w * h; i++) { const y = Math.floor(i / w); if (y >= y0 && y < y1) a[i] = 1; } return a; };
+  const out = nombrarPorPosicion([{ kind: 'pared', name: 'Pared 1', mask: m(0, 12) }, { kind: 'pared', name: 'Pared 2', mask: m(14, 20) }], w, h);
+  assert.deepEqual(out.map((f) => f.name), ['Pared central (arriba)', 'Pared central (abajo)']);
+});
+
+test('unirApiladas: pared partida por una moldura queda como una sola', async () => {
+  const { unirApiladas } = await import('../src/planos.js');
+  const w = 40, h = 40, N = w * h, m = (y0, y1) => { const a = new Uint8Array(N); for (let i = 0; i < N; i++) { const y = Math.floor(i / w); if (y >= y0 && y < y1) a[i] = 1; } return a; };
+  const out = unirApiladas([{ kind: 'pared', name: 'Pared 1', mask: m(0, 25), area: 0.62 }, { kind: 'pared', name: 'Pared 2', mask: m(27, 40), area: 0.32 }], w, h, { maxHueco: 0.1 });
+  assert.equal(out.length, 1); assert.equal(out[0].mask[30 * w + 5], 1); assert.equal(out[0].mask[26 * w + 5], 0);
+});

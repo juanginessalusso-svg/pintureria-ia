@@ -92,3 +92,41 @@ export function unirCarasChicas(found, w, h, { maxFrac = 0.03, minBorde = 20 } =
   if (!quitar.size) return found;
   return found.flatMap((f, k) => (quitar.has(k) ? [] : [masks[k] === f.mask ? f : { ...f, mask: masks[k], area: masks[k].reduce((s, v) => s + v, 0) / N }]));
 }
+
+/**
+ * Pared partida por una moldura o guardasilla (2026-11-16, foto del reloj de Ginés): la parte de arriba y la de abajo son el MISMO plano;
+ * si quedan como dos superficies, la combinación recomendada les pone colores distintos y la de abajo parece sin pintar. Dos paredes
+ * automáticas que se solapan en horizontal (>= solape del ancho de la menor) y están una encima de la otra, separadas por una franja
+ * angosta (<= maxHueco de la altura), se juntan en una sola (la moldura en el medio sigue sin pintarse).
+ */
+export function unirApiladas(found, w, h, { solape = 0.6, maxHueco = 0.06 } = {}) {
+  const N = w * h, auto = (f) => f.kind === 'pared' && /^Pared( \d+)?$/.test(f.name ?? '');
+  const info = found.map((f) => {
+    if (!auto(f)) return null;
+    let x0 = w, x1 = 0, sy = 0, n = 0;
+    for (let i = 0; i < N; i++) if (f.mask[i]) { const x = i % w; if (x < x0) x0 = x; if (x > x1) x1 = x; sy += (i - x) / w; n++; }
+    return n ? { x0, x1, cy: sy / n } : null;
+  });
+  const quitar = new Set(), masks = found.map((f) => f.mask);
+  for (let a = 0; a < found.length; a++) for (let b = 0; b < found.length; b++) {
+    if (a === b || !info[a] || !info[b] || quitar.has(a) || quitar.has(b)) continue;
+    const A = info[a], B = info[b]; if (A.cy >= B.cy) continue; // a arriba de b (por el centro: un pedazo de a puede bajar por un costado)
+    const s = Math.min(A.x1, B.x1) - Math.max(A.x0, B.x0), menor = Math.min(A.x1 - A.x0, B.x1 - B.x0);
+    if (s < solape * menor) continue;
+    // la franja del medio tiene que ser angosta EN TODO el ancho común: fila por fila (muestreada) el hueco entre las dos no supera maxHueco
+    let malas = 0, filas = 0;
+    for (let x = Math.max(A.x0, B.x0); x <= Math.min(A.x1, B.x1); x += 8) {
+      let ya = -1, yb = -1; for (let y = 0; y < h; y++) if (masks[b][y * w + x]) { yb = y; break; }
+      if (yb >= 0) for (let y = yb - 1; y >= 0; y--) if (masks[a][y * w + x]) { ya = y; break; }
+      if (ya < 0 || yb < 0) continue; filas++; if (yb - ya > maxHueco * h) malas++;
+    }
+    if (globalThis.process?.env?.DEBUG_APILADAS) console.error('apiladas', a, b, JSON.stringify({ A, B, s, menor, filas, malas }));
+    if (!filas || malas > 0.3 * filas) continue;
+    const g = found[a].area >= found[b].area ? a : b, c = g === a ? b : a;
+    const m = masks[g] === found[g].mask ? (masks[g] = found[g].mask.slice()) : masks[g];
+    for (let i = 0; i < N; i++) if (masks[c][i]) m[i] = 1;
+    quitar.add(c);
+  }
+  if (!quitar.size) return found;
+  return found.flatMap((f, k) => (quitar.has(k) ? [] : [masks[k] === f.mask ? f : { ...f, mask: masks[k], area: masks[k].reduce((s2, v) => s2 + v, 0) / N }]));
+}

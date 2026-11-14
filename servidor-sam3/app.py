@@ -85,8 +85,14 @@ UMBRAL_OBJETO = {"cable": 0.75, "intercom": 0.35}
 # app rellenaba el hueco entre la pared y el objeto y se pasaba sobre el borde del sillón, el costado del radiador o el marco de la
 # ventana. Marcados como objeto conocido (B = 200) donde el mapa no pinta, la app no rellena encima. Simulado en el set (mapas v14):
 # pinta mal 0,64 -> 0,60 %, se pasa del borde 1,95 -> 1,82 px, cubre igual, ninguna foto peor.
-MUEBLES = ["window frame", "window", "radiator", "sofa", "armchair", "chair", "table", "shelf", "cabinet", "refrigerator", "curtain"]
+MUEBLES = ["window frame", "window", "radiator", "sofa", "armchair", "chair", "table", "shelf", "cabinet", "refrigerator", "curtain",
+           "bookcase", "kitchen cabinet", "entertainment center", "tv unit", "built-in wardrobe"]
 UMBRAL_MUEBLE = 0.35
+# Regla 13 (2026-11-16, 33 fotos libres de casas de Commons): alacenas, estanterías empotradas y el mármol/revestimiento de la mesada que
+# SAM 3 marcaba como PARED (blancos o claros, del color de la pared) se sacan de la pared/techo con puntaje >= 0,5. En el set con etiqueta
+# no saca nada; en las fotos libres arregla el mármol de una cocina, la alacena baja de otra y los estantes bajos de un living.
+SACAR = ["cabinet", "kitchen cabinet", "bookcase", "built-in shelves", "marble", "backsplash"]
+UMBRAL_SACAR = 0.5
 
 
 def clases(img: Image.Image):
@@ -95,7 +101,7 @@ def clases(img: Image.Image):
         img.thumbnail((1280, 1280))
     t0 = time.perf_counter()
     R = mapas_sam(img, ["painted wall", "wall", "ceiling", "tile", "tiled wall", "mirror", "wallpaper", "stucco wall", "brick wall", "sky", "garage door", "pergola", "facade", "baseboard", "skirting board"]
-                  + OBJETOS + ["crown molding", "wood paneling", "wooden ceiling", "open doorway"] + MUEBLES)
+                  + OBJETOS + ["crown molding", "wood paneling", "wooden ceiling", "open doorway"] + MUEBLES + [t for t in SACAR if t not in MUEBLES])
     (pw, ipw), (ww, iww), (pc, ipc) = R["painted wall"], R["wall"], R["ceiling"]
     m9 = clases_r9(img)
     p = np.zeros(pw.shape, np.uint8)
@@ -148,6 +154,11 @@ def clases(img: Image.Image):
     for texto in MUEBLES:
         mueble |= R[texto][0] >= UMBRAL_MUEBLE
     b[mueble & (p == 0) & (b == 0)] = 200
+    sacar = np.zeros(p.shape, bool)  # regla 13
+    for texto in SACAR:
+        sacar |= R[texto][0] >= UMBRAL_SACAR
+    sacar &= (p == 1) | (p == 2)
+    p[sacar] = 0; b[sacar] = 200
     ids = ids_pared(ipw + iww + R["stucco wall"][1], p == 1)
     # regla 11 (2026-11-13, criterio de Ginés: se pinta la habitación donde está el cliente, no la de al lado): pared que queda >= 90 %
     # adentro de una "open doorway" (puntaje >= 0,3) es de otra habitación vista por la puerta o el arco -> B = 50 (sigue siendo pared;

@@ -1,7 +1,7 @@
 // Detección en el servidor con GPU (SAM 3 + r9) SIN usar nada pesado en el celular: se manda la foto, vuelve el mapa
 // (PNG RGB: R = clase 0 otro / 1 pared / 2 techo, G = número de pared) y las superficies salen directo de él.
 // Con esto el cliente no espera la descarga de ~45 MB de MobileSAM ni el análisis en el teléfono: foto -> ~3 s -> elegir colores.
-import { superficiesDesdeMapa, rellenarBordes, marcarZocalos, afinarLimites, enderezarBordes, quitarCornisas, marcarOSB, enderezarTechoPared, separarMadera, separarFondo, nombrarPorPosicion, pintarTapas, unirCarasChicas } from '@pintureria/core';
+import { superficiesDesdeMapa, rellenarBordes, marcarZocalos, afinarLimites, enderezarBordes, quitarCornisas, marcarOSB, enderezarTechoPared, separarMadera, separarFondo, nombrarPorPosicion, pintarTapas, unirCarasChicas, unirApiladas } from '@pintureria/core';
 
 /** Lee un PNG de mapa (Blob) al tamaño de la foto: { map, inst|null }. Nearest (sin mezclar clases en los bordes). */
 async function leerMapa(blob, width, height) {
@@ -31,7 +31,7 @@ export async function superficiesDelServidor(foto, url, { fetchFn = fetch } = {}
     // rellenarBordes: cierra las franjas blancas que deja el mapa en aristas, esquinas y contornos (foto de Agustín, 2026-11-11)
     const foto2 = { data: new Uint8ClampedArray(data), width, height };
     // marcarOSB: techo/pared de OSB queda sin color · quitarCornisas: la moldura pegada a la unión techo/pared no se pinta · enderezarBordes: el borde contra una moldura o un marco queda recto · marcarZocalos: el zócalo de otro color queda como superficie propia, que no se pinta con la pared
-    const found = nombrarPorPosicion(unirCarasChicas(pintarTapas(separarFondo(separarMadera(marcarOSB(enderezarBordes(quitarCornisas(marcarZocalos(enderezarTechoPared(afinarLimites(rellenarBordes(superficiesDesdeMapa(map, width, height, { instancias: inst, img: foto2 }), foto2, { veto }), foto2), width, height), foto2), foto2), foto2, { veto }), foto2), veto, width, height), veto, width, height), foto2, veto), width, height), width, height);
+    const found = nombrarPorPosicion(unirApiladas(unirCarasChicas(pintarTapas(separarFondo(separarMadera(marcarOSB(enderezarBordes(quitarCornisas(marcarZocalos(enderezarTechoPared(afinarLimites(rellenarBordes(superficiesDesdeMapa(map, width, height, { instancias: inst, img: foto2 }), foto2, { veto }), foto2), width, height), foto2), foto2), foto2, { veto }), foto2), veto, width, height), veto, width, height), foto2, veto), width, height), width, height), width, height);
     const ms = Math.round(performance.now() - t0), gpu = r.headers.get('X-Segundos');
     console.info(`[servidor] ${found.length} superficies en ${ms} ms (GPU ${gpu ?? '?'} s)`);
     return found.length ? { found, ms, gpu } : null;

@@ -1,7 +1,7 @@
 // Corre la detección automática de superficies (JS pesado: ~35-50 % del análisis). Está pensado para ejecutarse DENTRO del
 // Worker de SAM: así la interfaz no se congela y cada decodificación es una llamada directa (sin mensajes de ida y vuelta).
 // Es puro (sin DOM ni Worker) para poder probarlo con `node --test`.
-import { cleanMask, detectSurfaces, detectFacade, detectSurfacesSemantico, hibridar, vetarConModelo, completarConModelo, recortarObjetos, superficiesDesdeMapa, rellenarBordes, marcarZocalos, afinarLimites, enderezarBordes, quitarCornisas, marcarOSB, enderezarTechoPared, separarMadera, separarFondo, ajustarContornos, nombrarPorPosicion, pintarTapas, unirCarasChicas } from '@pintureria/core';
+import { cleanMask, detectSurfaces, detectFacade, detectSurfacesSemantico, hibridar, vetarConModelo, completarConModelo, recortarObjetos, superficiesDesdeMapa, rellenarBordes, marcarZocalos, afinarLimites, enderezarBordes, quitarCornisas, marcarOSB, enderezarTechoPared, separarMadera, separarFondo, ajustarContornos, nombrarPorPosicion, pintarTapas, unirCarasChicas, unirApiladas } from '@pintureria/core';
 
 export class DetectCancelled extends Error {
   constructor() {
@@ -48,7 +48,7 @@ export async function runDetect({ image, segment, onProgress = () => {}, isCance
     found = separarMadera(found, veto, width, height); // machimbre que reconoció el servidor: superficie "Madera" sin color
     found = separarFondo(found, veto, width, height); // pared de otra habitación vista por una puerta abierta: sin color
     if (!opts.semantico.sinTapas) found = pintarTapas(found, image, veto, opts.semantico.tapas ?? {}); // tapa plana de la pared: se pinta con la pared (como Sinteplast)
-    if (!opts.semantico.sinUnir) found = unirCarasChicas(found, width, height); // cara chica de columna -> con la pared vecina
+    if (!opts.semantico.sinUnir) found = unirApiladas(unirCarasChicas(found, width, height), width, height); // cara chica de columna -> con la pared vecina; pared partida por una moldura -> una sola
     found = nombrarPorPosicion(found, width, height); // "Pared izquierda / central / derecha", como lo dice el cliente
     if (found.length) return { found, decodes: 0, mode: 'servidor' };
   }
