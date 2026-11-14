@@ -5,7 +5,7 @@ Los modelos se cargan UNA vez al arrancar el worker (import de app); cada pedido
 import base64, io
 import runpod
 from PIL import Image, ImageOps
-from app import clases, png, mapas_sam, afinar, ade
+from app import clases, png, mapas_sam, afinar, ade, render
 import numpy as np
 
 
@@ -16,10 +16,22 @@ def handler(job):
         datos = base64.b64decode(job["input"]["imagen"])
         if len(datos) > 8 * 1024 * 1024:
             return {"error": "foto_muy_grande"}
-        img = ImageOps.exif_transpose(Image.open(io.BytesIO(datos))).convert("RGB")
+        crudo = ImageOps.exif_transpose(Image.open(io.BytesIO(datos)))
+        img = crudo.convert("RGB")
     except Exception as e:  # noqa: BLE001 - foto ilegible
         return {"error": f"foto_invalida: {e}"}
     textos = job["input"].get("textos")
+    if textos and textos[0] == "__render__":  # diagnóstico (2026-11-14): PNG RGBA = foto ya recoloreada + máscara en alfa -> render generativo
+        if crudo.mode != "RGBA":
+            return {"error": "render_pide_png_con_alfa"}
+        try:
+            fuerza = float(textos[1]) if len(textos) > 1 else 0.35
+            r, t = render(crudo, fuerza=max(0.05, min(0.9, fuerza)))
+        except Exception:  # noqa: BLE001 - prueba: que el error llegue al diagnóstico
+            import traceback
+            return {"mapas": {"error": traceback.format_exc()[-1500:]}, "ancho": 0, "alto": 0}
+        buf = io.BytesIO(); r.save(buf, "JPEG", quality=92)
+        return {"mapas": {"render": base64.b64encode(buf.getvalue()).decode()}, "ancho": r.size[0], "alto": r.size[1], "segundos_render": round(t, 2)}
     if textos == ["__ade__"]:  # diagnóstico (2026-11-14): mapa normal + clases ADE20K de OneFormer (R = clase, G = confianza)
         p, ids, veto, seg = clases(img)
         try:

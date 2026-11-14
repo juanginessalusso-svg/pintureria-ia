@@ -23,7 +23,7 @@ import torch
 from fastapi import FastAPI, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
-from PIL import Image
+from PIL import Image, ImageFilter
 from transformers import Sam3Model, Sam3Processor
 
 ALTO = float(os.environ.get("ALTO", 0.7))
@@ -179,6 +179,49 @@ def ade(img: Image.Image):
     cls = np.array(Image.fromarray(cls.byte().cpu().numpy()).resize((W, H), Image.NEAREST))
     conf = np.array(Image.fromarray((conf * 255).byte().cpu().numpy()).resize((W, H), Image.BILINEAR))
     return cls, conf, time.perf_counter() - t0
+
+
+_sdxl = None
+
+
+def _lab(rgb):  # rgb float 0..1 (H,W,3) -> L,a,b (D65)
+    c = np.where(rgb <= 0.04045, rgb / 12.92, ((rgb + 0.055) / 1.055) ** 2.4)
+    M = np.array([[0.4124564, 0.3575761, 0.1804375], [0.2126729, 0.7151522, 0.072175], [0.0193339, 0.119192, 0.9503041]])
+    xyz = c @ M.T / np.array([0.95047, 1.0, 1.08883])
+    f = np.where(xyz > 216 / 24389, np.cbrt(xyz), (24389 / 27 * xyz + 16) / 116)
+    return np.stack([116 * f[..., 1] - 16, 500 * (f[..., 0] - f[..., 1]), 200 * (f[..., 1] - f[..., 2])], -1)
+
+
+def _rgb(lab):
+    fy = (lab[..., 0] + 16) / 116; fx = fy + lab[..., 1] / 500; fz = fy - lab[..., 2] / 200
+    f = np.stack([fx, fy, fz], -1); xyz = np.where(f ** 3 > 216 / 24389, f ** 3, (116 * f - 16) / (24389 / 27)) * np.array([0.95047, 1.0, 1.08883])
+    M = np.array([[3.2404542, -1.5371385, -0.4985314], [-0.969266, 1.8760108, 0.041556], [0.0556434, -0.2040259, 1.0572252]])
+    c = xyz @ M.T
+    return np.clip(np.where(c <= 0.0031308, 12.92 * c, 1.055 * np.clip(c, 0, None) ** (1 / 2.4) - 0.055), 0, 1)
+
+
+def render(img_rgba: Image.Image, fuerza=0.35, pasos=25, semilla=7):
+    """PRUEBA (solo diagnóstico, 2026-11-14): "pintar" con un modelo generativo, como parece hacer Sinteplast. Entra la foto YA
+    recoloreada por la app (color exacto de la carta) con la máscara de lo pintado en el canal alfa. SDXL Inpainting (OpenRAIL++)
+    rehace esa zona con poca fuerza (luz, sombras, bordes) y después se le devuelve el tono exacto: se conserva la luz generada (L)
+    y se pone el a/b de la app. Afuera de la máscara queda la foto tal cual. Devuelve (imagen RGB, segundos)."""
+    global _sdxl
+    t0 = time.perf_counter()
+    if _sdxl is None:
+        from diffusers import StableDiffusionXLInpaintPipeline
+        _sdxl = StableDiffusionXLInpaintPipeline.from_pretrained("diffusers/stable-diffusion-xl-1.0-inpainting-0.1", torch_dtype=torch.float16, variant="fp16").to(DEV)
+    im = img_rgba.convert("RGB"); m = img_rgba.getchannel("A")
+    W, H = im.size; s = 1024 / max(W, H); w8, h8 = max(8, round(W * s / 8) * 8), max(8, round(H * s / 8) * 8)
+    gen = torch.Generator(device=DEV).manual_seed(semilla)
+    out = _sdxl(prompt="realistic photo of a home interior, freshly painted smooth matte wall, natural soft lighting, sharp clean edges",
+                negative_prompt="blurry, distorted, artifacts, text, watermark, extra objects", image=im.resize((w8, h8)), mask_image=m.resize((w8, h8)),
+                strength=fuerza, num_inference_steps=pasos, guidance_scale=6.0, generator=gen, width=w8, height=h8).images[0].resize((W, H), Image.LANCZOS)
+    a0 = np.asarray(im, np.float32) / 255; g = np.asarray(out, np.float32) / 255
+    la, lg = _lab(a0), _lab(g)
+    lab = np.concatenate([lg[..., :1], la[..., 1:]], -1)  # luz del generado, color exacto de la app
+    mm = (np.asarray(m.filter(ImageFilter.GaussianBlur(1.5)), np.float32) / 255)[..., None]
+    res = a0 * (1 - mm) + _rgb(lab) * mm
+    return Image.fromarray((res * 255 + 0.5).astype(np.uint8)), time.perf_counter() - t0
 
 
 _refinador = None

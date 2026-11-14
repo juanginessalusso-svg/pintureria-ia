@@ -7,7 +7,7 @@ FROM pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime
 WORKDIR /app
 RUN pip install --no-cache-dir "transformers==5.22.2" accelerate fastapi "uvicorn[standard]" python-multipart onnxruntime-gpu pillow runpod
 # CascadePSP (afinar bordes): solo para el modo diagnóstico por ahora; --no-deps para no tocar el torch de la imagen
-RUN pip install --no-cache-dir scipy && pip install --no-cache-dir --no-deps "segmentation-refinement==0.6" && (python -c "import torchvision, requests" || pip install --no-cache-dir --no-deps torchvision==0.21.0 requests)
+RUN pip install --no-cache-dir scipy "diffusers==0.42.1" && pip install --no-cache-dir --no-deps "segmentation-refinement==0.6" && (python -c "import torchvision, requests" || pip install --no-cache-dir --no-deps torchvision==0.21.0 requests)
 # Funciona con el contexto en la raíz del repo (RunPod desde GitHub) o dentro de servidor-sam3/ (docker build local).
 COPY . /src
 RUN if [ -f /src/servidor-sam3/app.py ]; then cp /src/servidor-sam3/app.py /src/servidor-sam3/handler.py /app/; else cp /src/app.py /src/handler.py /app/; fi && rm -rf /src
