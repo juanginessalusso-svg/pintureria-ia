@@ -5,7 +5,7 @@ Los modelos se cargan UNA vez al arrancar el worker (import de app); cada pedido
 import base64, io
 import runpod
 from PIL import Image, ImageOps
-from app import clases, png, mapas_sam, afinar
+from app import clases, png, mapas_sam, afinar, ade
 import numpy as np
 
 
@@ -20,6 +20,15 @@ def handler(job):
     except Exception as e:  # noqa: BLE001 - foto ilegible
         return {"error": f"foto_invalida: {e}"}
     textos = job["input"].get("textos")
+    if textos == ["__ade__"]:  # diagnóstico (2026-11-14): mapa normal + clases ADE20K de OneFormer (R = clase, G = confianza)
+        p, ids, veto, seg = clases(img)
+        try:
+            c, conf, t = ade(img)
+        except Exception as e:  # noqa: BLE001 - prueba: que el error llegue al diagnóstico
+            import traceback
+            return {"mapas": {"error": traceback.format_exc()[-1500:]}, "ancho": 0, "alto": 0}
+        return {"mapas": {"base": base64.b64encode(png(p, ids, veto)).decode(), "ade": base64.b64encode(png(c, conf, np.zeros_like(c))).decode()},
+                "ancho": int(p.shape[1]), "alto": int(p.shape[0]), "segundos": round(seg, 2), "segundos_ade": round(t, 2)}
     if textos == ["__afinar__"]:  # diagnóstico (2026-11-13): mapa normal y el mismo con los bordes afinados por CascadePSP, para comparar
         p, ids, veto, seg = clases(img)
         p2, ids2, t = afinar(img, p, ids)

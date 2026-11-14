@@ -152,6 +152,35 @@ def clases(img: Image.Image):
     return p, ids, b, time.perf_counter() - t0
 
 
+_oneformer = None
+
+
+def ade(img: Image.Image):
+    """PRUEBA (solo diagnóstico, 2026-11-14): segunda opinión con OneFormer Swin-L entrenado en ADE20K (MIT; ~220 M parámetros;
+    150 clases de interiores: pared 0, techo 5, ventana 8, puerta 14, cortina 18, cuadro 22, espejo 27...). Se carga recién en el
+    primer pedido de diagnóstico. Devuelve (clase por píxel uint8, confianza 0-255 uint8, segundos), del tamaño de `img`."""
+    global _oneformer
+    t0 = time.perf_counter()
+    if _oneformer is None:
+        from transformers import OneFormerProcessor, OneFormerForUniversalSegmentation
+        nombre = "shi-labs/oneformer_ade20k_swin_large"
+        _oneformer = (OneFormerProcessor.from_pretrained(nombre), OneFormerForUniversalSegmentation.from_pretrained(nombre).to(DEV).eval())
+    proc_o, mod = _oneformer
+    W, H = img.size
+    x = proc_o(images=img, task_inputs=["semantic"], return_tensors="pt").to(DEV)
+    with torch.no_grad():
+        out = mod(**x)
+        cp = out.class_queries_logits.softmax(-1)[..., :-1]  # (1, Q, 150)
+        mp = out.masks_queries_logits.sigmoid()  # (1, Q, h, w)
+        mp = torch.nn.functional.interpolate(mp, size=(max(1, H // 2), max(1, W // 2)), mode="bilinear", align_corners=False)
+        seg = torch.einsum("bqc,bqhw->bchw", cp, mp)[0]
+        seg = seg / seg.sum(0, keepdim=True).clamp_min(1e-6)
+        conf, cls = seg.max(0)
+    cls = np.array(Image.fromarray(cls.byte().cpu().numpy()).resize((W, H), Image.NEAREST))
+    conf = np.array(Image.fromarray((conf * 255).byte().cpu().numpy()).resize((W, H), Image.BILINEAR))
+    return cls, conf, time.perf_counter() - t0
+
+
 _refinador = None
 
 
