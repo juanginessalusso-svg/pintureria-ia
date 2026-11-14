@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { varita, LUZ_WB_STRENGTH, estimateWhiteBalance, whiteBalanceFor, featherMask, featherCapas, recolorWall, pintarCapas, analizarAmbiente, recomendarCombinaciones, asignarCombinacion, rebajar, mezclarColores, cleanMask, pxPerMeter, wallPixels, paintStroke, maskCount, encodeMask, cutObjectFromSurface } from '@pintureria/core';
+import { varita, LUZ_WB_STRENGTH, LUZ_CROMA, estimateWhiteBalance, whiteBalanceFor, featherMask, featherCapas, recolorWall, pintarCapas, analizarAmbiente, recomendarCombinaciones, asignarCombinacion, rebajar, mezclarColores, cleanMask, pxPerMeter, wallPixels, paintStroke, maskCount, encodeMask, cutObjectFromSurface } from '@pintureria/core';
 import { SamClient, urlServidor } from './samClient.js';
 import { superficiesDelServidor } from './servidor.js';
 import { workingSize } from './sam.js';
@@ -263,7 +263,7 @@ export function Visualizer() {
     const softs = featherCapas(layers.map((L) => L.mask), p.width, p.height, Math.max(1, Math.round(p.width / 500)));
     // pintarCapas: cada color desde la foto original, mezclados en la unión (antialias de la línea techo/pared, 2026-11-12)
     image = pintarCapas(p, layers.map((L, k) => ({ soft: softs[k], hex: L.hex })), {
-      mode: opts.lum ?? lum, intensity: opts.intensity ?? intensity, gains: (opts.wb ?? wb) ? ((opts.lum ?? lum) === 'luz' ? gains.current.map((g) => 1 + (g - 1) * LUZ_WB_STRENGTH) : gains.current) : [1, 1, 1],
+      mode: opts.lum ?? lum, intensity: opts.intensity ?? intensity, croma: (opts.lum ?? lum) === 'luz' ? LUZ_CROMA : 1, gains: (opts.wb ?? wb) ? ((opts.lum ?? lum) === 'luz' ? gains.current.map((g) => 1 + (g - 1) * LUZ_WB_STRENGTH) : gains.current) : [1, 1, 1],
     });
     result.current = image;
     setTiming((t) => ({ ...t, recolorMs: Math.round(performance.now() - t0) }));

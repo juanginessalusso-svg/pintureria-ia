@@ -218,7 +218,12 @@ function wallStats(img, mask, gains) {
 }
 
 /** Percentil de L de la pared usado como referencia de luz en el modo 'luz' (ver recolorWall). */
-export const LUZ_REF_PCT = 0.8;
+// 2026-11-15: 0,8 -> 0,99 y croma 0,9, calibrado contra Sinteplast en 3 fotos de Ginés pintadas con los mismos códigos (mediana de 5
+// colores: antes salíamos 15 % más saturados y ~4 puntos de L más claros; ahora 1,03 y -1). La pintura se ve como pintura real bajo la luz
+// del ambiente y no como un relleno digital.
+export const LUZ_REF_PCT = 0.99;
+/** Croma de la pintura en el modo 'luz' (fracción del de la muestra). Ver LUZ_REF_PCT. */
+export const LUZ_CROMA = 0.9;
 /** Fuerza del balance de blancos recomendada junto al modo 'luz' (estimateWhiteBalance(img, { strength })). Ver docs/FIDELIDAD-COLOR.md. */
 export const LUZ_WB_STRENGTH = 0.5;
 
@@ -233,10 +238,10 @@ export const LUZ_WB_STRENGTH = 0.5;
  *  - intensity       : 0..1, mezcla entre original y resultado.
  * Devuelve una imagen nueva (no modifica la de entrada) y estadísticas.
  */
-export function recolorWall(img, mask, targetHex, { mode = 'relative', gains = [1, 1, 1], intensity = 1, minWallL = 45, maxL = 98, refPct = LUZ_REF_PCT, refY = null } = {}) {
+export function recolorWall(img, mask, targetHex, { mode = 'relative', gains = [1, 1, 1], intensity = 1, minWallL = 45, maxL = 98, refPct = LUZ_REF_PCT, refY = null, contraste = 1, croma = 1 } = {}) {
   const { data, width, height } = img;
   if (mask.length !== width * height) throw new Error('la máscara no coincide con el tamaño de la imagen');
-  const target = hexToLab(targetHex);
+  const t0 = hexToLab(targetHex), target = { L: t0.L, a: t0.a * croma, b: t0.b * croma }; // croma < 1: la pintura se ve algo más apagada que la muestra
   const { meanL, p98L, pct } = wallStats(img, mask, gains);
   // Cociente de luminancia. Dos salvaguardas para fotos con poca luz o paredes en sombra:
   //  - piso `minWallL`: una pared en sombra (L medio muy bajo) no se trata como si ese fuera su tono real; sin piso el cociente se
@@ -274,7 +279,7 @@ export function recolorWall(img, mask, targetHex, { mode = 'relative', gains = [
     // 2) nuevo L y nuevos a/b
     let L, a = target.a, b = target.b;
     if (mode === 'luz') {
-      const k = (inv((lab[0] + 16) / 116) / yRef) * yCap; // cociente de luz lineal de este píxel
+      const k = Math.pow(inv((lab[0] + 16) / 116) / yRef, contraste) * yCap; // cociente de luz lineal de este píxel (contraste > 1: luces y sombras más marcadas, como el render de Sinteplast)
       const fy = (target.L + 16) / 116, fx = fy + target.a / 500, fz = fy - target.b / 200;
       const X = inv(fx) * k, Y = inv(fy) * k, Z = inv(fz) * k;
       const gx = fwd(X), gy = fwd(Y), gz = fwd(Z);
