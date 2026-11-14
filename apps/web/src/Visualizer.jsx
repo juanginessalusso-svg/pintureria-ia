@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { varita, LUZ_WB_STRENGTH, estimateWhiteBalance, whiteBalanceFor, featherMask, featherCapas, recolorWall, pintarCapas, cleanMask, pxPerMeter, wallPixels, paintStroke, maskCount, encodeMask, cutObjectFromSurface } from '@pintureria/core';
+import { varita, LUZ_WB_STRENGTH, estimateWhiteBalance, whiteBalanceFor, featherMask, featherCapas, recolorWall, pintarCapas, analizarAmbiente, recomendarCombinaciones, asignarCombinacion, rebajar, mezclarColores, cleanMask, pxPerMeter, wallPixels, paintStroke, maskCount, encodeMask, cutObjectFromSurface } from '@pintureria/core';
 import { SamClient, urlServidor } from './samClient.js';
 import { superficiesDelServidor } from './servidor.js';
 import { workingSize } from './sam.js';
@@ -93,6 +93,11 @@ export function Visualizer() {
   const stageRef = useRef(null);
   const [now, setNow] = useState(0); // reloj que se actualiza mientras se analiza (tiempo transcurrido / estimado)
   const [manual, setManual] = useState(false); // herramientas manuales (clics de SAM, pincel, borrador): opcionales, la detección es automática
+  // Asesor de color (2026-11-13): combinaciones recomendadas para la foto, la elegida y el primer color de una mezcla en curso
+  const [combos, setCombos] = useState([]);
+  const [comboSel, setComboSel] = useState(null);
+  const [mezclaBase, setMezclaBase] = useState(null);
+  const colorsRef = useRef([]);
 
   const calibRef = useRef({ tapping: false, pts: [], pxPerM: null, meters: 0 }); // línea de referencia (coords de la foto)
   const canvasRef = useRef(null);
@@ -153,7 +158,7 @@ export function Visualizer() {
   // ---- carga inicial: datos de la pinturería y modelo ----
   useEffect(() => {
     getJson('tenant').then(setTenant).catch(() => {});
-    getJson('colors').then(setColors).catch(() => {});
+    getJson('colors').then((c) => { colorsRef.current = c; setColors(c); }).catch(() => {});
     getJson('products').then(setProducts).catch(() => {});
     getJson('branches').then(setBranches).catch(() => {});
     // Con el servidor: se lo despierta apenas se abre la página, así cuando llega la foto ya está prendido (si no, el arranque en frío tarda 20-80 s).
@@ -289,7 +294,7 @@ export function Visualizer() {
       samMask.current = null; strokes.current = []; surfUndo.current = []; stroke.current = null; gesture.current = null; pointers.current.clear();
       view.current = { s: 1, tx: 0, ty: 0 }; applyView();
       calibRef.current = { tapping: false, pts: [], pxPerM: null, meters: 0 }; setCalib({ tapping: false, pxPerM: null }); setWallPx(0);
-      colorRef.current = null; setColor(null); setPhotoId(mySeq); // el color de la foto anterior no se arrastra (habilitaba Descargar sin nada pintado)
+      colorRef.current = null; setColor(null); setCombos([]); setComboSel(null); setMezclaBase(null); setPhotoId(mySeq); // el color de la foto anterior no se arrastra (habilitaba Descargar sin nada pintado)
       setPoints([]); setSurfList([]); setActiveId(null); setHasPhoto(true); render();
 
       const tAll = Date.now();
@@ -338,6 +343,24 @@ export function Visualizer() {
   };
   const mySeqOf = (err) => err?.message === 'foto reemplazada' || err?.message === 'cancelado'; // 'cancelado' = el Worker cortó la detección de una foto anterior
 
+  // Asesor: aplica una combinación a las superficies detectadas solas (las que el cliente agregó a mano no se tocan).
+  const aplicarCombo = (combo) => {
+    const asig = asignarCombinacion(combo, autoCache.current);
+    for (const sf of surfaces.current) if (sf.auto && asig[sf.autoIdx]) sf.color = asig[sf.autoIdx];
+    setComboSel(combo.id); syncSurfaces();
+    setStatus(`Combinación "${combo.nombre}": ${combo.porque} Podés cambiarla o elegir vos los colores.`);
+    setTimeout(() => repaint(), 0);
+  };
+  // Arma las combinaciones para la foto actual; si todavía no hay nada pintado, aplica la primera (el cliente ve su ambiente pintado sin elegir nada).
+  const prepararAsesor = () => {
+    const carta = colorsRef.current;
+    if (!carta.length || !autoCache.current.length || !photo.current) return;
+    const cs = recomendarCombinaciones(carta, analizarAmbiente(photo.current, autoCache.current));
+    setCombos(cs);
+    if (cs.length && !surfaces.current.some((x) => x.color) && !colorRef.current) aplicarCombo(cs[0]);
+  };
+  useEffect(() => { if (colors.length && !combos.length && autoCache.current.length) prepararAsesor(); }, [colors]);
+
   // Carga en la lista las superficies detectadas solas; la pared más grande queda seleccionada: elegir un color ya la pinta.
   // `keep`: colores a conservar por índice de la detección (al "Volver a lo detectado" no se pierde lo ya pintado).
   const applyAuto = (keep = null, note = '', mode = detMode) => {
@@ -358,6 +381,7 @@ export function Visualizer() {
         ? `Listo: detecté ${n} ${n === 1 ? 'superficie' : 'superficies'}${fach ? ' en la fachada (sin cielo, piso ni aberturas)' : ''}. Elegí un color para "${first.name}"; para pintar otra, tocala en la foto o en la lista.${found.some((f) => f.kind === 'ladrillo') ? ' El ladrillo o revoque rugoso queda sin color: tocalo si querés pintarlo.' : ''}`
         : 'Detecté solo superficies rugosas (ladrillo o similar), que quedan sin color. Tocá la que quieras pintar en la foto o en la lista.'));
     repaint();
+    if (!keep?.size) setTimeout(() => prepararAsesor(), 0); // asesor: combinación recomendada apenas se detectan las paredes
   };
 
   // Vuelve a detectar con el otro detector (fachada <-> interior) sobre la misma foto ya analizada: no repite el análisis de SAM, solo la detección.
@@ -795,7 +819,10 @@ export function Visualizer() {
   };
 
   // El color elegido va a la superficie seleccionada en la lista; si no hay, a la selección en curso.
-  const pick = (c) => {
+  const pick = (c0) => {
+    let c = c0;
+    if (mezclaBase && !c0.mezcla && c0.id !== mezclaBase.id) { c = mezclarColores(mezclaBase, c0, 0.5); setMezclaBase(null); } // "Mezclar con otro color": mitad y mitad
+    setComboSel(null); // ya no es una combinación recomendada tal cual
     const s = surfaces.current.find((x) => x.id === activeId);
     if (s) { s.color = c; syncSurfaces(); } else colorRef.current = c;
     setColor(c);
@@ -947,6 +974,22 @@ export function Visualizer() {
           </p>
         )}
 
+        {combos.length > 0 && !manual && (
+          <div class="card asesor">
+            <strong>Te recomendamos</strong>
+            <div class="combos">
+              {combos.map((cb) => (
+                <button key={cb.id} class={`combo ${comboSel === cb.id ? 'on' : ''}`} onClick={() => aplicarCombo(cb)} aria-pressed={comboSel === cb.id}>
+                  <span class="combo-sws">{[cb.principal, cb.acento, cb.techo].filter(Boolean).map((x, i) => <span key={i} class="sw" style={{ background: x.hex }} title={`${x.name} (${x.code})`} />)}</span>
+                  <span class="combo-nombre">{cb.nombre}</span>
+                  <span class="muted small">{cb.acento ? `${cb.acento.name} + ${cb.principal.name}` : cb.principal.name}</span>
+                </button>
+              ))}
+            </div>
+            <p class="muted small">{comboSel ? combos.find((x) => x.id === comboSel)?.porque : 'Tocá una combinación para verla en tu foto, o elegí vos los colores más abajo.'}</p>
+          </div>
+        )}
+
         {surfList.length > 0 && (
           <div class="card surfaces">
             <strong>Superficies</strong>
@@ -972,6 +1015,27 @@ export function Visualizer() {
 
         <h3>{activeSurface ? `Color para "${activeSurface.name}"` : 'Elegí un color'}</h3>
         <ColorPicker colors={colors} selected={activeSurface ? activeSurface.color : color} onPick={pick} />
+        {(() => {
+          const actual = activeSurface ? activeSurface.color : color;
+          if (!actual?.lab) return null;
+          return (
+            <div class="card mezclas">
+              <strong>Mezclas en la pinturería</strong>
+              {mezclaBase
+                ? <p class="small">Elegí en la carta el segundo color: lo mezclo mitad y mitad con <b>{mezclaBase.name}</b>. <button onClick={() => setMezclaBase(null)}>Cancelar</button></p>
+                : <>
+                  <div class="row">
+                    <button onClick={() => pick(rebajar(actual, 0.75))}>Un poco más suave</button>
+                    <button onClick={() => pick(rebajar(actual, 0.5))}>Rebajado al 50 %</button>
+                    <button onClick={() => pick(rebajar(actual, 0.25))}>Muy suave (25 %)</button>
+                    <button onClick={() => { setMezclaBase(actual); setStatus(`Elegí el segundo color: lo mezclo con ${actual.name}.`); }}>Mezclar con otro color</button>
+                  </div>
+                  {actual.receta && <p class="small">Receta para la sucursal: <b>{actual.receta}</b></p>}
+                  <p class="muted small">Las mezclas se preparan en la máquina tintométrica de la sucursal; en pantalla se ven aproximadas.</p>
+                </>}
+            </div>
+          );
+        })()}
         </div>
 
         <div class="card grid">
@@ -995,7 +1059,7 @@ export function Visualizer() {
         </div>
 
         <Calculator key={photoId} wallPx={wallPx} calib={calib} products={products} branches={branches} tenant={tenant} color={color} getImageBlob={getImageBlob}
-          surfaceColors={surfList.filter((s) => s.color).map((s) => ({ surface: s.name, name: s.color.name, code: s.color.code }))}
+          surfaceColors={surfList.filter((s) => s.color).map((s) => ({ surface: s.name, name: s.color.name, code: s.color.code, receta: s.color.receta }))}
           onStartCalib={startCalib} onResetCalib={resetCalib} />
 
         <p class="warn">⚠️ El color en pantalla puede diferir del color real de la pintura (depende de tu pantalla, la luz de la foto y la textura de la pared). Pedí una muestra antes de comprar.</p>

@@ -31,3 +31,14 @@ export function rgbToLab([r, g, b]) {
 }
 
 export const hexToLab = (hex) => rgbToLab(hexToRgb(hex));
+
+const finv = (t) => (t ** 3 > 216 / 24389 ? t ** 3 : (116 * t - 16) / (24389 / 27));
+const gamma = (v) => { const c = v <= 0.0031308 ? 12.92 * v : 1.055 * v ** (1 / 2.4) - 0.055; return Math.max(0, Math.min(255, Math.round(c * 255))); };
+/** {L,a,b} -> [r,g,b] 0..255 (D65; lo que cae fuera de sRGB se recorta). */
+export function labToRgb({ L, a, b }) {
+  const fy = (L + 16) / 116, fx = fy + a / 500, fz = fy - b / 200;
+  const X = finv(fx) * 0.95047, Y = finv(fy), Z = finv(fz) * 1.08883;
+  const R = 3.2404542 * X - 1.5371385 * Y - 0.4985314 * Z, G = -0.969266 * X + 1.8760108 * Y + 0.041556 * Z, B = 0.0556434 * X - 0.2040259 * Y + 1.0572252 * Z;
+  return [gamma(R), gamma(G), gamma(B)];
+}
+export const labToHex = (lab) => '#' + labToRgb(lab).map((v) => v.toString(16).padStart(2, '0')).join('');

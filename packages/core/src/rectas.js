@@ -53,12 +53,13 @@ export function fitLine(pts, tol, iters = 300) {
 /**
  * Endereza la frontera entre A y B (máscaras Uint8Array w*h, se modifican en el lugar). Devuelve info o null si no hubo una recta clara.
  */
-export function straightenPair(A, B, w, h, { minLen = 0.15, inlier = 0.006, band = 0.02, minShare = 0.5 } = {}) {
+export function straightenPair(A, B, w, h, { minLen = 0.15, inlier = 0.006, band = 0.02, minShare = 0.5, maxVertical = 1 } = {}) {
   const pts = sharedBoundary(A, B, w, h);
   const n = pts.length / 2, tol = Math.max(2, inlier * w), bw = Math.max(6, band * w);
   if (n < minLen * Math.max(w, h)) return null;
   const L = fitLine(pts, tol);
   if (!L || L.inliers.length < minShare * n || L.inliers.length < minLen * Math.max(w, h)) return null;
+  if (Math.abs(L.dy) > maxVertical) return null; // recta casi vertical: para techo/pared es un error (el techo de la cocina contra la cara de una columna)
   // extensión de la recta que realmente comparten A y B (a lo largo de la dirección), con un margen
   let tmin = Infinity, tmax = -Infinity;
   for (const i of L.inliers) { const t = pts[i * 2] * L.dx + pts[i * 2 + 1] * L.dy; if (t < tmin) tmin = t; if (t > tmax) tmax = t; }
@@ -112,7 +113,7 @@ export function enderezarTechoPared(found, w, h, { paredPared = true, ...opts } 
     // pared con pared (la arista de una columna, 2026-11-13: el corte por color zigzagueaba cuando las dos caras son del mismo blanco)
     const pp = paredPared && a < b && found[a].kind === 'pared' && found[b].kind === 'pared';
     if (!tp && !pp) continue;
-    const r = straightenPair(masks[a], masks[b], w, h, opts);
+    const r = straightenPair(masks[a], masks[b], w, h, tp ? { maxVertical: 0.94, ...opts } : opts); // techo/pared: nunca una recta a menos de ~20° de la vertical
     if (r && globalThis.process?.env?.DEBUG_RECTAS) console.error('techo-pared', JSON.stringify(r));
   }
   const N = w * h;

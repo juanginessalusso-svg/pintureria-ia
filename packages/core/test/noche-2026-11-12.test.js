@@ -78,3 +78,12 @@ test('rellenarBordes (sombra): la arista oscura entre dos paredes se pinta aunqu
   const [q] = rellenarBordes([{ kind: 'pared', mask, area: 0 }], img, { r: 6, encerrados: false, sombra: false });
   assert.equal(q.mask[100 * w + 100], 0, 'sin la regla de sombra quedaba blanca');
 });
+
+test('separarFondo: la pared vista por la puerta queda "Pared del fondo" sin color; la cercana sigue pintable', async () => {
+  const { separarFondo } = await import('../src/madera.js');
+  const w = 20, h = 10, N = w * h, a = new Uint8Array(N), b = new Uint8Array(N), veto = new Uint8Array(N);
+  for (let i = 0; i < N; i++) { if (i % w < 15) a[i] = 1; else { b[i] = 1; veto[i] = 4; } }
+  const out = separarFondo([{ kind: 'pared', name: 'Pared 1', mask: a, area: 0.75 }, { kind: 'pared', name: 'Pared 2', mask: b, area: 0.25 }], veto, w, h);
+  assert.equal(out[0].kind, 'pared');
+  assert.equal(out[1].kind, 'ladrillo'); assert.equal(out[1].name, 'Pared del fondo');
+});

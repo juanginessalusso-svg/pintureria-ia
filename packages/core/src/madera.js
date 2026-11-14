@@ -50,22 +50,28 @@ export function marcarOSB(found, img, { minTex = 2.4, minSat = 0.36, minGrande =
  * PNG). Regla de Ginés (2026-11-12): el machimbre no se pinta, igual que el OSB. La parte de madera de cada pared o techo se separa como
  * superficie 'ladrillo' (sin color: el cliente la pinta solo si la toca) llamada "Madera"; si casi toda la superficie es madera, pasa entera.
  */
-export function separarMadera(found, veto, w, h, { entera = 0.6, minFrac = 0.005 } = {}) {
+export function separarMadera(found, veto, w, h, opts = {}) { return separarPorCodigo(found, veto, w, h, 3, 'Madera', opts); }
+
+/** Pared que se ve por una puerta abierta (código 4 = B 50 del servidor, regla 11): queda como "Pared del fondo" sin color (regla de Ginés:
+ * el cliente quiere pintar la habitación donde está, no la de al lado). La toca si la quiere pintar. */
+export function separarFondo(found, veto, w, h, opts = {}) { return separarPorCodigo(found, veto, w, h, 4, 'Pared del fondo', { minFrac: 0.0005, ...opts }); }
+
+function separarPorCodigo(found, veto, w, h, cod, nombre, { entera = 0.6, minFrac = 0.005 } = {}) {
   if (!veto) return found;
   const N = w * h; let hay = false;
-  for (let i = 0; i < N; i++) if (veto[i] === 3) { hay = true; break; }
+  for (let i = 0; i < N; i++) if (veto[i] === cod) { hay = true; break; }
   if (!hay) return found;
   const out = [];
   for (const f of found) {
     if (f.kind !== 'pared' && f.kind !== 'techo') { out.push(f); continue; }
-    let n = 0, nm = 0; for (let i = 0; i < N; i++) if (f.mask[i]) { n++; if (veto[i] === 3) nm++; }
+    let n = 0, nm = 0; for (let i = 0; i < N; i++) if (f.mask[i]) { n++; if (veto[i] === cod) nm++; }
     if (!nm || nm < minFrac * N && nm < entera * n) { out.push(f); continue; }
-    if (nm >= entera * n) { out.push({ ...f, kind: 'ladrillo', name: 'Madera' }); continue; }
+    if (nm >= entera * n) { out.push({ ...f, kind: 'ladrillo', name: nombre }); continue; }
     const resto = f.mask.slice(), mad = new Uint8Array(N);
-    for (let i = 0; i < N; i++) if (f.mask[i] && veto[i] === 3) { resto[i] = 0; mad[i] = 1; }
+    for (let i = 0; i < N; i++) if (f.mask[i] && veto[i] === cod) { resto[i] = 0; mad[i] = 1; }
     out.push({ ...f, mask: resto, area: (n - nm) / N });
-    out.push({ ...f, kind: 'ladrillo', name: 'Madera', mask: mad, area: nm / N });
+    out.push({ ...f, kind: 'ladrillo', name: nombre, mask: mad, area: nm / N });
   }
-  const nMad = out.filter((f) => f.name === 'Madera').length; let k = 0;
-  return nMad > 1 ? out.map((f) => (f.name === 'Madera' ? { ...f, name: `Madera ${++k}` } : f)) : out;
+  const nMad = out.filter((f) => f.name === nombre).length; let k = 0;
+  return nMad > 1 ? out.map((f) => (f.name === nombre ? { ...f, name: `${nombre} ${++k}` } : f)) : out;
 }

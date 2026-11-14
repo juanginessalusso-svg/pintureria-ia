@@ -2390,3 +2390,11 @@ select { font: inherit; padding: 8px; border: 1px solid var(--line); border-radi
     padding: 20px 16px 40px;
   }
 }
+
+/* Asesor de color: tarjetas de combinaciones recomendadas y mezclas */
+.asesor .combos { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; margin: 8px 0; }
+.combo { display: grid; gap: 4px; text-align: left; padding: 10px; border-radius: 10px; border: 1px solid #0002; background: #fff; min-width: 0; }
+.combo.on { border-color: var(--brand); box-shadow: 0 0 0 2px var(--brand) inset; }
+.combo-sws { display: flex; gap: 4px; }
+.combo-nombre { font-weight: 600; }
+.mezclas .row { flex-wrap: wrap; }

@@ -74,12 +74,20 @@ if (process.env.CLASSMAP_PNG) {
   const p = PNG.sync.read(fs.readFileSync(process.env.CLASSMAP_PNG)); classMap = new Uint8Array(width * height); instancias = new Uint8Array(width * height); veto = new Uint8Array(width * height);
   for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
     const sx = Math.min(p.width - 1, Math.floor((x + 0.5) * p.width / width)), sy = Math.min(p.height - 1, Math.floor((y + 0.5) * p.height / height));
-    classMap[y * width + x] = p.data[(sy * p.width + sx) * 4]; instancias[y * width + x] = p.data[(sy * p.width + sx) * 4 + 1]; const bz = p.data[(sy * p.width + sx) * 4 + 2]; if (bz > 127 && bz !== classMap[y * width + x]) veto[y * width + x] = bz >= 150 && bz <= 230 ? 2 : 1; else if (bz >= 90 && bz <= 110) veto[y * width + x] = 3; // G = número de pared (PNG RGB del servidor)
+    classMap[y * width + x] = p.data[(sy * p.width + sx) * 4]; instancias[y * width + x] = p.data[(sy * p.width + sx) * 4 + 1]; const bz = p.data[(sy * p.width + sx) * 4 + 2]; if (bz > 127 && bz !== classMap[y * width + x]) veto[y * width + x] = bz >= 150 && bz <= 230 ? 2 : 1; else if (bz >= 90 && bz <= 110) veto[y * width + x] = 3; else if (bz >= 40 && bz <= 60) veto[y * width + x] = 4; // G = número de pared (PNG RGB del servidor)
   }
   if (!instancias.some((v, i) => v !== classMap[i])) instancias = null; // PNG gris: no trae instancias
 }
+// PROF_NPY=ruta.npy (experimento 2026-11-13): mapa de profundidad (Depth Anything V2, float32 2D) para marcar la pared del fondo
+let prof = null;
+if (process.env.PROF_NPY) {
+  const buf = fs.readFileSync(process.env.PROF_NPY), hl = buf.readUInt16LE(8), head = buf.toString('latin1', 10, 10 + hl);
+  const [ph, pw] = head.match(/\((\d+), (\d+)\)/).slice(1).map(Number);
+  prof = { data: new Float32Array(buf.buffer.slice(buf.byteOffset + 10 + hl, buf.byteOffset + 10 + hl + ph * pw * 4)), width: pw, height: ph };
+}
 const t0 = performance.now();
 const res = await runDetect({ image: img, segment, opts: OPTS, mode, mergeTecho: !!OPTS.mergeTecho, classMap, instancias, veto });
+if (prof) { const { marcarFondo } = await import('@pintureria/core'); res.found = marcarFondo(res.found, width, height, prof, OPTS.fondo ?? {}); }
 const { found } = res;
 console.log(`${name}: modo ${res.mode} · ${found.length} superficies · ${decodes} decodificaciones (${misses} sin caché) · ${Math.round(performance.now() - t0)} ms`);
 const COL = { pared: [230, 57, 70], techo: [60, 120, 255], ladrillo: [244, 162, 97], cielo: [69, 123, 157], piso: [42, 157, 143] };
@@ -103,6 +111,23 @@ if (process.env.MASCARA) {
 const outFile = path.join(outDir, `una-${name}.png`);
 fs.writeFileSync(outFile, PNG.sync.write(out));
 console.log('→', outFile);
+// ASESOR=carta.json (asesor de color 2026-11-13): arma las combinaciones recomendadas con esa carta y deja asesor-<foto>-<id>.png pintado
+if (process.env.ASESOR) {
+  const { analizarAmbiente, recomendarCombinaciones, asignarCombinacion, estimateWhiteBalance, featherCapas, pintarCapas, LUZ_WB_STRENGTH } = await import('@pintureria/core');
+  const carta = JSON.parse(fs.readFileSync(process.env.ASESOR, 'utf8'));
+  const amb = analizarAmbiente(img, found), combos = recomendarCombinaciones(carta, amb);
+  console.log('asesor', JSON.stringify({ calida: amb.calida, fijos: amb.fijos.map((f) => ({ L: Math.round(f.lab.L), a: Math.round(f.lab.a), b: Math.round(f.lab.b), peso: +f.peso.toFixed(2) })),
+    combos: combos.map((c) => ({ id: c.id, principal: `${c.principal.name} ${c.principal.code} ${c.principal.hex}`, acento: c.acento ? `${c.acento.name} ${c.acento.code} ${c.acento.hex}` : null, techo: `${c.techo.name} ${c.techo.code} ${c.techo.hex}` })) }));
+  const gains = estimateWhiteBalance(img).map((g) => 1 + (g - 1) * LUZ_WB_STRENGTH);
+  for (const combo of combos) {
+    const asig = asignarCombinacion(combo, found), capas = [];
+    found.forEach((f, i) => { if (asig[i]) capas.push({ mask: f.mask, hex: asig[i].hex }); });
+    const softs = featherCapas(capas.map((c) => c.mask), width, height, Math.max(1, Math.round(width / 500)));
+    const im = pintarCapas(img, capas.map((c, k) => ({ soft: softs[k], hex: c.hex })), { mode: 'luz', gains });
+    const o = new PNG({ width, height }); o.data.set(im.data); for (let i = 3; i < o.data.length; i += 4) o.data[i] = 255;
+    fs.writeFileSync(path.join(outDir, `asesor-${name}-${combo.id}.png`), PNG.sync.write(o));
+  }
+}
 // PINTAR="#pared[|#pared2|...],#techo[;...]" (con | un color por pared): además deja pintado-<foto>-<k>.png pintado como en la app (modo 'luz', balance de blancos al 50 %, borde suavizado)
 if (process.env.PINTAR) {
   const { estimateWhiteBalance, featherCapas, pintarCapas, LUZ_WB_STRENGTH } = await import('@pintureria/core');

@@ -31,7 +31,8 @@ export function buildBudgetMessage({ shop, branch, color, colors, product, coats
   if (colors?.length) {
     // varios colores: uno por superficie (ej. Pared 1, Techo)
     lines.push('🎨 Colores:');
-    for (const c of colors) lines.push(`   • ${c.surface}: ${c.name}${c.code ? ` (${c.code})` : ''}`);
+    for (const c of colors) lines.push(`   • ${c.surface}: ${c.receta ? `${c.name} — receta: ${c.receta}` : `${c.name}${c.code ? ` (${c.code})` : ''}`}`);
+    if (colors.some((c) => c.receta)) lines.push('   (las mezclas las preparan ustedes en la máquina tintométrica)');
   } else if (color) lines.push(`🎨 Color: ${color.name}${color.code ? ` (${color.code})` : ''}`);
   lines.push(
     `🧴 Producto: ${product.name}${product.sku ? ` (${product.sku})` : ''}`,
