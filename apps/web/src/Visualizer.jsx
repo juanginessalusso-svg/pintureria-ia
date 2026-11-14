@@ -79,7 +79,7 @@ export function Visualizer() {
   const [, setTick] = useState(0); // fuerza re-render cuando cambian refs que la interfaz lee (trazos, deshacer)
   const bump = () => setTick((t) => t + 1);
   const [color, setColor] = useState(null);
-  const [lum, setLum] = useState('luz'); // 'luz': el sombreado de la foto se conserva (sombra queda sombra) y el balance de blancos va al 50 % (medido contra Sinteplast: ΔE00 8,5 → 6,0)
+  const [lum, setLum] = useState('sinte'); // 2026-11-16: 'sinte' = luces y sombras de la foto con la misma fuerza y claridad ajustada a 7 capturas de Sinteplast (ΔE contra ellos 9,3 → 5,0). Antes:  // 'luz': el sombreado de la foto se conserva (sombra queda sombra) y el balance de blancos va al 50 % (medido contra Sinteplast: ΔE00 8,5 → 6,0)
   const [intensity, setIntensity] = useState(1);
   const [wb, setWb] = useState(true);
   const [timing, setTiming] = useState({});
@@ -263,7 +263,7 @@ export function Visualizer() {
     const softs = featherCapas(layers.map((L) => L.mask), p.width, p.height, Math.max(1, Math.round(p.width / 500)));
     // pintarCapas: cada color desde la foto original, mezclados en la unión (antialias de la línea techo/pared, 2026-11-12)
     image = pintarCapas(p, layers.map((L, k) => ({ soft: softs[k], hex: L.hex })), {
-      mode: opts.lum ?? lum, intensity: opts.intensity ?? intensity, croma: (opts.lum ?? lum) === 'luz' ? LUZ_CROMA : 1, gains: (opts.wb ?? wb) ? ((opts.lum ?? lum) === 'luz' ? gains.current.map((g) => 1 + (g - 1) * LUZ_WB_STRENGTH) : gains.current) : [1, 1, 1],
+      mode: opts.lum ?? lum, intensity: opts.intensity ?? intensity, ...((opts.lum ?? lum) === 'luz' ? { croma: LUZ_CROMA } : (opts.lum ?? lum) === 'sinte' ? {} : { croma: 1 }), gains: (opts.wb ?? wb) ? ((opts.lum ?? lum) === 'luz' ? gains.current.map((g) => 1 + (g - 1) * LUZ_WB_STRENGTH) : gains.current) : [1, 1, 1],
     });
     result.current = image;
     setTiming((t) => ({ ...t, recolorMs: Math.round(performance.now() - t0) }));
@@ -837,11 +837,44 @@ export function Visualizer() {
     cv.getContext('2d').putImageData(new ImageData(img.data, img.width, img.height), 0, 0);
     return cv.convertToBlob({ type: 'image/png' });
   };
+  // Imagen para guardar o mandar (como la de Sinteplast, 2026-11-15): la foto pintada con una barra abajo con el comercio y, por cada
+  // superficie pintada, su color (nombre y código) sobre una muestra del color.
+  const imagenConColores = async () => {
+    const img = result.current ?? photo.current, W = img.width;
+    const items = surfList.filter((s) => s.color).map((s) => ({ sup: s.name, col: s.color }));
+    if (!items.length && color) items.push({ sup: 'Color', col: color });
+    const porFila = Math.min(3, Math.max(1, items.length)), filas = Math.ceil(items.length / porFila);
+    const cab = Math.round(W * 0.07), alto = Math.round(W * 0.15), H = img.height + cab + filas * alto;
+    const cv = new OffscreenCanvas(W, H), g = cv.getContext('2d');
+    g.putImageData(new ImageData(img.data, img.width, img.height), 0, 0);
+    g.fillStyle = '#1f3a5f'; g.fillRect(0, img.height, W, cab);
+    g.fillStyle = '#fff'; g.font = `600 ${Math.round(cab * 0.5)}px system-ui, sans-serif`; g.textBaseline = 'middle';
+    g.fillText(tenant?.name ?? 'Visualizador de color', Math.round(W * 0.03), img.height + cab / 2);
+    items.forEach((it, k) => {
+      const x = (k % porFila) * (W / porFila), y = img.height + cab + Math.floor(k / porFila) * alto, bw = W / porFila;
+      g.fillStyle = it.col.hex; g.fillRect(x, y, bw + 1, alto);
+      const [r, gg, bb] = [1, 3, 5].map((i) => parseInt(it.col.hex.slice(i, i + 2), 16));
+      g.fillStyle = 0.299 * r + 0.587 * gg + 0.114 * bb > 150 ? '#1c2023' : '#ffffff';
+      const pad = Math.round(bw * 0.06), f = Math.max(11, Math.round(alto * 0.17));
+      g.font = `600 ${f}px system-ui, sans-serif`; g.fillText(it.sup.toUpperCase(), x + pad, y + alto * 0.28, bw - 2 * pad);
+      g.font = `${f}px system-ui, sans-serif`; g.fillText(it.col.name ?? '', x + pad, y + alto * 0.55, bw - 2 * pad);
+      g.fillText(it.col.code ?? '', x + pad, y + alto * 0.8, bw - 2 * pad);
+    });
+    return cv.convertToBlob({ type: 'image/jpeg', quality: 0.92 });
+  };
   const download = async () => {
-    const b = await getImageBlob();
+    const b = await imagenConColores();
     const a = document.createElement('a');
-    a.href = URL.createObjectURL(b); a.download = 'mi-ambiente.png'; a.click();
+    a.href = URL.createObjectURL(b); a.download = 'mi-ambiente.jpg'; a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  };
+  // Compartir (WhatsApp, etc.) desde el celular; si el navegador no puede, se descarga
+  const compartir = async () => {
+    const f = new File([await imagenConColores()], 'mi-ambiente.jpg', { type: 'image/jpeg' });
+    if (navigator.canShare?.({ files: [f] })) {
+      try { await navigator.share({ files: [f], title: tenant?.name ?? 'Mi ambiente' }); return; } catch (e) { if (e?.name === 'AbortError') return; }
+    }
+    download();
   };
   const hold = (v) => () => { showBefore.current = v; render(); };
   // Herramienta interna (?anotar=1): baja las superficies actuales como anotación "revisada" para medir la detección (eval/visualizador/medir.mjs).
@@ -1041,7 +1074,8 @@ export function Visualizer() {
         <div class="card grid">
           <label>Luminancia
             <select value={lum} onChange={(e) => { setLum(e.target.value); repaint(color, { lum: e.target.value }); }}>
-              <option value="luz">Conserva luz y sombras (recomendada)</option>
+              <option value="sinte">Natural, como foto real (recomendada)</option>
+              <option value="luz">Conserva luz y sombras</option>
               <option value="relative">Relativa</option>
               <option value="pure">Pura (L original)</option>
             </select>
@@ -1054,6 +1088,7 @@ export function Visualizer() {
           <div class="row">
             <button onPointerDown={hold(true)} onPointerUp={hold(false)} onPointerLeave={hold(false)} disabled={!hasColor}>Mantené para ver el antes</button>
             <button onClick={download} disabled={!hasColor}>⬇︎ Descargar</button>
+            <button onClick={compartir} disabled={!hasColor}>Compartir</button>
           </div>
           {ANOTAR && <div class="row"><button onClick={downloadAnnotation} disabled={!surfList.length}>🧪 Descargar anotación (JSON)</button></div>}
         </div>

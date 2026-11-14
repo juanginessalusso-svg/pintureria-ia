@@ -81,6 +81,12 @@ def salud():
 # v12: "door frame" (el contramarco blanco se pintaba con la pared): pinta mal 0,77 -> 0,66 % simulado, cubre igual (99,1 %).
 OBJETOS = ["range hood", "intercom", "cable", "light switch", "electrical panel", "power outlet", "wall plate", "picture frame", "door frame"]
 UMBRAL_OBJETO = {"cable": 0.75, "intercom": 0.35}
+# Regla 12 (2026-11-15, comparación con Sinteplast): muebles y aberturas pegados a la pared. SAM 3 ya no los marca como pared, pero la
+# app rellenaba el hueco entre la pared y el objeto y se pasaba sobre el borde del sillón, el costado del radiador o el marco de la
+# ventana. Marcados como objeto conocido (B = 200) donde el mapa no pinta, la app no rellena encima. Simulado en el set (mapas v14):
+# pinta mal 0,64 -> 0,60 %, se pasa del borde 1,95 -> 1,82 px, cubre igual, ninguna foto peor.
+MUEBLES = ["window frame", "window", "radiator", "sofa", "armchair", "chair", "table", "shelf", "cabinet", "refrigerator", "curtain"]
+UMBRAL_MUEBLE = 0.35
 
 
 def clases(img: Image.Image):
@@ -89,7 +95,7 @@ def clases(img: Image.Image):
         img.thumbnail((1280, 1280))
     t0 = time.perf_counter()
     R = mapas_sam(img, ["painted wall", "wall", "ceiling", "tile", "tiled wall", "mirror", "wallpaper", "stucco wall", "brick wall", "sky", "garage door", "pergola", "facade", "baseboard", "skirting board"]
-                  + OBJETOS + ["crown molding", "wood paneling", "wooden ceiling", "open doorway"])
+                  + OBJETOS + ["crown molding", "wood paneling", "wooden ceiling", "open doorway"] + MUEBLES)
     (pw, ipw), (ww, iww), (pc, ipc) = R["painted wall"], R["wall"], R["ceiling"]
     m9 = clases_r9(img)
     p = np.zeros(pw.shape, np.uint8)
@@ -138,6 +144,10 @@ def clases(img: Image.Image):
     b = veto.astype(np.uint8) * 255
     b[mad & (b == 0) & ~obj] = 100
     b[obj] = 200
+    mueble = np.zeros(p.shape, bool)  # regla 12
+    for texto in MUEBLES:
+        mueble |= R[texto][0] >= UMBRAL_MUEBLE
+    b[mueble & (p == 0) & (b == 0)] = 200
     ids = ids_pared(ipw + iww + R["stucco wall"][1], p == 1)
     # regla 11 (2026-11-13, criterio de Ginés: se pinta la habitación donde está el cliente, no la de al lado): pared que queda >= 90 %
     # adentro de una "open doorway" (puntaje >= 0,3) es de otra habitación vista por la puerta o el arco -> B = 50 (sigue siendo pared;

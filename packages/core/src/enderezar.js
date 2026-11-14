@@ -23,7 +23,7 @@ function bordeLibre(lab, k, w, h) {
  * minLen: largo mínimo del tramo recto (fracción del lado mayor) · inlier: tolerancia de la recta (fracción) · banda: cuánto se puede
  * mover/reescribir a cada lado (fracción) · hueco: corte máximo dentro del tramo · maxRectas: tramos por superficie.
  */
-export function enderezarBordes(found, img, { veto = null, /* ver arriba */ minLen = 0.12, inlier = 0.004, banda = 0.008, hueco = 0.03, maxRectas = 6, minGrad = 6 } = {}) {
+export function enderezarBordes(found, img, { veto = null, /* ver arriba */ minLen = 0.12, inlier = 0.004, banda = 0.008, hueco = 0.03, maxRectas = 6, minGrad = 6, sacarMax = 0.85 } = {}) {
   const { data, width: w, height: h } = img, N = w * h, G = Math.max(w, h);
   if (!found.length) return found;
   const lab = new Int32Array(N);
@@ -79,8 +79,24 @@ export function enderezarBordes(found, img, { veto = null, /* ver arriba */ minL
       }
       if (!rN) continue;
       rS /= rN; rR /= rN; rG /= rN;
+      // color de referencia LOCAL (2026-11-16): por tramos de `paso` px a lo largo de la recta. La pared cambia de color a lo largo del borde
+      // (azulada cerca de una ventana, beige más lejos: sillón de p…182231) y con el promedio de todo el tramo la franja de pared junto al
+      // mueble no "parecía pared" y se sacaba, dejando una línea clara sin pintar.
+      const paso = 40, nb = Math.max(1, Math.ceil((t1 - t0) / paso) + 1), bS = new Float64Array(nb), bR = new Float64Array(nb), bG = new Float64Array(nb), bN = new Float64Array(nb);
+      for (let t = t0; t <= t1; t += 2) for (let o = 2 * B; o <= 4 * B; o += 2) {
+        const x = Math.round(t * ln.dx + (ln.c + lado * o) * ln.nx), y = Math.round(t * ln.dy + (ln.c + lado * o) * ln.ny);
+        if (x < 0 || y < 0 || x >= w || y >= h || lab[y * w + x] !== k) continue;
+        const q = (y * w + x) * 4, sm = data[q] + data[q + 1] + data[q + 2] + 1, j = Math.min(nb - 1, Math.floor((t - t0) / paso));
+        bS[j] += sm; bR[j] += data[q] / sm; bG[j] += data[q + 1] / sm; bN[j]++;
+      }
+      const refEn = (i) => {
+        const x = i % w, y = (i - x) / w, j = Math.max(0, Math.min(nb - 1, Math.floor((x * ln.dx + y * ln.dy - t0) / paso)));
+        return bN[j] >= 8 ? [bS[j] / bN[j], bR[j] / bN[j], bG[j] / bN[j]] : [rS, rR, rG];
+      };
       // solo se agrega lo que tiene el color de la superficie (no una tira de moldura, marco u OSB)
       const pareceSup = (i) => { const q = i * 4, sm = data[q] + data[q + 1] + data[q + 2] + 1, l = sm / rS; return l > 0.8 && l < 1.2 && Math.abs(data[q] / sm - rR) < 0.02 && Math.abs(data[q + 1] / sm - rG) < 0.02; };
+      // para NO SACAR se usa el color local (la franja de pared junto al mueble); para AGREGAR, el del tramo entero (si no, se mete en la caja de la persiana o el borde del azulejo)
+      const pareceSupLocal = (i) => { const [s0, r0, g0] = refEn(i), q = i * 4, sm = data[q] + data[q + 1] + data[q + 2] + 1, l = sm / s0; return l > 0.8 && l < 1.2 && Math.abs(data[q] / sm - r0) < 0.02 && Math.abs(data[q + 1] / sm - g0) < 0.02; };
       // corrimiento paralelo hasta el borde más marcado de la foto (gradiente a lo largo de la normal, promedio en todo el tramo)
       const gradEn = (o) => { let g = 0, n = 0; for (let t = t0; t <= t1; t += 1) { const x = Math.round(t * ln.dx + (ln.c + o) * ln.nx), y = Math.round(t * ln.dy + (ln.c + o) * ln.ny); if (x < 1 || y < 1 || x >= w - 1 || y >= h - 1) continue; const i = y * w + x; g += Math.abs(gx[i] * ln.nx + gy[i] * ln.ny); n++; } return n ? g / n : 0; };
       // el borde marcado MÁS CERCANO (>= 70 % del más fuerte): el más fuerte suele ser el otro lado de la moldura o del marco
@@ -95,14 +111,25 @@ export function enderezarBordes(found, img, { veto = null, /* ver arriba */ minL
       for (const t of [t0, t1]) for (const o of [c - B - 2, c + B + 2]) esq.push([t * ln.dx + o * ln.nx, t * ln.dy + o * ln.ny]);
       const x0 = Math.max(0, Math.floor(Math.min(...esq.map((e) => e[0])))), x1 = Math.min(w - 1, Math.ceil(Math.max(...esq.map((e) => e[0]))));
       const y0 = Math.max(0, Math.floor(Math.min(...esq.map((e) => e[1])))), y1 = Math.min(h - 1, Math.ceil(Math.max(...esq.map((e) => e[1]))));
+      // (2026-11-16, sillón de p…182231 contra Sinteplast) si casi todo lo que se sacaría tiene el color de la superficie, la recta quedó
+      // corrida sobre la pared (el borde del mueble está más allá): no se saca nada, si no queda una franja clara sin pintar sobre el mueble
+      // solo contra un MUEBLE/OBJETO conocido (veto 2 del otro lado): en la línea techo/pared o el borde del azulejo se sigue enderezando
+      let candS = 0, candSup = 0, lejos = 0, lejosObj = 0;
+      for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+        const t = x * ln.dx + y * ln.dy; if (t < t0 || t > t1) continue;
+        const d = x * ln.nx + y * ln.ny - c; if (Math.abs(d) > B + 1 || (d * lado) > 0) continue;
+        const i = y * w + x; if (m[i] && Math.abs(d) <= 4) { candS++; if (pareceSupLocal(i)) candSup++; }
+        if (!m[i] && Math.abs(d) > 2) { lejos++; if (veto && veto[i] === 2) lejosObj++; }
+      }
+      const noSacar = candS > 20 && candSup >= sacarMax * candS && lejos > 0 && lejosObj >= 0.3 * lejos;
       for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
         const t = x * ln.dx + y * ln.dy; if (t < t0 || t > t1) continue;
         const d = x * ln.nx + y * ln.ny - c; if (Math.abs(d) > B + 1) continue;
         const i = y * w + x;
         if ((d * lado) > 0) { if (!lab[i] && !(veto && (veto[i] === 2 || (veto[i] && Math.abs(d) > B))) && pareceSup(i)) { lab[i] = k; m[i] = 1; puestos++; } }
-        else if (m[i] && (Math.abs(d) <= 4 || !pareceSup(i))) { m[i] = 0; if (lab[i] === k) lab[i] = 0; sacados++; } // cerca de la recta (ondas de 2-4 px) siempre; más lejos solo lo que no tiene el color de la superficie (si no, deja una tira blanca de pared: p…181544)
+        else if (!noSacar && m[i] && (Math.abs(d) <= 4 || !pareceSupLocal(i))) { m[i] = 0; if (lab[i] === k) lab[i] = 0; sacados++; } // cerca de la recta (ondas de 2-4 px) siempre; más lejos solo lo que no tiene el color de la superficie (si no, deja una tira blanca de pared: p…181544)
       }
-      info.push({ sup: k0, largo: Math.round(t1 - t0), corrido: off, grad: +gMax.toFixed(1), puestos, sacados });
+      info.push({ sup: k0, largo: Math.round(t1 - t0), corrido: off, grad: +gMax.toFixed(1), puestos, sacados, candS, fracSup: +(candSup / Math.max(1, candS)).toFixed(2), ang: +(Math.atan2(ln.dy, ln.dx) * 57.3).toFixed(0), c: Math.round(c) });
     }
   });
   if (globalThis.process?.env?.DEBUG_RECTAS) for (const r of info) console.error('recta', JSON.stringify(r));

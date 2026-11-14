@@ -564,13 +564,47 @@ function rellenarEncerrados(data, w, h, lab, agregado, veto, { gradMax = 4, luzM
 }
 
 /**
+ * Halo entre la pared y un objeto conocido (2026-11-15, comparación con Sinteplast): SAM 3 corta la pared unos px antes del mueble y el
+ * mueble (veto 2, borde preciso) empieza unos px después; la franja del medio (luz rebotada, sombra de contacto) queda sin pintar y se ve
+ * como un halo claro alrededor del sillón o la silla. Se pinta con la pared vecina lo sin asignar que está a <= r px de la pared Y a <= r px
+ * del objeto, si tiene la cromaticidad de la pared (la luz puede variar mucho: es justo el halo). Modifica lab/agregado en el lugar.
+ */
+function cerrarHalos(data, w, h, lab, agregado, veto, { r = 6, tolCroma = 0.03, luzMin = 0.75, luzMax = 1.3 } = {}) {
+  const N = w * h, dP = new Uint8Array(N).fill(255), dO = new Uint8Array(N).fill(255), quien = new Int16Array(N), cola = [];
+  for (let i = 0; i < N; i++) if (lab[i]) { dP[i] = 0; quien[i] = lab[i]; cola.push(i); }
+  for (let q = 0; q < cola.length; q++) { const i = cola[q], nd = dP[i] + 1; if (nd > r) continue; const x = i % w; for (const j of [x > 0 ? i - 1 : -1, x < w - 1 ? i + 1 : -1, i - w, i + w]) if (j >= 0 && j < N && !lab[j] && dP[j] > nd) { dP[j] = nd; quien[j] = quien[i]; cola.push(j); } }
+  cola.length = 0;
+  for (let i = 0; i < N; i++) if (veto[i] === 2) { dO[i] = 0; cola.push(i); }
+  for (let q = 0; q < cola.length; q++) { const i = cola[q], nd = dO[i] + 1; if (nd > r) continue; const x = i % w; for (const j of [x > 0 ? i - 1 : -1, x < w - 1 ? i + 1 : -1, i - w, i + w]) if (j >= 0 && j < N && dO[j] > nd) { dO[j] = nd; cola.push(j); } }
+  // color de cada superficie (promedio de cromaticidad y luz, muestreado)
+  let K = 0; for (let i = 0; i < N; i++) if (lab[i] > K) K = lab[i]; K++; const sr = new Float64Array(K), sg = new Float64Array(K), sl = new Float64Array(K), sn = new Float64Array(K);
+  for (let i = 0; i < N; i += 7) { const k = lab[i]; if (!k) continue; const q = i * 4, t = data[q] + data[q + 1] + data[q + 2] + 1; sr[k] += data[q] / t; sg[k] += data[q + 1] / t; sl[k] += t; sn[k]++; }
+  // color LOCAL de la pared (ventana de radio `rc`): la pared cambia de color a lo largo del mueble (luz de ventana)
+  const rc = 15, cand = [];
+  for (let i = 0; i < N; i++) if (!lab[i] && !veto[i] && dP[i] <= r && dO[i] <= r && quien[i]) cand.push(i);
+  const nuevos = [];
+  for (const i of cand) {
+    const k = quien[i], x = i % w, y = (i - x) / w; let n = 0, ar = 0, ag = 0, al = 0;
+    for (let dy = -rc; dy <= rc; dy += 3) for (let dx = -rc; dx <= rc; dx += 3) {
+      const xx = x + dx, yy = y + dy; if (xx < 0 || yy < 0 || xx >= w || yy >= h) continue;
+      const j = yy * w + xx; if (lab[j] !== k) continue; const q = j * 4, t = data[q] + data[q + 1] + data[q + 2] + 1; ar += data[q] / t; ag += data[q + 1] / t; al += t; n++;
+    }
+    if (n < 6) continue;
+    const q = i * 4, t = data[q] + data[q + 1] + data[q + 2] + 1, rl = t / (al / n);
+    if (rl < luzMin || rl > luzMax || Math.abs(data[q] / t - ar / n) + Math.abs(data[q + 1] / t - ag / n) > tolCroma) continue;
+    nuevos.push([i, k]);
+  }
+  for (const [i, k] of nuevos) { lab[i] = k; agregado[i] = 1; }
+}
+
+/**
  * Cierra los bordes blancos que deja el mapa del servidor: SAM 3 termina cada superficie unos píxeles antes de la arista (pared-techo,
  * esquinas, contorno de muebles) y el mapa llega agrandado (1280 -> 1600 px, con escalones). Cada superficie crece por BFS hasta `r` px
  * hacia lo que quedó SIN asignar, solo si el píxel se parece al color original de esa superficie (misma cromaticidad y luz parecida):
  * así se cierran las uniones sin comerse una estufa o un mueble de otro color. Lo que está entre dos superficies queda para la más cercana.
  * img: { data RGBA, width, height }. Devuelve superficies nuevas (no modifica las de entrada).
  */
-export function rellenarBordes(found, img, { r = null, tolCroma = 0.035, luzMin = 0.55, luzMax = 1.6, veto = null, huecoMin = 0.0003, pasoHueco = 12, encerrados = true, sombra = true, alrededor = false } = {}) {
+export function rellenarBordes(found, img, { r = null, tolCroma = 0.035, luzMin = 0.55, luzMax = 1.6, veto = null, huecoMin = 0.0003, pasoHueco = 12, encerrados = true, sombra = true, alrededor = false, halos = true } = {}) {
   const { data, width: w, height: h } = img, N = w * h;
   if (!found.length) return found;
   const R = r ?? Math.max(2, Math.round(0.01 * Math.max(w, h)));
@@ -655,6 +689,7 @@ export function rellenarBordes(found, img, { r = null, tolCroma = 0.035, luzMin 
     }
   }
   if (alrededor && veto) rellenarAlrededorDeObjetos(data, w, h, lab, agregado, veto, alrededor === true ? {} : alrededor);
+  if (halos && veto) cerrarHalos(data, w, h, lab, agregado, veto, halos === true ? {} : halos);
   if (encerrados) {
     const o = encerrados === true ? {} : encerrados;
     rellenarEncerrados(data, w, h, lab, agregado, veto, o);

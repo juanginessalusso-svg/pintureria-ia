@@ -17,6 +17,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const file = process.argv[2], mode = process.argv[3] ?? 'auto';
 if (!file || !process.env.MODELS_DIR) { console.error('Uso: MODELS_DIR=... node una-foto.mjs <foto> [modo]'); process.exit(2); }
 const OPTS = process.env.OPTS ? JSON.parse(process.env.OPTS) : {};
+if (process.env.DEBUG_TAPAS) { OPTS.semantico ??= {}; OPTS.semantico.tapas = { debug: (i) => console.log('  [tapa]', JSON.stringify(i)) }; }
 if (process.env.DEBUG_RECTAS) OPTS.debugRectas = (i) => console.log('  [rectas]', JSON.stringify(i));
 if (process.env.DEBUG_CORNER) OPTS.debugCorner = (i) => console.log('  [esquina]', JSON.stringify({ x: i.x, med: +i.med?.toFixed?.(1), n: i.n, frac: +i.frac?.toFixed?.(2), cov: +i.cov?.toFixed?.(2), spread: i.spread, tilt: +i.tilt?.toFixed?.(3), why: i.why }));
 if (process.env.DEBUG_RECTAS) OPTS.debugSombras = (i) => console.log('  [sombras]', JSON.stringify(i));
@@ -122,7 +123,7 @@ if (process.env.ASESOR) {
   for (const combo of combos) {
     const asig = asignarCombinacion(combo, found), capas = [];
     found.forEach((f, i) => { if (asig[i]) capas.push({ mask: f.mask, hex: asig[i].hex }); });
-    const softs = featherCapas(capas.map((c) => c.mask), width, height, Math.max(1, Math.round(width / 500)));
+    const softs = featherCapas(capas.map((c) => c.mask), width, height, process.env.FEATHER ? Number(process.env.FEATHER) : Math.max(1, Math.round(width / 500)));
     const im = pintarCapas(img, capas.map((c, k) => ({ soft: softs[k], hex: c.hex })), { mode: 'luz', gains });
     const o = new PNG({ width, height }); o.data.set(im.data); for (let i = 3; i < o.data.length; i += 4) o.data[i] = 255;
     fs.writeFileSync(path.join(outDir, `asesor-${name}-${combo.id}.png`), PNG.sync.write(o));
@@ -139,8 +140,8 @@ if (process.env.PINTAR) {
     for (const f of found) {
       const hex = f.kind === 'techo' ? ht : f.kind === 'pared' ? paredes[np++ % paredes.length] : null; if (hex) capas.push({ mask: f.mask, hex });
     }
-    const softs = featherCapas(capas.map((c) => c.mask), width, height, Math.max(1, Math.round(width / 500)));
-    image = pintarCapas(img, capas.map((c, k) => ({ soft: softs[k], hex: c.hex })), { mode: 'luz', gains, croma: LUZ_CROMA, ...(process.env.LUZ ? JSON.parse(process.env.LUZ) : {}) });
+    const softs = featherCapas(capas.map((c) => c.mask), width, height, process.env.FEATHER ? Number(process.env.FEATHER) : Math.max(1, Math.round(width / 500)));
+    image = pintarCapas(img, capas.map((c, k) => ({ soft: softs[k], hex: c.hex })), { mode: 'sinte', gains, ...(process.env.LUZ ? JSON.parse(process.env.LUZ) : {}) });
     const o = new PNG({ width, height }); o.data.set(image.data); for (let i = 3; i < o.data.length; i += 4) o.data[i] = 255;
     const f2 = path.join(outDir, `pintado-${name}-${k + 1}.png`); fs.writeFileSync(f2, PNG.sync.write(o)); console.log('→', f2);
   });

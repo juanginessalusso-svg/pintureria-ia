@@ -305,13 +305,46 @@ export function recolorWall(img, mask, targetHex, { mode = 'relative', gains = [
  * oscurecía el segundo color) y se suman los aportes según el peso de cada capa en cada píxel (softs de featherCapas: en la unión suman 1).
  * capas: [{ soft: Float32Array, hex }]. opts: los de recolorWall. Devuelve { data, width, height }.
  */
+/**
+ * Modo 'sinte' (2026-11-16, ajustado a 7 capturas de Sinteplast con los mismos códigos): trabaja en L* (como se ve), no en luz lineal.
+ *  - L media de la pintura = a·L de la muestra + b·L media de la pared en la foto + c (Sinteplast acerca los oscuros y los claros al
+ *    brillo de la foto: un 0501 sobre pared blanca sale bastante más claro que la muestra, un verde muy claro algo más oscuro).
+ *  - Cada píxel conserva su diferencia de L con la media de la pared (las luces y sombras de la foto con la misma fuerza: en sus capturas el
+ *    desvío de L de la pared pintada es casi igual al de la foto; en el modo 'luz' un color oscuro lo achicaba a la mitad y la pared quedaba
+ *    "plana", como pintada encima).
+ *  - a*, b* = los de la muestra por `croma`.
+ */
+export function recolorSinte(img, mask, targetHex, { coefMuestra = 0.40, coefFoto = 0.39, base = 5.9, croma = 0.85, contrasteL = 1, intensity = 1, blancoMax = 96 } = {}) {
+  const { data, width, height } = img, N = width * height;
+  const t = hexToLab(targetHex), lab = [0, 0, 0], lin = [0, 0, 0];
+  let sL = 0, sW = 0;
+  for (let i = 0; i < N; i++) { const m = mask[i]; if (m < 0.5) continue; const p = i * 4; linToLab(SRGB_TO_LIN[data[p]], SRGB_TO_LIN[data[p + 1]], SRGB_TO_LIN[data[p + 2]], lab); sL += lab[0]; sW++; }
+  if (!sW) return { image: img };
+  // equivalente a Lt = coefMuestra·Lmuestra + coefFoto·Lfoto + base, escrito como "la pared se corre desde su color real estimado hacia la
+  // muestra": Lt = Lfoto + coefMuestra·(Lmuestra − Lreal), con Lreal = ((1 − coefFoto)·Lfoto − base) / coefMuestra. Lreal tiene tope en
+  // blancoMax: una pared blanca muy iluminada no puede ser "más que blanca" (sin el tope, pintar de blanco un techo blanco lo oscurecía ~8 L)
+  const mL = sL / sW, Lreal = Math.min(blancoMax, ((1 - coefFoto) * mL - base) / coefMuestra), Lt = mL + coefMuestra * (t.L - Lreal);
+  const out = new Uint8ClampedArray(data);
+  for (let i = 0; i < N; i++) {
+    const alpha = mask[i] * intensity; if (alpha <= 0.002) continue;
+    const p = i * 4; linToLab(SRGB_TO_LIN[data[p]], SRGB_TO_LIN[data[p + 1]], SRGB_TO_LIN[data[p + 2]], lab);
+    const L = Math.min(100, Math.max(0, Lt + (lab[0] - mL) * contrasteL));
+    let a = t.a * croma, b = t.b * croma;
+    for (let k = 0; k < 6; k++) { labToLin(L, a, b, lin); if (lin[0] >= -0.002 && lin[0] <= 1.002 && lin[1] >= -0.002 && lin[1] <= 1.002 && lin[2] >= -0.002 && lin[2] <= 1.002) break; a *= 0.85; b *= 0.85; }
+    const R = toSrgb8(lin[0]), G = toSrgb8(lin[1]), B = toSrgb8(lin[2]);
+    out[p] = data[p] + (R - data[p]) * alpha; out[p + 1] = data[p + 1] + (G - data[p + 1]) * alpha; out[p + 2] = data[p + 2] + (B - data[p + 2]) * alpha;
+  }
+  return { image: { data: out, width, height } };
+}
+
 export function pintarCapas(img, capas, opts = {}) {
   const { data, width, height } = img;
   if (!capas.length) return img;
-  if (capas.length === 1) return recolorWall(img, capas[0].soft, capas[0].hex, opts).image;
+  const rec = opts.mode === 'sinte' ? recolorSinte : recolorWall;
+  if (capas.length === 1) return rec(img, capas[0].soft, capas[0].hex, opts).image;
   const acc = new Float32Array(data.length);
   for (const c of capas) {
-    const r = recolorWall(img, c.soft, c.hex, opts).image.data;
+    const r = rec(img, c.soft, c.hex, opts).image.data;
     for (let i = 0; i < data.length; i++) if ((i & 3) !== 3) acc[i] += r[i] - data[i];
   }
   const out = new Uint8ClampedArray(data.length);

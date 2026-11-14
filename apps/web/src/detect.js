@@ -1,7 +1,7 @@
 // Corre la detección automática de superficies (JS pesado: ~35-50 % del análisis). Está pensado para ejecutarse DENTRO del
 // Worker de SAM: así la interfaz no se congela y cada decodificación es una llamada directa (sin mensajes de ida y vuelta).
 // Es puro (sin DOM ni Worker) para poder probarlo con `node --test`.
-import { cleanMask, detectSurfaces, detectFacade, detectSurfacesSemantico, hibridar, vetarConModelo, completarConModelo, recortarObjetos, superficiesDesdeMapa, rellenarBordes, marcarZocalos, afinarLimites, enderezarBordes, quitarCornisas, marcarOSB, enderezarTechoPared, separarMadera, separarFondo, ajustarContornos } from '@pintureria/core';
+import { cleanMask, detectSurfaces, detectFacade, detectSurfacesSemantico, hibridar, vetarConModelo, completarConModelo, recortarObjetos, superficiesDesdeMapa, rellenarBordes, marcarZocalos, afinarLimites, enderezarBordes, quitarCornisas, marcarOSB, enderezarTechoPared, separarMadera, separarFondo, ajustarContornos, nombrarPorPosicion, pintarTapas, unirCarasChicas } from '@pintureria/core';
 
 export class DetectCancelled extends Error {
   constructor() {
@@ -42,11 +42,14 @@ export async function runDetect({ image, segment, onProgress = () => {}, isCance
     if (!opts.semantico.sinRectas) found = enderezarTechoPared(found, width, height); // la unión techo/pared sin escalones
     if (!opts.semantico.sinZocalo) found = marcarZocalos(found, image);
     if (!opts.semantico.sinCornisas) found = quitarCornisas(found, image); // la moldura entre techo y pared no se pinta
-    if (!opts.semantico.sinRectas) found = enderezarBordes(found, image, { veto }); // borde recto contra moldura, marco, mueble (después del zócalo: no le cambia la forma que mide)
+    if (!opts.semantico.sinRectas && !opts.semantico.sinEnderezar) found = enderezarBordes(found, image, { veto }); // borde recto contra moldura, marco, mueble (después del zócalo: no le cambia la forma que mide)
     if (opts.semantico.contornos) found = ajustarContornos(found, image, { veto, ...opts.semantico.contornos }); // cada píxel del borde con el lado al que se parece
     if (!opts.semantico.sinOSB) found = marcarOSB(found, image); // el OSB no se pinta (regla de Ginés): queda como superficie rugosa sin color
     found = separarMadera(found, veto, width, height); // machimbre que reconoció el servidor: superficie "Madera" sin color
     found = separarFondo(found, veto, width, height); // pared de otra habitación vista por una puerta abierta: sin color
+    if (!opts.semantico.sinTapas) found = pintarTapas(found, image, veto, opts.semantico.tapas ?? {}); // tapa plana de la pared: se pinta con la pared (como Sinteplast)
+    if (!opts.semantico.sinUnir) found = unirCarasChicas(found, width, height); // cara chica de columna -> con la pared vecina
+    found = nombrarPorPosicion(found, width, height); // "Pared izquierda / central / derecha", como lo dice el cliente
     if (found.length) return { found, decodes: 0, mode: 'servidor' };
   }
   if (mode !== 'fachada' && classMap) {

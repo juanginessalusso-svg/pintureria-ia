@@ -16,6 +16,8 @@ export * from './rectas.js';
 export * from './enderezar.js';
 export * from './madera.js';
 export * from './contornos.js';
+export * from './nombres.js';
+export * from './planos.js';
 export * from './fondo.js';
 export * from './asesor.js';
 export * from './sombras.js';

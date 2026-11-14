@@ -56,3 +56,15 @@ test("modo 'luz': el croma baja en la sombra (se escala la luz lineal, no solo L
   assert.ok(C(labAt(luz, 5, 5)) < C(labAt(luz, 38, 5)) - 2);
   assert.ok(C(labAt(luz, 5, 5)) < C(labAt(rel, 5, 5)));
 });
+
+test("modo 'sinte': conserva la variación de luz de la foto y el blanco sobre blanco queda blanco", async () => {
+  const { recolorSinte } = await import('../src/recolor.js');
+  const w = 40, h = 10, N = w * h, data = new Uint8ClampedArray(N * 4), mask = new Float32Array(N).fill(1);
+  for (let i = 0; i < N; i++) { const v = 150 + ((i % w) < 20 ? -20 : 20); data.set([v, v, v, 255], i * 4); }
+  const L = (img, i) => { const q = i * 4; return (img.data[q] + img.data[q + 1] + img.data[q + 2]) / 3; };
+  const r = recolorSinte({ data, width: w, height: h }, mask, '#4c585a').image;
+  assert.ok(L(r, 30) - L(r, 5) > 15, 'la parte clara sigue más clara que la oscura');
+  const blanco = new Uint8ClampedArray(N * 4); for (let i = 0; i < N; i++) blanco.set([235, 235, 235, 255], i * 4);
+  const rb = recolorSinte({ data: blanco, width: w, height: h }, mask, '#f5f5f5').image;
+  assert.ok(Math.abs(L(rb, 0) - 235) < 8, 'blanco sobre blanco casi no cambia');
+});

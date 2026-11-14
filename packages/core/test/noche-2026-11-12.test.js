@@ -87,3 +87,20 @@ test('separarFondo: la pared vista por la puerta queda "Pared del fondo" sin col
   assert.equal(out[0].kind, 'pared');
   assert.equal(out[1].kind, 'ladrillo'); assert.equal(out[1].name, 'Pared del fondo');
 });
+
+test('nombrarPorPosicion: Pared izquierda / derecha según dónde está; una sola se llama "Pared"', async () => {
+  const { nombrarPorPosicion } = await import('../src/nombres.js');
+  const w = 10, h = 2, m = (x0, x1) => { const a = new Uint8Array(w * h); for (let i = 0; i < w * h; i++) if (i % w >= x0 && i % w < x1) a[i] = 1; return a; };
+  const out = nombrarPorPosicion([{ kind: 'pared', name: 'Pared 1', mask: m(6, 10) }, { kind: 'techo', name: 'Techo', mask: m(0, 10) }, { kind: 'pared', name: 'Pared 2', mask: m(0, 3) }], w, h);
+  assert.deepEqual(out.map((f) => f.name), ['Pared derecha', 'Techo', 'Pared izquierda']);
+  assert.equal(nombrarPorPosicion([{ kind: 'pared', name: 'Pared 1', mask: m(0, 10) }], w, h)[0].name, 'Pared');
+  assert.equal(nombrarPorPosicion([{ kind: 'pared', name: 'Mi living', mask: m(0, 10) }], w, h)[0].name, 'Mi living');
+});
+
+test('unirCarasChicas: la cara chica de la columna se suma a la pared vecina', async () => {
+  const { unirCarasChicas } = await import('../src/planos.js');
+  const w = 100, h = 50, N = w * h, m = (x0, x1) => { const a = new Uint8Array(N); for (let i = 0; i < N; i++) if (i % w >= x0 && i % w < x1) a[i] = 1; return a; };
+  const out = unirCarasChicas([{ kind: 'pared', name: 'Pared 1', mask: m(0, 60), area: 0.6 }, { kind: 'pared', name: 'Pared 2', mask: m(60, 62), area: 0.02 }, { kind: 'pared', name: 'Pared 3', mask: m(62, 100), area: 0.38 }], w, h);
+  assert.equal(out.length, 2);
+  assert.equal(out[0].mask[61], 1);
+});
