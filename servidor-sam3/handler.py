@@ -2,7 +2,7 @@
 Entrada:  {"input": {"imagen": "<jpeg/png en base64>"}}
 Salida:   {"png": "<base64>", "ancho": W, "alto": H, "segundos": s}   (o {"error": "..."})
 Los modelos se cargan UNA vez al arrancar el worker (import de app); cada pedido solo corre la inferencia."""
-import base64, io
+import base64, io, json
 import runpod
 from PIL import Image, ImageOps
 from app import clases, png, mapas_sam, afinar, ade, render
@@ -21,6 +21,13 @@ def handler(job):
     except Exception as e:  # noqa: BLE001 - foto ilegible
         return {"error": f"foto_invalida: {e}"}
     textos = job["input"].get("textos")
+    if textos == ["__disco__"]:  # diagnóstico: espacio libre en el volumen de red y en el disco del worker (GB)
+        import shutil
+        info = {}
+        for d in ("/runpod-volume", "/tmp", "/"):
+            try: u = shutil.disk_usage(d); info[d] = {"total": round(u.total / 1e9, 1), "libre": round(u.free / 1e9, 1)}
+            except Exception as e: info[d] = str(e)  # noqa: BLE001
+        return {"mapas": {"disco": base64.b64encode(json.dumps(info).encode()).decode()}, "ancho": 0, "alto": 0}
     if textos and textos[0] == "__render__":  # diagnóstico (2026-11-14): PNG RGBA = foto ya recoloreada + máscara en alfa -> render generativo
         if crudo.mode != "RGBA":
             return {"error": "render_pide_png_con_alfa"}

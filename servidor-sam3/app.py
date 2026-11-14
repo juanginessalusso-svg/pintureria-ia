@@ -209,7 +209,13 @@ def render(img_rgba: Image.Image, fuerza=0.35, pasos=25, semilla=7):
     t0 = time.perf_counter()
     if _sdxl is None:
         from diffusers import StableDiffusionXLInpaintPipeline
-        _sdxl = StableDiffusionXLInpaintPipeline.from_pretrained("diffusers/stable-diffusion-xl-1.0-inpainting-0.1", torch_dtype=torch.float16, variant="fp16").to(DEV)
+        import shutil, glob
+        # el volumen de red no tiene lugar para los ~7 GB (v14.2 falló con "No space left"): se baja al disco del worker y se borra
+        # lo que quedó a medio bajar en el volumen (solo lo de este modelo)
+        for d in glob.glob(os.path.join(os.environ.get("HF_HOME", "/nada"), "hub", "models--diffusers--stable-diffusion-xl-1.0-inpainting-0.1")):
+            shutil.rmtree(d, ignore_errors=True)
+        _sdxl = StableDiffusionXLInpaintPipeline.from_pretrained("diffusers/stable-diffusion-xl-1.0-inpainting-0.1", torch_dtype=torch.float16, variant="fp16",
+                                                                 cache_dir="/tmp/hf-sdxl").to(DEV)
     im = img_rgba.convert("RGB"); m = img_rgba.getchannel("A")
     W, H = im.size; s = 1024 / max(W, H); w8, h8 = max(8, round(W * s / 8) * 8), max(8, round(H * s / 8) * 8)
     gen = torch.Generator(device=DEV).manual_seed(semilla)
